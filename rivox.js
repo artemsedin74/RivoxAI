@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.0.7";
+  const RIVOX_VERSION = "1.0.8";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
