@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.1";
+  const RIVOX_VERSION = "1.1.3";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -11,25 +11,25 @@
       this.utm = new URLSearchParams(window.location.search);
       this.sessionStart = Date.now();
       this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
-      this.sentScroll = false;
+      this.sentScroll = 0;
       this.scrollCount = 0;
       this.clickCount = 0;
       this.eventCount = 0;
       this.productViews = new Set();
       this.productClickUrls = new Set();
-      this.returnedToProduct = false;
+      this.returnedToProduct = 0;
       this.productFocusTime = 0;
       this.currentProductFocusStart = null;
-      this.visitedCart = false;
-      this.formSubmitted = false;
-      this.purchaseCompleted = false;
+      this.visitedCart = 0;
+      this.formSubmitted = 0;
+      this.purchaseCompleted = 0;
       this.lastClickMeta = {};
 
       const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
       const successPaths = ["/thank-you", "/order-success", "/spasibo", "/success"];
       const path = window.location.pathname.toLowerCase();
-      if (cartPaths.some(p => path.includes(p))) this.visitedCart = true;
-      if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = true;
+      if (cartPaths.some(p => path.includes(p))) this.visitedCart = 1;
+      if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = 1;
 
       this.waitForClientID = new Promise((resolve) => {
         let attempts = 0;
@@ -74,7 +74,7 @@
 
           setTimeout(() => {
             this.send("session_idle_ping", {
-              idle_ping: true,
+              idle_ping: 1,
               url: window.location.href,
               client_id: this.ym_uid
             });
@@ -157,20 +157,18 @@
 
         const lowered = finalText.toLowerCase();
 
-        // 🟢 Если кнопка выглядит как форма
         const formKeywords = [
           "оставить заявку", "получить программу", "записаться", "купить", "заказать",
           "купить в 1 клик", "оплатить", "купить в кредит", "купить в рассрочку",
           "кредит", "рассрочка", "сплит", "выбор оплаты", "выбор метода оплаты"
         ];
         if (formKeywords.some(kw => lowered.includes(kw))) {
-          this.formSubmitted = true;
+          this.formSubmitted = 1;
         }
 
-        // 🛒 Если кнопка добавляет в корзину
         const cartKeywords = ["в корзину", "добавить в корзину"];
         if (cartKeywords.some(kw => lowered.includes(kw))) {
-          this.visitedCart = true;
+          this.visitedCart = 1;
         }
 
         this.lastClickMeta = {
@@ -187,7 +185,7 @@
     trackForms: function () {
       document.querySelectorAll('form').forEach(form => {
         form.addEventListener('submit', () => {
-          this.formSubmitted = true;
+          this.formSubmitted = 1;
         });
       });
     },
@@ -199,33 +197,55 @@
         const fullHeight = document.body.scrollHeight;
         const scrollDepth = (scrollPosition / fullHeight) * 100;
         if (scrollDepth > 1) {
-          this.sentScroll = true;
+          this.sentScroll = 1;
         }
       }, { passive: true });
     },
 
     trackProductViews: function () {
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting && entry.target.dataset.productId) {
-            const productId = entry.target.dataset.productId;
-            if (this.productViews.has(productId)) {
-              this.returnedToProduct = true;
-            }
-            this.productViews.add(productId);
-          }
-        });
-      }, { threshold: 0.5 });
+      const links = Array.from(document.querySelectorAll('a[href*="/product"], a[href*="/catalog"]'));
+      const uniqueUrls = new Set();
 
-      document.querySelectorAll('[data-product-id]').forEach(el => observer.observe(el));
+      links.forEach(link => {
+        const href = link.href;
+        if (!href || uniqueUrls.has(href)) return;
+        uniqueUrls.add(href);
+
+        const wrapper = link.closest('[class]');
+        if (!wrapper) return;
+
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              if (this.productViews.has(href)) {
+                this.returnedToProduct = 1;
+              }
+              this.productViews.add(href);
+            }
+          });
+        }, { threshold: 0.5 });
+
+        observer.observe(wrapper);
+      });
     },
 
     trackProductFocus: function () {
-      document.querySelectorAll('[data-product-id]').forEach(el => {
-        el.addEventListener('mouseenter', () => {
+      const links = Array.from(document.querySelectorAll('a[href*="/product"], a[href*="/catalog"]'));
+      const uniqueUrls = new Set();
+
+      links.forEach(link => {
+        const href = link.href;
+        if (!href || uniqueUrls.has(href)) return;
+        uniqueUrls.add(href);
+
+        const wrapper = link.closest('[class]');
+        if (!wrapper) return;
+
+        wrapper.addEventListener('mouseenter', () => {
           this.currentProductFocusStart = Date.now();
         });
-        el.addEventListener('mouseleave', () => {
+
+        wrapper.addEventListener('mouseleave', () => {
           if (this.currentProductFocusStart) {
             this.productFocusTime += (Date.now() - this.currentProductFocusStart) / 1000;
             this.currentProductFocusStart = null;
