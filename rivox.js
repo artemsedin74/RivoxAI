@@ -1,4 +1,9 @@
 (function () {
+  const RIVOX_VERSION = "1.0.3";
+
+  const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
+  if (isBot) return;
+
   window.Rivox = {
     init: function (clientToken, endpoint) {
       this.clientToken = clientToken;
@@ -8,6 +13,7 @@
       this.sessionStart = Date.now();
       this.sentScroll = false;
       this.clickCount = 0;
+      this.eventCount = 0;
       this.productViews = new Set();
       this.productClickUrls = new Set();
       this.returnedToProduct = false;
@@ -26,36 +32,38 @@
     },
 
     start: function () {
-      this.trackClicks();
-      this.trackForms();
-      this.trackScroll();
-      this.trackProductViews();
-      this.trackProductFocus();
-      this.trackUnload();
-      this.interceptYandexGoals();
+      try {
+        this.trackClicks();
+        this.trackForms();
+        this.trackScroll();
+        this.trackProductViews();
+        this.trackProductFocus();
+        this.trackUnload();
+        this.interceptYandexGoals();
 
-      this.send("session_start", {
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        client_id: this.ym_uid,
-        referrer: document.referrer
-      });
-
-      setTimeout(() => {
-        this.send("session_idle_ping", {
-          idle_ping: true,
+        this.send("session_start", {
           url: window.location.href,
-          timestamp: new Date().toISOString(),
-          client_id: this.ym_uid
+          client_id: this.ym_uid,
+          referrer: document.referrer
         });
-      }, 15000);
+
+        setTimeout(() => {
+          this.send("session_idle_ping", {
+            idle_ping: true,
+            url: window.location.href,
+            client_id: this.ym_uid
+          });
+        }, 15000);
+      } catch (err) {
+        this.send("error", { debug: err.toString() });
+      }
     },
 
     send: function (event, data = {}) {
-      if (!this.endpoint) {
-        console.warn('[RIVOX] Endpoint не задан в init()');
-        return;
-      }
+      if (!this.endpoint || this.eventCount > 50) return;
+      this.eventCount++;
+
+      const truncate = (v) => typeof v === "string" ? v.slice(0, 150) : v;
 
       const payload = {
         event,
@@ -68,7 +76,8 @@
         referrer: document.referrer,
         userAgent: navigator.userAgent,
         timestamp: new Date().toISOString(),
-        ...data
+        rivox_version: RIVOX_VERSION,
+        ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, truncate(v)]))
       };
 
       navigator.sendBeacon(this.endpoint, JSON.stringify(payload));
@@ -90,10 +99,10 @@
               });
             }
 
-            console.log('[RIVOX] перехвачена цель Метрики:', goalName, goalData);
+            console.log('[RIVOX] Перехвачена цель Метрики:', goalName, goalData);
           }
         } catch (e) {
-          console.warn('[RIVOX] ошибка при перехвате ym:', e);
+          console.warn('[RIVOX] Ошибка при перехвате ym:', e);
         }
 
         return originalYm?.apply?.(this, args);
