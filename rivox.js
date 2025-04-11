@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.0";
+  const RIVOX_VERSION = "1.1.1";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -11,7 +11,7 @@
       this.utm = new URLSearchParams(window.location.search);
       this.sessionStart = Date.now();
       this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
-      this.sentScroll = false;
+      this.scrollDepth = 0;
       this.scrollCount = 0;
       this.clickCount = 0;
       this.eventCount = 0;
@@ -31,7 +31,6 @@
       if (cartPaths.some(p => path.includes(p))) this.visitedCart = true;
       if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = true;
 
-      // Retry-попытки получить client_id
       this.waitForClientID = new Promise((resolve) => {
         let attempts = 0;
         const interval = setInterval(() => {
@@ -177,11 +176,9 @@
     trackScroll: function () {
       window.addEventListener('scroll', () => {
         this.scrollCount++;
-        if (this.sentScroll) return;
-        const scrollPosition = window.scrollY + window.innerHeight;
-        const fullHeight = document.body.scrollHeight;
-        if (scrollPosition / fullHeight > 0.9) {
-          this.sentScroll = true;
+        const currentDepth = Math.round((window.scrollY + window.innerHeight) / document.body.scrollHeight * 100);
+        if (currentDepth > this.scrollDepth) {
+          this.scrollDepth = currentDepth;
         }
       }, { passive: true });
     },
@@ -221,7 +218,7 @@
         const timeOnPage = Math.round((Date.now() - this.sessionStart) / 1000);
         this.send('session_summary', {
           time_on_page: timeOnPage,
-          scroll_depth: this.sentScroll ? 90 : 0,
+          scroll_depth: this.scrollDepth,
           scroll_count: this.scrollCount,
           click_count: this.clickCount,
           product_clicks: Array.from(this.productClickUrls),
