@@ -133,14 +133,17 @@
 
         const tag = target.tagName || '';
         const text = (target.innerText || '').trim().slice(0, 100);
+        const htmlText = (target.innerHTML || '').replace(/<[^>]+>/g, '').trim().slice(0, 100);
         const id = target.id || '';
         const className = target.className || '';
         const name = target.name || '';
         const href = target.href || '';
 
+        const finalText = text || htmlText || '[no text]';
+
         this.lastClickMeta = {
           click_tag: tag,
-          click_text: text,
+          click_text: finalText,
           click_id: id,
           click_class: className,
           click_name: name,
@@ -185,6 +188,38 @@
       document.querySelectorAll('[data-product-id]').forEach(el => observer.observe(el));
     },
 
-    trackProductFocus
-::contentReference[oaicite:3]{index=3}
- 
+    trackProductFocus: function () {
+      document.querySelectorAll('[data-product-id]').forEach(el => {
+        el.addEventListener('mouseenter', () => {
+          this.currentProductFocusStart = Date.now();
+        });
+        el.addEventListener('mouseleave', () => {
+          if (this.currentProductFocusStart) {
+            this.productFocusTime += (Date.now() - this.currentProductFocusStart) / 1000;
+            this.currentProductFocusStart = null;
+          }
+        });
+      });
+    },
+
+    trackUnload: function () {
+      window.addEventListener('beforeunload', () => {
+        const timeOnPage = Math.round((Date.now() - this.sessionStart) / 1000);
+        this.send('session_summary', {
+          time_on_page: timeOnPage,
+          scroll_depth: this.sentScroll ? 90 : 0,
+          scroll_count: this.scrollCount,
+          click_count: this.clickCount,
+          product_clicks: Array.from(this.productClickUrls),
+          form_submitted: this.formSubmitted,
+          visited_cart: this.visitedCart,
+          purchase_completed: this.purchaseCompleted,
+          number_of_products_viewed: this.productViews.size,
+          returned_to_same_product: this.returnedToProduct,
+          focus_time_on_product_card: Math.round(this.productFocusTime),
+          ...(this.lastClickMeta || {})
+        });
+      });
+    }
+  };
+})();
