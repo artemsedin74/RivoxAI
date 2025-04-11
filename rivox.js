@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.0.3";
+  const RIVOX_VERSION = "1.0.4";
 
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
@@ -11,6 +11,7 @@
       this.ym_uid = document.cookie.match(/_ym_uid=([^;]+)/)?.[1] || null;
       this.utm = new URLSearchParams(window.location.search);
       this.sessionStart = Date.now();
+      this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
       this.sentScroll = false;
       this.clickCount = 0;
       this.eventCount = 0;
@@ -25,8 +26,8 @@
 
       const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
       const successPaths = ["/thank-you", "/order-success", "/spasibo", "/success"];
-
       const path = window.location.pathname.toLowerCase();
+
       if (cartPaths.some(p => path.includes(p))) this.visitedCart = true;
       if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = true;
     },
@@ -67,6 +68,7 @@
 
       const payload = {
         event,
+        session_id: this.sessionId,
         clientToken: this.clientToken,
         client_id: this.ym_uid,
         utm_source: this.utm.get('utm_source'),
