@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.0.4";
+  const RIVOX_VERSION = "1.0.5";
 
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
@@ -13,6 +13,7 @@
       this.sessionStart = Date.now();
       this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
       this.sentScroll = false;
+      this.scrollCount = 0;
       this.clickCount = 0;
       this.eventCount = 0;
       this.productViews = new Set();
@@ -131,6 +132,7 @@
 
     trackScroll: function () {
       window.addEventListener('scroll', () => {
+        this.scrollCount++;
         if (this.sentScroll) return;
         const scrollPosition = window.scrollY + window.innerHeight;
         const fullHeight = document.body.scrollHeight;
@@ -176,6 +178,7 @@
         this.send('session_summary', {
           time_on_page: timeOnPage,
           scroll_depth: this.sentScroll ? 90 : 0,
+          scroll_count: this.scrollCount,
           click_count: this.clickCount,
           product_clicks: Array.from(this.productClickUrls),
           form_submitted: this.formSubmitted,
