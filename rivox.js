@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.0.9";
+  const RIVOX_VERSION = "1.0.10";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -32,18 +32,26 @@
       if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = true;
 
       this.waitForClientID = new Promise((resolve) => {
-        if (typeof ym === "function") {
-          try {
-            ym(94550231, 'getClientID', (clientID) => {
-              this.ym_uid = clientID;
+        let attempts = 0;
+        const interval = setInterval(() => {
+          attempts++;
+          if (typeof ym === 'function') {
+            try {
+              ym(94550231, 'getClientID', (clientID) => {
+                this.ym_uid = clientID;
+                clearInterval(interval);
+                resolve();
+              });
+            } catch (e) {
+              clearInterval(interval);
               resolve();
-            });
-          } catch (e) {
+            }
+          }
+          if (attempts > 20) {
+            clearInterval(interval);
             resolve();
           }
-        } else {
-          resolve();
-        }
+        }, 100);
       });
     },
 
@@ -129,13 +137,11 @@
       document.addEventListener('click', (e) => {
         this.clickCount++;
         let el = e.target;
-
         while (el && el.tagName && el.tagName !== 'BODY') {
           const text = (el.innerText || '').trim();
           if (text.length >= 3) break;
           el = el.parentElement;
         }
-
         if (!el) return;
 
         const tag = el.tagName || '';
