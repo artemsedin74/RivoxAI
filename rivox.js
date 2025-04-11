@@ -1,7 +1,8 @@
 (function () {
   window.Rivox = {
-    init: function (clientToken) {
+    init: function (clientToken, endpoint) {
       this.clientToken = clientToken;
+      this.endpoint = endpoint;
       this.ym_uid = document.cookie.match(/_ym_uid=([^;]+)/)?.[1] || null;
       this.utm = new URLSearchParams(window.location.search);
       this.sessionStart = Date.now();
@@ -22,6 +23,11 @@
     },
 
     send: function (event, data = {}) {
+      if (!this.endpoint) {
+        console.warn('[RIVOX] Endpoint не задан в init()');
+        return;
+      }
+
       const payload = {
         event,
         clientToken: this.clientToken,
@@ -36,7 +42,7 @@
         ...data
       };
 
-      navigator.sendBeacon("https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec", JSON.stringify(payload));
+      navigator.sendBeacon(this.endpoint, JSON.stringify(payload));
       console.log("[RIVOX]", payload);
     },
 
