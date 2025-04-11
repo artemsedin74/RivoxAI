@@ -23,15 +23,14 @@
       this.visitedCart = false;
       this.formSubmitted = false;
       this.purchaseCompleted = false;
+      this.lastClickMeta = {};
 
       const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
       const successPaths = ["/thank-you", "/order-success", "/spasibo", "/success"];
       const path = window.location.pathname.toLowerCase();
-
       if (cartPaths.some(p => path.includes(p))) this.visitedCart = true;
       if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = true;
 
-      // Ждём client_id от Метрики (асинхронно)
       this.waitForClientID = new Promise((resolve) => {
         if (typeof ym === "function") {
           try {
@@ -40,10 +39,10 @@
               resolve();
             });
           } catch (e) {
-            resolve(); // Даже если ошибка — продолжаем
+            resolve();
           }
         } else {
-          resolve(); // ym не определён
+          resolve();
         }
       });
     },
@@ -111,20 +110,17 @@
           if (args[1] === 'reachGoal') {
             const goalName = args[2];
             const goalData = args[3] || {};
-
             if (window.Rivox?.send) {
               window.Rivox.send('yandex_goal', {
                 goal_name: goalName,
                 ...goalData
               });
             }
-
             console.log('[RIVOX] Перехвачена цель Метрики:', goalName, goalData);
           }
         } catch (e) {
           console.warn('[RIVOX] Ошибка при перехвате ym:', e);
         }
-
         return originalYm?.apply?.(this, args);
       };
     },
@@ -132,10 +128,24 @@
     trackClicks: function () {
       document.addEventListener('click', (e) => {
         this.clickCount++;
-        const target = e.target.closest('a, button, input[type=submit]');
-        if (target && target.href) {
-          this.productClickUrls.add(target.href);
-        }
+        const target = e.target.closest('*');
+        if (!target) return;
+
+        const tag = target.tagName || '';
+        const text = (target.innerText || '').trim().slice(0, 100);
+        const id = target.id || '';
+        const className = target.className || '';
+        const name = target.name || '';
+        const href = target.href || '';
+
+        this.lastClickMeta = {
+          click_tag: tag,
+          click_text: text,
+          click_id: id,
+          click_class: className,
+          click_name: name,
+          click_href: href
+        };
       }, { passive: true });
     },
 
@@ -203,7 +213,8 @@
           purchase_completed: this.purchaseCompleted,
           number_of_products_viewed: this.productViews.size,
           returned_to_same_product: this.returnedToProduct,
-          focus_time_on_product_card: Math.round(this.productFocusTime)
+          focus_time_on_product_card: Math.round(this.productFocusTime),
+          ...(this.lastClickMeta || {})
         });
       });
     }
