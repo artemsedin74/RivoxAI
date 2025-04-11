@@ -32,8 +32,8 @@
       this.trackProductViews();
       this.trackProductFocus();
       this.trackUnload();
+      this.interceptYandexGoals();
 
-      // Отправка сразу при загрузке страницы
       this.send("session_start", {
         timestamp: new Date().toISOString(),
         url: window.location.href,
@@ -41,7 +41,6 @@
         referrer: document.referrer
       });
 
-      // Запасная отправка через 15 секунд, если вкладка не закрыта
       setTimeout(() => {
         this.send("session_idle_ping", {
           idle_ping: true,
@@ -74,6 +73,31 @@
 
       navigator.sendBeacon(this.endpoint, JSON.stringify(payload));
       console.log("[RIVOX]", payload);
+    },
+
+    interceptYandexGoals: function () {
+      const originalYm = window.ym;
+      window.ym = function (...args) {
+        try {
+          if (args[1] === 'reachGoal') {
+            const goalName = args[2];
+            const goalData = args[3] || {};
+
+            if (window.Rivox?.send) {
+              window.Rivox.send('yandex_goal', {
+                goal_name: goalName,
+                ...goalData
+              });
+            }
+
+            console.log('[RIVOX] перехвачена цель Метрики:', goalName, goalData);
+          }
+        } catch (e) {
+          console.warn('[RIVOX] ошибка при перехвате ym:', e);
+        }
+
+        return originalYm?.apply?.(this, args);
+      };
     },
 
     trackClicks: function () {
