@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.0.8";
+  const RIVOX_VERSION = "1.0.9";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -128,22 +128,27 @@
     trackClicks: function () {
       document.addEventListener('click', (e) => {
         this.clickCount++;
-        const target = e.target.closest('*');
-        if (!target) return;
+        let el = e.target;
 
-        const tag = target.tagName || '';
-        const text = (target.innerText || '').trim().slice(0, 100);
-        const htmlText = (target.innerHTML || '').replace(/<[^>]+>/g, '').trim().slice(0, 100);
-        const id = target.id || '';
-        const className = target.className || '';
-        const name = target.name || '';
-        const href = target.href || '';
+        while (el && el.tagName && el.tagName !== 'BODY') {
+          const text = (el.innerText || '').trim();
+          if (text.length >= 3) break;
+          el = el.parentElement;
+        }
 
-        const finalText = text || htmlText || '[no text]';
+        if (!el) return;
+
+        const tag = el.tagName || '';
+        const text = (el.innerText || '').trim().slice(0, 100);
+        const id = el.id || '';
+        const className = el.className || '';
+        const name = el.name || '';
+        const href = el.href || '';
+        const htmlText = (el.innerHTML || '').replace(/<[^>]+>/g, '').trim().slice(0, 100);
 
         this.lastClickMeta = {
           click_tag: tag,
-          click_text: finalText,
+          click_text: text || htmlText || '[no text]',
           click_id: id,
           click_class: className,
           click_name: name,
