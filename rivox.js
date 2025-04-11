@@ -185,38 +185,6 @@
       document.querySelectorAll('[data-product-id]').forEach(el => observer.observe(el));
     },
 
-    trackProductFocus: function () {
-      document.querySelectorAll('[data-product-id]').forEach(el => {
-        el.addEventListener('mouseenter', () => {
-          this.currentProductFocusStart = Date.now();
-        });
-        el.addEventListener('mouseleave', () => {
-          if (this.currentProductFocusStart) {
-            this.productFocusTime += (Date.now() - this.currentProductFocusStart) / 1000;
-            this.currentProductFocusStart = null;
-          }
-        });
-      });
-    },
-
-    trackUnload: function () {
-      window.addEventListener('beforeunload', () => {
-        const timeOnPage = Math.round((Date.now() - this.sessionStart) / 1000);
-        this.send('session_summary', {
-          time_on_page: timeOnPage,
-          scroll_depth: this.sentScroll ? 90 : 0,
-          scroll_count: this.scrollCount,
-          click_count: this.clickCount,
-          product_clicks: Array.from(this.productClickUrls),
-          form_submitted: this.formSubmitted,
-          visited_cart: this.visitedCart,
-          purchase_completed: this.purchaseCompleted,
-          number_of_products_viewed: this.productViews.size,
-          returned_to_same_product: this.returnedToProduct,
-          focus_time_on_product_card: Math.round(this.productFocusTime),
-          ...(this.lastClickMeta || {})
-        });
-      });
-    }
-  };
-})();
+    trackProductFocus
+::contentReference[oaicite:3]{index=3}
+ 
