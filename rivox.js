@@ -11,7 +11,7 @@
       this.utm = new URLSearchParams(window.location.search);
       this.sessionStart = Date.now();
       this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
-      this.scrollDepth = 0;
+      this.sentScroll = false;
       this.scrollCount = 0;
       this.clickCount = 0;
       this.eventCount = 0;
@@ -153,10 +153,29 @@
         const className = el.className || '';
         const name = el.name || '';
         const href = el.href || '';
+        const finalText = text || htmlText || '';
+
+        const lowered = finalText.toLowerCase();
+
+        // 🟢 Если кнопка выглядит как форма
+        const formKeywords = [
+          "оставить заявку", "получить программу", "записаться", "купить", "заказать",
+          "купить в 1 клик", "оплатить", "купить в кредит", "купить в рассрочку",
+          "кредит", "рассрочка", "сплит", "выбор оплаты", "выбор метода оплаты"
+        ];
+        if (formKeywords.some(kw => lowered.includes(kw))) {
+          this.formSubmitted = true;
+        }
+
+        // 🛒 Если кнопка добавляет в корзину
+        const cartKeywords = ["в корзину", "добавить в корзину"];
+        if (cartKeywords.some(kw => lowered.includes(kw))) {
+          this.visitedCart = true;
+        }
 
         this.lastClickMeta = {
           click_tag: tag,
-          click_text: text || htmlText || '[no text]',
+          click_text: finalText || '[no text]',
           click_id: id,
           click_class: className,
           click_name: name,
@@ -176,9 +195,11 @@
     trackScroll: function () {
       window.addEventListener('scroll', () => {
         this.scrollCount++;
-        const currentDepth = Math.round((window.scrollY + window.innerHeight) / document.body.scrollHeight * 100);
-        if (currentDepth > this.scrollDepth) {
-          this.scrollDepth = currentDepth;
+        const scrollPosition = window.scrollY + window.innerHeight;
+        const fullHeight = document.body.scrollHeight;
+        const scrollDepth = (scrollPosition / fullHeight) * 100;
+        if (scrollDepth > 1) {
+          this.sentScroll = true;
         }
       }, { passive: true });
     },
@@ -218,7 +239,7 @@
         const timeOnPage = Math.round((Date.now() - this.sessionStart) / 1000);
         this.send('session_summary', {
           time_on_page: timeOnPage,
-          scroll_depth: this.scrollDepth,
+          scroll_depth: this.sentScroll ? 90 : 0,
           scroll_count: this.scrollCount,
           click_count: this.clickCount,
           product_clicks: Array.from(this.productClickUrls),
