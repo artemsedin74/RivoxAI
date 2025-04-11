@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.0.6";
+  const RIVOX_VERSION = "1.0.7";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -27,50 +27,61 @@
       const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
       const successPaths = ["/thank-you", "/order-success", "/spasibo", "/success"];
       const path = window.location.pathname.toLowerCase();
+
       if (cartPaths.some(p => path.includes(p))) this.visitedCart = true;
       if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = true;
 
-      // Получение client_id из Метрики
-      if (typeof ym === "function") {
-        try {
-          ym(94550231, 'getClientID', (clientID) => {
-            this.ym_uid = clientID;
-          });
-        } catch (e) {}
-      }
+      // Ждём client_id от Метрики (асинхронно)
+      this.waitForClientID = new Promise((resolve) => {
+        if (typeof ym === "function") {
+          try {
+            ym(94550231, 'getClientID', (clientID) => {
+              this.ym_uid = clientID;
+              resolve();
+            });
+          } catch (e) {
+            resolve(); // Даже если ошибка — продолжаем
+          }
+        } else {
+          resolve(); // ym не определён
+        }
+      });
     },
 
     start: function () {
-      try {
-        this.trackClicks();
-        this.trackForms();
-        this.trackScroll();
-        this.trackProductViews();
-        this.trackProductFocus();
-        this.trackUnload();
-        this.interceptYandexGoals();
+      this.waitForClientID.then(() => {
+        try {
+          this.trackClicks();
+          this.trackForms();
+          this.trackScroll();
+          this.trackProductViews();
+          this.trackProductFocus();
+          this.trackUnload();
+          this.interceptYandexGoals();
 
-        this.send("session_start", {
-          url: window.location.href,
-          client_id: this.ym_uid,
-          referrer: document.referrer
-        });
-
-        setTimeout(() => {
-          this.send("session_idle_ping", {
-            idle_ping: true,
+          this.send("session_start", {
             url: window.location.href,
-            client_id: this.ym_uid
+            client_id: this.ym_uid,
+            referrer: document.referrer
           });
-        }, 15000);
-      } catch (err) {
-        this.send("error", { debug: err.toString() });
-      }
+
+          setTimeout(() => {
+            this.send("session_idle_ping", {
+              idle_ping: true,
+              url: window.location.href,
+              client_id: this.ym_uid
+            });
+          }, 15000);
+        } catch (err) {
+          this.send("error", { debug: err.toString() });
+        }
+      });
     },
 
     send: function (event, data = {}) {
       if (!this.endpoint || this.eventCount > 50) return;
       this.eventCount++;
+
       const truncate = (v) => typeof v === "string" ? v.slice(0, 150) : v;
 
       const payload = {
@@ -100,17 +111,20 @@
           if (args[1] === 'reachGoal') {
             const goalName = args[2];
             const goalData = args[3] || {};
+
             if (window.Rivox?.send) {
               window.Rivox.send('yandex_goal', {
                 goal_name: goalName,
                 ...goalData
               });
             }
+
             console.log('[RIVOX] Перехвачена цель Метрики:', goalName, goalData);
           }
         } catch (e) {
           console.warn('[RIVOX] Ошибка при перехвате ym:', e);
         }
+
         return originalYm?.apply?.(this, args);
       };
     },
@@ -157,6 +171,7 @@
           }
         });
       }, { threshold: 0.5 });
+
       document.querySelectorAll('[data-product-id]').forEach(el => observer.observe(el));
     },
 
