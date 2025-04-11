@@ -32,6 +32,24 @@
       this.trackProductViews();
       this.trackProductFocus();
       this.trackUnload();
+
+      // Отправка сразу при загрузке страницы
+      this.send("session_start", {
+        timestamp: new Date().toISOString(),
+        url: window.location.href,
+        client_id: this.ym_uid,
+        referrer: document.referrer
+      });
+
+      // Запасная отправка через 15 секунд, если вкладка не закрыта
+      setTimeout(() => {
+        this.send("session_idle_ping", {
+          idle_ping: true,
+          url: window.location.href,
+          timestamp: new Date().toISOString(),
+          client_id: this.ym_uid
+        });
+      }, 15000);
     },
 
     send: function (event, data = {}) {
