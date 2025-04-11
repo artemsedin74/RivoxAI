@@ -15,12 +15,14 @@
       this.currentProductFocusStart = null;
       this.visitedCart = false;
       this.formSubmitted = false;
+      this.purchaseCompleted = false;
 
       const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
+      const successPaths = ["/thank-you", "/order-success", "/spasibo", "/success"];
+
       const path = window.location.pathname.toLowerCase();
-      if (cartPaths.some(p => path.includes(p))) {
-        this.visitedCart = true;
-      }
+      if (cartPaths.some(p => path.includes(p))) this.visitedCart = true;
+      if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = true;
     },
 
     start: function () {
@@ -125,6 +127,7 @@
           product_clicks: Array.from(this.productClickUrls),
           form_submitted: this.formSubmitted,
           visited_cart: this.visitedCart,
+          purchase_completed: this.purchaseCompleted,
           number_of_products_viewed: this.productViews.size,
           returned_to_same_product: this.returnedToProduct,
           focus_time_on_product_card: Math.round(this.productFocusTime)
