@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.0.10";
+  const RIVOX_VERSION = "1.1.0";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -31,6 +31,7 @@
       if (cartPaths.some(p => path.includes(p))) this.visitedCart = true;
       if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = true;
 
+      // Retry-попытки получить client_id
       this.waitForClientID = new Promise((resolve) => {
         let attempts = 0;
         const interval = setInterval(() => {
@@ -137,20 +138,22 @@
       document.addEventListener('click', (e) => {
         this.clickCount++;
         let el = e.target;
+
         while (el && el.tagName && el.tagName !== 'BODY') {
           const text = (el.innerText || '').trim();
           if (text.length >= 3) break;
           el = el.parentElement;
         }
+
         if (!el) return;
 
         const tag = el.tagName || '';
         const text = (el.innerText || '').trim().slice(0, 100);
+        const htmlText = (el.innerHTML || '').replace(/<[^>]+>/g, '').trim().slice(0, 100);
         const id = el.id || '';
         const className = el.className || '';
         const name = el.name || '';
         const href = el.href || '';
-        const htmlText = (el.innerHTML || '').replace(/<[^>]+>/g, '').trim().slice(0, 100);
 
         this.lastClickMeta = {
           click_tag: tag,
