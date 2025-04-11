@@ -7,19 +7,29 @@
       this.utm = new URLSearchParams(window.location.search);
       this.sessionStart = Date.now();
       this.sentScroll = false;
+      this.clickCount = 0;
+      this.productViews = new Set();
+      this.productClickUrls = new Set();
+      this.returnedToProduct = false;
+      this.productFocusTime = 0;
+      this.currentProductFocusStart = null;
+      this.visitedCart = false;
+      this.formSubmitted = false;
+
+      const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
+      const path = window.location.pathname.toLowerCase();
+      if (cartPaths.some(p => path.includes(p))) {
+        this.visitedCart = true;
+      }
     },
 
     start: function () {
-      this.trackPageView();
-      this.trackProductView();
       this.trackClicks();
       this.trackForms();
-      this.trackUnload();
       this.trackScroll();
-    },
-
-    goal: function (event, data = {}) {
-      this.send(event, data);
+      this.trackProductViews();
+      this.trackProductFocus();
+      this.trackUnload();
     },
 
     send: function (event, data = {}) {
@@ -46,42 +56,21 @@
       console.log("[RIVOX]", payload);
     },
 
-    trackPageView: function () {
-      this.send('page_view', {
-        title: document.title
-      });
-    },
-
-    trackProductView: function () {
-      const path = window.location.pathname.toLowerCase();
-      if (path.includes('/product') || path.includes('/catalog') || path.includes('/item')) {
-        this.send('product_view', {
-          product_url: window.location.href
-        });
-      }
-    },
-
     trackClicks: function () {
-      document.querySelectorAll('button, a, input[type=submit]').forEach(el => {
-        el.addEventListener('click', () => {
-          const label = el.getAttribute('data-track') || el.innerText || el.id || 'unknown';
-          this.send('click', { label });
-        });
-      });
+      document.addEventListener('click', (e) => {
+        this.clickCount++;
+        const target = e.target.closest('a, button, input[type=submit]');
+        if (target && target.href) {
+          this.productClickUrls.add(target.href);
+        }
+      }, { passive: true });
     },
 
     trackForms: function () {
       document.querySelectorAll('form').forEach(form => {
         form.addEventListener('submit', () => {
-          this.send('form_submit', { formName: form.getAttribute('name') || form.id || 'unnamed_form' });
+          this.formSubmitted = true;
         });
-      });
-    },
-
-    trackUnload: function () {
-      window.addEventListener('beforeunload', () => {
-        const timeOnPage = Math.round((Date.now() - this.sessionStart) / 1000);
-        this.send('time_on_site', { seconds: timeOnPage });
       });
     },
 
@@ -92,8 +81,54 @@
         const fullHeight = document.body.scrollHeight;
         if (scrollPosition / fullHeight > 0.9) {
           this.sentScroll = true;
-          this.send('scroll_depth', { depth: '90%' });
         }
+      }, { passive: true });
+    },
+
+    trackProductViews: function () {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting && entry.target.dataset.productId) {
+            const productId = entry.target.dataset.productId;
+            if (this.productViews.has(productId)) {
+              this.returnedToProduct = true;
+            }
+            this.productViews.add(productId);
+          }
+        });
+      }, { threshold: 0.5 });
+
+      document.querySelectorAll('[data-product-id]').forEach(el => observer.observe(el));
+    },
+
+    trackProductFocus: function () {
+      document.querySelectorAll('[data-product-id]').forEach(el => {
+        el.addEventListener('mouseenter', () => {
+          this.currentProductFocusStart = Date.now();
+        });
+        el.addEventListener('mouseleave', () => {
+          if (this.currentProductFocusStart) {
+            this.productFocusTime += (Date.now() - this.currentProductFocusStart) / 1000;
+            this.currentProductFocusStart = null;
+          }
+        });
+      });
+    },
+
+    trackUnload: function () {
+      window.addEventListener('beforeunload', () => {
+        const timeOnPage = Math.round((Date.now() - this.sessionStart) / 1000);
+        this.send('session_summary', {
+          time_on_page: timeOnPage,
+          scroll_depth: this.sentScroll ? 90 : 0,
+          click_count: this.clickCount,
+          product_clicks: Array.from(this.productClickUrls),
+          form_submitted: this.formSubmitted,
+          visited_cart: this.visitedCart,
+          number_of_products_viewed: this.productViews.size,
+          returned_to_same_product: this.returnedToProduct,
+          focus_time_on_product_card: Math.round(this.productFocusTime)
+        });
       });
     }
   };
