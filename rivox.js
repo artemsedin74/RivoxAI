@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.11";
+  const RIVOX_VERSION = "1.1.12";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -59,15 +59,18 @@
       this.returnVisits = localStorage.getItem("rivox_return_visits") || 0;
       this.formInteraction = 0;
       this.ctaVisible = 0;
-      this.hasContactInfo = /(\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
+      this.hasContactInfo = /(|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
 
       localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
+
+      // Новая фича: время с прошлого визита
+      const lastVisit = localStorage.getItem("rivox_last_visit") || Date.now();
+      this.timeSinceLastVisit = Math.floor((Date.now() - lastVisit) / 1000); // в секундах
+      localStorage.setItem("rivox_last_visit", Date.now());
 
       this.deviceType = detectDevice();
       this.browser = navigator.userAgentData?.brands?.[0]?.brand || navigator.userAgent;
       this.platform = navigator.userAgentData?.platform || navigator.platform;
-
-      this.lastClickMeta = {};
 
       const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
       const successPaths = ["/thank-you", "/order-success", "/spasibo", "/success"];
@@ -103,27 +106,12 @@
     start: function () {
       this.waitForClientID.then(() => {
         try {
-          this.trackClicks();
-          this.trackForms();
-          this.trackScroll();
-          this.trackProductViews();
-          this.trackProductFocus();
-          this.trackUnload();
-          this.interceptYandexGoals();
-
           this.send("session_start", {
             url: window.location.href,
             client_id: this.ym_uid,
-            referrer: document.referrer
+            referrer: document.referrer,
+            time_since_last_visit: this.timeSinceLastVisit
           });
-
-          setTimeout(() => {
-            this.send("session_idle_ping", {
-              idle_ping: 1,
-              url: window.location.href,
-              client_id: this.ym_uid
-            });
-          }, 15000);
         } catch (err) {
           this.send("error", { debug: err.toString() });
         }
@@ -152,6 +140,7 @@
         platform: this.platform,
         timestamp: new Date().toISOString(),
         rivox_version: RIVOX_VERSION,
+        time_since_last_visit: this.timeSinceLastVisit,
         ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, truncate(v)]))
       };
 
@@ -179,35 +168,5 @@
         return originalYm?.apply?.(this, args);
       };
     },
-
-    trackClicks: function () {
-      document.addEventListener('click', (e) => {
-        this.clickCount++;
-        this.actionHistory.push(`click:${e.target?.innerText?.slice(0, 20)}`);
-
-        let el = e.target;
-        while (el && el.tagName && el.tagName !== 'BODY') {
-          const text = (el.innerText || '').trim();
-          if (text.length >= 3) break;
-          el = el.parentElement;
-        }
-
-        if (!el) return;
-
-        const tag = el.tagName || '';
-        const text = (el.innerText || '').trim().slice(0, 100);
-        const htmlText = (el.innerHTML || '').replace(/<[^>]+>/g, '').trim().slice(0, 100);
-        const id = el.id || '';
-        const className = el.className || '';
-        const name = el.name || '';
-        const href = el.href || '';
-        const finalText = text || htmlText || '';
-        const lowered = finalText.toLowerCase();
-
-        const matchAny = (keywords) => keywords.some(k => lowered.includes(k));
-        if (matchAny(["купить", "заказать", "оплатить", "в 1 клик"])) {
-          this.formSubmitted = 1;
-          this.intentStages.push("clicked_buy");
-        }
-        if (matchAny(["в корзину", "добавить в корзину", "корзина"])) {
-          this.vis
+  };
+})();
