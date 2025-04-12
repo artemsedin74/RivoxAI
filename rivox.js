@@ -85,13 +85,12 @@ window.Rivox = {
         if (sent) return;
       }
 
-      // Fallback через fetch (no-cors)
+      // Fallback через fetch (без no-cors)
       const formData = new URLSearchParams();
       formData.append("data", body);
 
       fetch(sendUrl, {
         method: "POST",
-        mode: "no-cors",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData.toString()
       })
