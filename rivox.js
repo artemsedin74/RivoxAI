@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.10";
+  const RIVOX_VERSION = "1.1.11";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -33,8 +33,11 @@
       this.sessionStart = Date.now();
       this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
 
+      // Поведенческие параметры
       this.scrollDepth = 0;
       this.scrollCount = 0;
+      this.scrollSpeed = 0;
+      this.lastScrollTime = Date.now();
       this.clickCount = 0;
       this.eventCount = 0;
       this.productViews = new Set();
@@ -43,10 +46,22 @@
       this.productFocusTime = 0;
       this.currentProductFocusStart = null;
 
+      // События
       this.visitedCart = 0;
       this.formSubmitted = 0;
       this.purchaseCompleted = 0;
       this.intentStages = [];
+
+      // Доп. фичи
+      this.pagesViewed = 1;
+      this.pageType = document.body.getAttribute("data-page-type") || '';
+      this.actionHistory = [];
+      this.returnVisits = localStorage.getItem("rivox_return_visits") || 0;
+      this.formInteraction = 0;
+      this.ctaVisible = 0;
+      this.hasContactInfo = /(\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
+
+      localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
 
       this.deviceType = detectDevice();
       this.browser = navigator.userAgentData?.brands?.[0]?.brand || navigator.userAgent;
@@ -157,7 +172,6 @@
                 ...goalData
               });
             }
-            console.log('[RIVOX] Перехвачена цель Метрики:', goalName, goalData);
           }
         } catch (e) {
           console.warn('[RIVOX] Ошибка при перехвате ym:', e);
@@ -169,8 +183,9 @@
     trackClicks: function () {
       document.addEventListener('click', (e) => {
         this.clickCount++;
-        let el = e.target;
+        this.actionHistory.push(`click:${e.target?.innerText?.slice(0, 20)}`);
 
+        let el = e.target;
         while (el && el.tagName && el.tagName !== 'BODY') {
           const text = (el.innerText || '').trim();
           if (text.length >= 3) break;
@@ -190,119 +205,9 @@
         const lowered = finalText.toLowerCase();
 
         const matchAny = (keywords) => keywords.some(k => lowered.includes(k));
-
         if (matchAny(["купить", "заказать", "оплатить", "в 1 клик"])) {
           this.formSubmitted = 1;
           this.intentStages.push("clicked_buy");
         }
         if (matchAny(["в корзину", "добавить в корзину", "корзина"])) {
-          this.visitedCart = 1;
-          this.intentStages.push("visited_cart");
-        }
-
-        this.lastClickMeta = {
-          click_tag: tag,
-          click_text: finalText || '[no text]',
-          click_id: id,
-          click_class: className,
-          click_name: name,
-          click_href: href
-        };
-      }, { passive: true });
-    },
-
-    trackForms: function () {
-      document.querySelectorAll('form').forEach(form => {
-        form.addEventListener('submit', () => {
-          this.formSubmitted = 1;
-          this.intentStages.push("submitted_form");
-        });
-      });
-    },
-
-    trackScroll: function () {
-      window.addEventListener('scroll', () => {
-        this.scrollCount++;
-        const scrollPosition = window.scrollY + window.innerHeight;
-        const fullHeight = document.body.scrollHeight;
-        const scrollDepth = (scrollPosition / fullHeight) * 100;
-        if (scrollDepth > this.scrollDepth) {
-          this.scrollDepth = scrollDepth.toFixed(0);
-        }
-      }, { passive: true });
-    },
-
-    trackProductViews: function () {
-      const links = Array.from(document.querySelectorAll('a[href*="/product"], a[href*="/catalog"]'));
-      const uniqueUrls = new Set();
-
-      links.forEach(link => {
-        const href = link.href;
-        if (!href || uniqueUrls.has(href)) return;
-        uniqueUrls.add(href);
-
-        const wrapper = link.closest('[class]');
-        if (!wrapper) return;
-
-        const observer = new IntersectionObserver((entries) => {
-          entries.forEach(entry => {
-            if (entry.isIntersecting) {
-              if (this.productViews.has(href)) {
-                this.returnedToProduct = 1;
-              }
-              this.productViews.add(href);
-            }
-          });
-        }, { threshold: 0.5 });
-
-        observer.observe(wrapper);
-      });
-    },
-
-    trackProductFocus: function () {
-      const links = Array.from(document.querySelectorAll('a[href*="/product"], a[href*="/catalog"]'));
-      const uniqueUrls = new Set();
-
-      links.forEach(link => {
-        const href = link.href;
-        if (!href || uniqueUrls.has(href)) return;
-        uniqueUrls.add(href);
-
-        const wrapper = link.closest('[class]');
-        if (!wrapper) return;
-
-        wrapper.addEventListener('mouseenter', () => {
-          this.currentProductFocusStart = Date.now();
-        });
-
-        wrapper.addEventListener('mouseleave', () => {
-          if (this.currentProductFocusStart) {
-            this.productFocusTime += (Date.now() - this.currentProductFocusStart) / 1000;
-            this.currentProductFocusStart = null;
-          }
-        });
-      });
-    },
-
-    trackUnload: function () {
-      window.addEventListener('beforeunload', () => {
-        const timeOnPage = Math.round((Date.now() - this.sessionStart) / 1000);
-        this.send('session_summary', {
-          time_on_page: timeOnPage,
-          scroll_depth: this.scrollDepth,
-          scroll_count: this.scrollCount,
-          click_count: this.clickCount,
-          product_clicks: Array.from(this.productClickUrls),
-          form_submitted: this.formSubmitted,
-          visited_cart: this.visitedCart,
-          purchase_completed: this.purchaseCompleted,
-          number_of_products_viewed: this.productViews.size,
-          returned_to_same_product: this.returnedToProduct,
-          focus_time_on_product_card: Math.round(this.productFocusTime),
-          intent_stages: JSON.stringify(this.intentStages),
-          ...(this.lastClickMeta || {})
-        });
-      });
-    }
-  };
-})();
+          this.vis
