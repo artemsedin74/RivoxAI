@@ -66,6 +66,7 @@ window.Rivox = {
       const summary = {
         session_id: this.state.sessionId,
         client_id: this.state.clientId || null,
+        clientToken: this.state.clientToken || "unknown_client", // 👈 добавлено поле clientToken
         timestamp: new Date().toISOString(),
         ...this.state.trafficSource,
         ...this.state.sessionMetrics,
@@ -111,6 +112,7 @@ window.Rivox = {
       const summary = {
         session_id: this.state.sessionId,
         client_id: this.state.clientId || null,
+        clientToken: this.state.clientToken || "unknown_client",
         timestamp: new Date().toISOString(),
         ...this.state.trafficSource,
         ...this.state.sessionMetrics,
