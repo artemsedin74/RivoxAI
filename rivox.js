@@ -113,11 +113,16 @@
         }
 
         try {
+          const formData = new URLSearchParams();
+          formData.append("data", body);
+
           fetch(sendUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body,
-            keepalive: true
+            mode: "no-cors",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: formData.toString()
           });
         } catch (e2) {
           this.debugLog("fetch fallback failed", e2);
