@@ -1,7 +1,14 @@
 (function () {
-  const RIVOX_VERSION = "1.1.6";
+  const RIVOX_VERSION = "1.1.7";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
+
+  function detectDevice() {
+    const ua = navigator.userAgent.toLowerCase();
+    if (/mobile|android|iphone|ipod|blackberry|phone/.test(ua)) return 'mobile';
+    if (/tablet|ipad/.test(ua)) return 'tablet';
+    return 'desktop';
+  }
 
   window.Rivox = {
     init: function (clientToken, endpoint) {
@@ -27,6 +34,11 @@
       this.visitedCart = 0;
       this.formSubmitted = 0;
       this.purchaseCompleted = 0;
+
+      // Устройство
+      this.deviceType = detectDevice();
+      this.browser = navigator.userAgentData?.brands?.[0]?.brand || navigator.userAgent;
+      this.platform = navigator.userAgentData?.platform || navigator.platform;
 
       this.lastClickMeta = {};
 
@@ -107,6 +119,9 @@
         url: window.location.href,
         referrer: document.referrer,
         userAgent: navigator.userAgent,
+        device_type: this.deviceType,
+        browser: this.browser,
+        platform: this.platform,
         timestamp: new Date().toISOString(),
         rivox_version: RIVOX_VERSION,
         ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, truncate(v)]))
