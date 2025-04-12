@@ -132,6 +132,23 @@
       }
     },
 
+    debugFlush() {
+      try {
+        const summary = {
+          session_id: this.state.sessionId,
+          client_id: this.state.clientId || null,
+          timestamp: new Date().toISOString(),
+          ...this.state.trafficSource,
+          ...this.state.sessionMetrics,
+          ...this.state.pageContext,
+          missing_product_ids: this.state.missing_product_ids || [],
+        };
+        this.debugLog("SUMMARY PREVIEW", summary);
+      } catch (e) {
+        this.debugLog("debugFlush error", e);
+      }
+    },
+
     trackAutoGoals() {
       document.addEventListener("click", (e) => {
         const el = e.target.closest("[data-product-id], .product-card, .product");
