@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.18";
+  const RIVOX_VERSION = "1.1.19";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -91,6 +91,8 @@
       if (cartPaths.some(p => path.includes(p))) this.visitedCart = 1;
       if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = 1;
 
+      this.interceptYandexGoals();
+
       this.waitForClientID = new Promise((resolve) => {
         let attempts = 0;
         const interval = setInterval(() => {
@@ -172,9 +174,7 @@
     send(event, data = {}) {
       if (!this.endpoint || this.eventCount > 50) return;
       this.eventCount++;
-
       const truncate = (v) => typeof v === "string" ? v.slice(0, 150) : v;
-
       const payload = {
         event,
         session_id: this.sessionId,
@@ -193,8 +193,24 @@
         rivox_version: RIVOX_VERSION,
         ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, truncate(v)]))
       };
-
       navigator.sendBeacon(this.endpoint, JSON.stringify(payload));
+    },
+
+    interceptYandexGoals() {
+      const originalYm = window.ym;
+      window.ym = (...args) => {
+        try {
+          if (args[1] === 'reachGoal') {
+            const goalName = args[2];
+            const goalData = args[3] || {};
+            this.send("yandex_goal", {
+              goal_name: goalName,
+              ...goalData
+            });
+          }
+        } catch {}
+        return originalYm?.apply?.(this, args);
+      };
     },
 
     trackScroll() {
