@@ -89,7 +89,7 @@
       this.returnVisits = localStorage.getItem("rivox_return_visits") || 0;
       this.formInteraction = 0;
       this.ctaVisible = 0;
-      this.hasContactInfo = /(|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
+      this.hasContactInfo = /(\u000b|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
 
       localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
 
@@ -189,7 +189,6 @@
       };
 
       navigator.sendBeacon(this.endpoint, JSON.stringify(payload));
-      console.log("[RIVOX]", payload);
     },
 
     trackScroll: function () {
