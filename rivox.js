@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.12";
+  const RIVOX_VERSION = "1.1.13";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -54,12 +54,13 @@
 
       // Доп. фичи
       this.pagesViewed = 1;
-      this.pageType = document.body.getAttribute("data-page-type") || '';
+      const path = window.location.pathname.toLowerCase();
+      this.pageType = document.body.getAttribute("data-page-type") || (path.includes("/catalog/") ? "catalog" : '');
       this.actionHistory = [];
       this.returnVisits = localStorage.getItem("rivox_return_visits") || 0;
       this.formInteraction = 0;
       this.ctaVisible = 0;
-      this.hasContactInfo = /(|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
+      this.hasContactInfo = /(\u000b|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
 
       localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
 
@@ -74,7 +75,6 @@
 
       const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
       const successPaths = ["/thank-you", "/order-success", "/spasibo", "/success"];
-      const path = window.location.pathname.toLowerCase();
       if (cartPaths.some(p => path.includes(p))) this.visitedCart = 1;
       if (successPaths.some(p => path.includes(p))) this.purchaseCompleted = 1;
 
@@ -106,6 +106,8 @@
     start: function () {
       this.waitForClientID.then(() => {
         try {
+          this.trackProductViews();
+
           this.send("session_start", {
             url: window.location.href,
             client_id: this.ym_uid,
@@ -168,5 +170,21 @@
         return originalYm?.apply?.(this, args);
       };
     },
+
+    trackProductViews: function () {
+      document.querySelectorAll('.catalog-item__link').forEach(link => {
+        const href = link.getAttribute('href');
+        const title = link.querySelector('.catalog-item__name')?.innerText?.trim();
+
+        if (href && !this.productViews.has(href)) {
+          this.productViews.add(href);
+          this.send("product_view", {
+            href,
+            title,
+            product_id: href
+          });
+        }
+      });
+    }
   };
 })();
