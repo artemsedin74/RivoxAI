@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.17";
+  const RIVOX_VERSION = "1.1.18";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -19,22 +19,6 @@
     } catch (e) {
       return url;
     }
-  }
-
-  function waitFor(selector, timeout = 5000) {
-    return new Promise((resolve) => {
-      const el = document.querySelector(selector);
-      if (el) return resolve(el);
-      const observer = new MutationObserver(() => {
-        const el = document.querySelector(selector);
-        if (el) {
-          observer.disconnect();
-          resolve(el);
-        }
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-      setTimeout(() => observer.disconnect(), timeout);
-    });
   }
 
   window.Rivox = {
@@ -68,10 +52,6 @@
       this.clickCount = 0;
       this.eventCount = 0;
       this.productViews = new Set();
-      this.productClickUrls = new Set();
-      this.returnedToProduct = 0;
-      this.productFocusTime = 0;
-      this.currentProductFocusStart = null;
 
       this.visitedCart = 0;
       this.formSubmitted = 0;
@@ -147,9 +127,26 @@
             url: window.location.href,
             client_id: this.ym_uid,
             referrer: document.referrer,
+            scroll_depth: this.scrollDepth,
+            scroll_speed: this.scrollSpeed,
             time_since_last_visit: this.timeSinceLastVisit,
-            scroll_speed: this.scrollSpeed
+            pages_viewed: this.pagesViewed,
+            number_of_products_viewed: this.productViews.size,
+            viewed_reviews: this.viewedReviews,
+            viewed_specs: this.viewedSpecs,
+            submitted_order: this.submittedOrder,
+            started_payment: this.startedPayment,
+            intent_stages: this.intentStages
           });
+
+          window.addEventListener("beforeunload", () => {
+            const timeOnPage = Math.floor((Date.now() - this.sessionStart) / 1000);
+            this.send("session_summary", {
+              time_on_page: timeOnPage,
+              client_id: this.ym_uid
+            });
+          });
+
         } catch (err) {
           this.send("error", { debug: err.toString() });
         }
@@ -178,13 +175,6 @@
         platform: this.platform,
         timestamp: new Date().toISOString(),
         rivox_version: RIVOX_VERSION,
-        time_since_last_visit: this.timeSinceLastVisit,
-        scroll_speed: this.scrollSpeed,
-        viewed_reviews: this.viewedReviews,
-        viewed_specs: this.viewedSpecs,
-        submitted_order: this.submittedOrder,
-        started_payment: this.startedPayment,
-        intent_stages: this.intentStages,
         ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, truncate(v)]))
       };
 
