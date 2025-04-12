@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.13";
+  const RIVOX_VERSION = "1.1.14";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -38,6 +38,7 @@
       this.scrollCount = 0;
       this.scrollSpeed = 0;
       this.lastScrollTime = Date.now();
+      this.lastScrollY = window.scrollY;
       this.clickCount = 0;
       this.eventCount = 0;
       this.productViews = new Set();
@@ -60,7 +61,7 @@
       this.returnVisits = localStorage.getItem("rivox_return_visits") || 0;
       this.formInteraction = 0;
       this.ctaVisible = 0;
-      this.hasContactInfo = /(\u000b|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
+      this.hasContactInfo = /(|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
 
       localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
 
@@ -106,13 +107,15 @@
     start: function () {
       this.waitForClientID.then(() => {
         try {
+          this.trackScroll();
           this.trackProductViews();
 
           this.send("session_start", {
             url: window.location.href,
             client_id: this.ym_uid,
             referrer: document.referrer,
-            time_since_last_visit: this.timeSinceLastVisit
+            time_since_last_visit: this.timeSinceLastVisit,
+            scroll_speed: this.scrollSpeed
           });
         } catch (err) {
           this.send("error", { debug: err.toString() });
@@ -143,6 +146,7 @@
         timestamp: new Date().toISOString(),
         rivox_version: RIVOX_VERSION,
         time_since_last_visit: this.timeSinceLastVisit,
+        scroll_speed: this.scrollSpeed,
         ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, truncate(v)]))
       };
 
@@ -169,6 +173,23 @@
         }
         return originalYm?.apply?.(this, args);
       };
+    },
+
+    trackScroll: function () {
+      window.addEventListener('scroll', () => {
+        const now = Date.now();
+        const delta = now - this.lastScrollTime;
+        const distance = Math.abs(window.scrollY - this.lastScrollY);
+        const speed = delta > 0 ? distance / (delta / 1000) : 0;
+
+        this.scrollSpeed = Math.round(speed);
+        this.scrollCount++;
+        this.lastScrollTime = now;
+        this.lastScrollY = window.scrollY;
+
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        this.scrollDepth = Math.round((window.scrollY / docHeight) * 100);
+      });
     },
 
     trackProductViews: function () {
