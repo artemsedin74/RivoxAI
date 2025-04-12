@@ -1,216 +1,126 @@
-(function () {
-  const RIVOX_VERSION = "2.26.2";
+// rivox.js v2.26.3
+const RIVOX_VERSION = "2.26.3";
 
-  const SESSION_TIMEOUT = 30 * 60 * 1000;
-  const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
-  if (isBot) return;
+window.Rivox = {
+  state: {
+    sessionId: null,
+    clientId: null,
+    sessionStart: Date.now(),
+    endpoint: "",
+    clientToken: "",
+    summarySent: false,
+    trafficSource: {},
+    sessionMetrics: {},
+    pageContext: {},
+    missing_product_ids: []
+  },
 
-  const CTA_KEYWORDS = ["купить", "заказать", "оформить", "в корзину", "buy", "add to cart", "checkout", "pay", "acheter", "kaufen", "comprar"];
-  const TAB_KEYWORDS = ["description", "reviews", "characteristics", "описание", "отзывы", "характеристики"];
+  config: {
+    debugMode: true,
+  },
 
-  function nowISO() { return new Date().toISOString(); }
-  function nowMs() { return performance.now(); }
+  debugLog(...args) {
+    if (this.config.debugMode) console.log("[Rivox]", ...args);
+  },
 
-  function safeGet(key) {
+  init(token, endpoint) {
     try {
-      return localStorage.getItem(key);
-    } catch (e) {
-      try {
-        return sessionStorage.getItem(key);
-      } catch (e2) {
-        return null;
-      }
-    }
-  }
-
-  function safeSet(key, value) {
-    try {
-      return localStorage.setItem(key, value);
-    } catch (e) {
-      try {
-        return sessionStorage.setItem(key, value);
-      } catch (e2) {}
-    }
-  }
-
-  function getProductId(el) {
-    try {
-      const raw = el?.getAttribute("data-product-id") ||
-                  el?.getAttribute("data-id") ||
-                  el?.getAttribute("href") ||
-                  el?.innerText;
-      const id = raw?.toString().trim().replace(/\s+/g, "");
-      if (!id) return null;
-      if (id.length < 3 || /^(\+?1|\d{1,2})$/.test(id) || id === "-") return null;
-      return id;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  const Rivox = {
-    config: { debugMode: false, counterId: null },
-
-    state: {
-      pageContext: {
-        product_ids_viewed: [],
-      },
-      missing_product_ids: [],
-      ...window.Rivox?.state || {}
-    },
-
-    debugLog(...args) {
-      if (this.config.debugMode) console.log("[Rivox debug]", ...args);
-    },
-
-    collectProductIds() {
-      try {
-        const products = document.querySelectorAll("[data-product-id], .product-card, .product");
-        products.forEach(el => {
-          const id = getProductId(el);
-          if (id && !this.state.pageContext.product_ids_viewed.includes(id)) {
-            this.state.pageContext.product_ids_viewed.push(id);
-          }
-        });
-      } catch (e) { this.debugLog("collectProductIds error", e); }
-    },
-
-    observeProductMutations() {
-      let timeout;
-      const observer = new MutationObserver(() => {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => this.collectProductIds(), 500);
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-    },
-
-    sendSessionSummary() {
-      try {
-        if (this.state.summarySent) return;
-        this.state.summarySent = true;
-        const summary = {
-          session_id: this.state.sessionId,
-          client_id: this.state.clientId || null,
-          timestamp: nowISO(),
-          ...this.state.trafficSource,
-          ...this.state.sessionMetrics,
-          ...this.state.pageContext,
-          missing_product_ids: this.state.missing_product_ids || [],
-        };
-
-        const body = JSON.stringify(summary);
-        const sendUrl = this.state.endpoint;
-
-        let sent = false;
-
-        try {
-          if (navigator.sendBeacon) {
-            sent = navigator.sendBeacon(sendUrl, body);
-            if (sent) return;
-          }
-        } catch (e) {
-          this.debugLog("sendBeacon failed", e);
-        }
-
-        try {
-          const formData = new URLSearchParams();
-          formData.append("data", body);
-
-          fetch(sendUrl, {
-            method: "POST",
-            mode: "no-cors",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded"
-            },
-            body: formData.toString()
-          });
-        } catch (e2) {
-          this.debugLog("fetch fallback failed", e2);
-        }
-      } catch (e) {
-        this.debugLog("sendSessionSummary error", e);
-      }
-    },
-
-    debugFlush() {
-      try {
-        const summary = {
-          session_id: this.state.sessionId,
-          client_id: this.state.clientId || null,
-          timestamp: new Date().toISOString(),
-          ...this.state.trafficSource,
-          ...this.state.sessionMetrics,
-          ...this.state.pageContext,
-          missing_product_ids: this.state.missing_product_ids || [],
-        };
-        this.debugLog("SUMMARY PREVIEW", summary);
-      } catch (e) {
-        this.debugLog("debugFlush error", e);
-      }
-    },
-
-    trackAutoGoals() {
-      document.addEventListener("click", (e) => {
-        const el = e.target.closest("[data-product-id], .product-card, .product");
-        if (el) {
-          const id = getProductId(el);
-          if (id && !this.state.pageContext.product_ids_viewed.includes(id)) {
-            const entry = {
-              id,
-              tag: el.tagName.toLowerCase(),
-              selector: el.outerHTML.slice(0, 100),
-              timestamp: nowISO()
-            };
-            const alreadyExists = this.state.missing_product_ids.some(x => x.id === entry.id);
-            if (!alreadyExists) {
-              this.state.missing_product_ids.push(entry);
-              this.debugLog("missing_product_id", entry);
-            }
-          }
-        }
-      }, true);
-    },
-
-    init(token, endpoint, sessionIdOverride) {
       this.state.clientToken = token;
       this.state.endpoint = endpoint;
-      this.state.sessionId = sessionIdOverride || this.generateSessionId();
-    },
+      this.state.sessionId = this.generateSessionId();
+      this.state.sessionStart = Date.now();
+      this.debugLog("✅ Rivox initialized", this.state.sessionId);
+    } catch (e) {
+      this.debugLog("❌ init error", e);
+    }
+  },
 
-    autoInitIfConfigFound() {
-      try {
-        const scriptTag = document.querySelector('script[src*="rivox.js"]');
-        if (!scriptTag) return;
-        const token = scriptTag.dataset.token;
-        const endpoint = scriptTag.dataset.endpoint;
-        const sessionId = scriptTag.dataset.sessionId;
-        if (token && endpoint) {
-          this.init(token, endpoint, sessionId);
+  start() {
+    try {
+      // Fallback через 15 сек
+      setTimeout(() => {
+        if (!this.state.summarySent) {
+          this.debugLog("🔁 Fallback sendSessionSummary()");
+          this.sendSessionSummary();
         }
-      } catch (e) {
-        this.debugLog("autoInitIfConfigFound error", e);
-      }
-    },
+      }, 15000);
 
-    generateSessionId() {
-      return 'rivox-' + Math.random().toString(36).substr(2, 9);
-    },
-
-    start() {
-      this.collectProductIds();
-      this.observeProductMutations();
-      this.trackAutoGoals();
-
+      // Отправка при закрытии вкладки
       window.addEventListener("beforeunload", () => {
         try { this.sendSessionSummary(); } catch (e) {}
       });
-
       window.addEventListener("pagehide", () => {
         try { this.sendSessionSummary(); } catch (e) {}
       });
+    } catch (e) {
+      this.debugLog("❌ Rivox.start() error", e);
     }
-  };
+  },
 
-  window.Rivox = Rivox;
-  Rivox.autoInitIfConfigFound();
-})();
+  sendSessionSummary() {
+    try {
+      this.debugLog("🚀 sendSessionSummary triggered");
+      if (this.state.summarySent) return;
+      this.state.summarySent = true;
+
+      const summary = {
+        session_id: this.state.sessionId,
+        client_id: this.state.clientId || null,
+        timestamp: new Date().toISOString(),
+        ...this.state.trafficSource,
+        ...this.state.sessionMetrics,
+        ...this.state.pageContext,
+        missing_product_ids: this.state.missing_product_ids || []
+      };
+
+      const body = JSON.stringify(summary);
+      const sendUrl = this.state.endpoint;
+
+      this.debugLog("📦 Payload:", summary);
+
+      // Попытка отправить через sendBeacon
+      if (navigator.sendBeacon) {
+        const sent = navigator.sendBeacon(sendUrl, body);
+        this.debugLog("🛰 sendBeacon status:", sent);
+        if (sent) return;
+      }
+
+      // Fallback через fetch (no-cors)
+      const formData = new URLSearchParams();
+      formData.append("data", body);
+
+      fetch(sendUrl, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData.toString()
+      })
+        .then(() => this.debugLog("✅ fetch fallback succeeded"))
+        .catch(e => this.debugLog("❌ fetch fallback error:", e));
+
+    } catch (e) {
+      this.debugLog("❌ sendSessionSummary error:", e);
+    }
+  },
+
+  generateSessionId() {
+    return "sess-" + Math.random().toString(36).substring(2, 12) + "-" + Date.now();
+  },
+
+  debugFlush() {
+    try {
+      const summary = {
+        session_id: this.state.sessionId,
+        client_id: this.state.clientId || null,
+        timestamp: new Date().toISOString(),
+        ...this.state.trafficSource,
+        ...this.state.sessionMetrics,
+        ...this.state.pageContext,
+        missing_product_ids: this.state.missing_product_ids || []
+      };
+      this.debugLog("SUMMARY PREVIEW", summary);
+    } catch (e) {
+      this.debugLog("debugFlush error", e);
+    }
+  }
+};
