@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.16";
+  const RIVOX_VERSION = "1.1.17";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -19,6 +19,22 @@
     } catch (e) {
       return url;
     }
+  }
+
+  function waitFor(selector, timeout = 5000) {
+    return new Promise((resolve) => {
+      const el = document.querySelector(selector);
+      if (el) return resolve(el);
+      const observer = new MutationObserver(() => {
+        const el = document.querySelector(selector);
+        if (el) {
+          observer.disconnect();
+          resolve(el);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      setTimeout(() => observer.disconnect(), timeout);
+    });
   }
 
   window.Rivox = {
@@ -73,7 +89,7 @@
       this.returnVisits = localStorage.getItem("rivox_return_visits") || 0;
       this.formInteraction = 0;
       this.ctaVisible = 0;
-      this.hasContactInfo = /(\u000b|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
+      this.hasContactInfo = /(|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
 
       localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
 
@@ -123,6 +139,9 @@
           this.trackClicks();
           this.trackTabViews();
           this.observeLateButtons();
+          this.trackFilters();
+          this.trackPromoClicks();
+          this.trackFormModals();
 
           this.send("session_start", {
             url: window.location.href,
@@ -209,12 +228,7 @@
     trackClicks: function () {
       document.addEventListener('click', (e) => {
         const el = e.target;
-        const text =
-          el.innerText?.toLowerCase().trim() ||
-          el.getAttribute("aria-label")?.toLowerCase() ||
-          el.getAttribute("alt")?.toLowerCase() ||
-          el.getAttribute("title")?.toLowerCase() ||
-          "";
+        const text = el.innerText?.toLowerCase().trim() || el.getAttribute("aria-label")?.toLowerCase() || el.getAttribute("alt")?.toLowerCase() || el.getAttribute("title")?.toLowerCase() || "";
 
         if (text.includes("оформить заказ")) {
           this.submittedOrder = 1;
@@ -246,6 +260,40 @@
           this.intentStages.push("viewed_specs");
         });
       }
+    },
+
+    trackFilters: function () {
+      document.querySelectorAll('.js-filter-item input[type="checkbox"]').forEach(input => {
+        input.addEventListener('change', () => {
+          this.intentStages.push("filter_selected");
+          this.send("filter_selected", {
+            filter_name: input.name,
+            filter_value: input.value
+          });
+        });
+      });
+    },
+
+    trackPromoClicks: function () {
+      document.querySelectorAll('.main-slider__slide').forEach(banner => {
+        banner.addEventListener('click', () => {
+          this.intentStages.push("clicked_promo");
+          this.send("promo_click", {
+            href: banner.href || ''
+          });
+        });
+      });
+    },
+
+    trackFormModals: function () {
+      const observer = new MutationObserver(() => {
+        const modal = document.querySelector('.modal--open');
+        if (modal && modal.innerText.toLowerCase().includes('номер') && !this.formInteraction) {
+          this.formInteraction = 1;
+          this.intentStages.push("form_interaction");
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
     },
 
     observeLateButtons: function () {
