@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.7";
+  const RIVOX_VERSION = "1.1.8";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -14,8 +14,25 @@
     init: function (clientToken, endpoint) {
       this.clientToken = clientToken;
       this.endpoint = endpoint;
-      this.ym_uid = document.cookie.match(/_ym_uid=([^;]+)/)?.[1] || null;
+
       this.utm = new URLSearchParams(window.location.search);
+      this.ym_uid = document.cookie.match(/_ym_uid=([^;]+)/)?.[1] || localStorage.getItem("rivox_client_id") || null;
+
+      // Сохраняем utm-параметры и client_id, если они есть
+      if (this.ym_uid) localStorage.setItem("rivox_client_id", this.ym_uid);
+      ["utm_source", "utm_campaign", "utm_medium"].forEach(param => {
+        const value = this.utm.get(param);
+        if (value) localStorage.setItem(`rivox_${param}`, value);
+      });
+
+      // Восстанавливаем utm-параметры из localStorage, если их нет в URL
+      ["utm_source", "utm_campaign", "utm_medium"].forEach(param => {
+        if (!this.utm.get(param)) {
+          const saved = localStorage.getItem(`rivox_${param}`);
+          if (saved) this.utm.set(param, saved);
+        }
+      });
+
       this.sessionStart = Date.now();
       this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
 
@@ -56,6 +73,7 @@
             try {
               ym(94550231, 'getClientID', (clientID) => {
                 this.ym_uid = clientID;
+                localStorage.setItem("rivox_client_id", clientID);
                 clearInterval(interval);
                 resolve();
               });
