@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.8";
+  const RIVOX_VERSION = "1.1.9";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -18,14 +18,11 @@
       this.utm = new URLSearchParams(window.location.search);
       this.ym_uid = document.cookie.match(/_ym_uid=([^;]+)/)?.[1] || localStorage.getItem("rivox_client_id") || null;
 
-      // Сохраняем utm-параметры и client_id, если они есть
       if (this.ym_uid) localStorage.setItem("rivox_client_id", this.ym_uid);
       ["utm_source", "utm_campaign", "utm_medium"].forEach(param => {
         const value = this.utm.get(param);
         if (value) localStorage.setItem(`rivox_${param}`, value);
       });
-
-      // Восстанавливаем utm-параметры из localStorage, если их нет в URL
       ["utm_source", "utm_campaign", "utm_medium"].forEach(param => {
         if (!this.utm.get(param)) {
           const saved = localStorage.getItem(`rivox_${param}`);
@@ -36,7 +33,6 @@
       this.sessionStart = Date.now();
       this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
 
-      // Поведенческие параметры
       this.scrollDepth = 0;
       this.scrollCount = 0;
       this.clickCount = 0;
@@ -47,12 +43,11 @@
       this.productFocusTime = 0;
       this.currentProductFocusStart = null;
 
-      // События
       this.visitedCart = 0;
       this.formSubmitted = 0;
       this.purchaseCompleted = 0;
+      this.intentStages = [];
 
-      // Устройство
       this.deviceType = detectDevice();
       this.browser = navigator.userAgentData?.brands?.[0]?.brand || navigator.userAgent;
       this.platform = navigator.userAgentData?.platform || navigator.platform;
@@ -194,11 +189,16 @@
         const finalText = text || htmlText || '';
         const lowered = finalText.toLowerCase();
 
-        const formKeywords = ["оставить заявку", "получить программу", "записаться", "купить", "заказать", "купить в 1 клик", "оплатить", "купить в кредит", "купить в рассрочку", "кредит", "рассрочка", "сплит", "выбор оплаты", "выбор метода оплаты"];
-        const cartKeywords = ["в корзину", "добавить в корзину"];
+        const matchAny = (keywords) => keywords.some(k => lowered.includes(k));
 
-        if (formKeywords.some(kw => lowered.includes(kw))) this.formSubmitted = 1;
-        if (cartKeywords.some(kw => lowered.includes(kw))) this.visitedCart = 1;
+        if (matchAny(["купить", "заказать", "оплатить", "в 1 клик"])) {
+          this.formSubmitted = 1;
+          this.intentStages.push("clicked_buy");
+        }
+        if (matchAny(["в корзину", "добавить в корзину", "корзина"])) {
+          this.visitedCart = 1;
+          this.intentStages.push("visited_cart");
+        }
 
         this.lastClickMeta = {
           click_tag: tag,
@@ -215,6 +215,7 @@
       document.querySelectorAll('form').forEach(form => {
         form.addEventListener('submit', () => {
           this.formSubmitted = 1;
+          this.intentStages.push("submitted_form");
         });
       });
     },
@@ -298,6 +299,7 @@
           number_of_products_viewed: this.productViews.size,
           returned_to_same_product: this.returnedToProduct,
           focus_time_on_product_card: Math.round(this.productFocusTime),
+          intent_stages: JSON.stringify(this.intentStages),
           ...(this.lastClickMeta || {})
         });
       });
