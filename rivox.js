@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.15";
+  const RIVOX_VERSION = "1.1.16";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -10,6 +10,17 @@
     return 'desktop';
   }
 
+  function cleanURL(url) {
+    try {
+      const u = new URL(url, window.location.origin);
+      u.search = "";
+      u.hash = "";
+      return u.pathname;
+    } catch (e) {
+      return url;
+    }
+  }
+
   window.Rivox = {
     init: function (clientToken, endpoint) {
       this.clientToken = clientToken;
@@ -17,8 +28,8 @@
 
       this.utm = new URLSearchParams(window.location.search);
       this.ym_uid = document.cookie.match(/_ym_uid=([^;]+)/)?.[1] || localStorage.getItem("rivox_client_id") || null;
-
       if (this.ym_uid) localStorage.setItem("rivox_client_id", this.ym_uid);
+
       ["utm_source", "utm_campaign", "utm_medium"].forEach(param => {
         const value = this.utm.get(param);
         if (value) localStorage.setItem(`rivox_${param}`, value);
@@ -62,7 +73,7 @@
       this.returnVisits = localStorage.getItem("rivox_return_visits") || 0;
       this.formInteraction = 0;
       this.ctaVisible = 0;
-      this.hasContactInfo = /(|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
+      this.hasContactInfo = /(\u000b|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
 
       localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
 
@@ -111,6 +122,7 @@
           this.trackProductViews();
           this.trackClicks();
           this.trackTabViews();
+          this.observeLateButtons();
 
           this.send("session_start", {
             url: window.location.href,
@@ -161,27 +173,6 @@
       console.log("[RIVOX]", payload);
     },
 
-    interceptYandexGoals: function () {
-      const originalYm = window.ym;
-      window.ym = function (...args) {
-        try {
-          if (args[1] === 'reachGoal') {
-            const goalName = args[2];
-            const goalData = args[3] || {};
-            if (window.Rivox?.send) {
-              window.Rivox.send('yandex_goal', {
-                goal_name: goalName,
-                ...goalData
-              });
-            }
-          }
-        } catch (e) {
-          console.warn('[RIVOX] Ошибка при перехвате ym:', e);
-        }
-        return originalYm?.apply?.(this, args);
-      };
-    },
-
     trackScroll: function () {
       window.addEventListener('scroll', () => {
         const now = Date.now();
@@ -209,7 +200,7 @@
           this.send("product_view", {
             href,
             title,
-            product_id: href
+            product_id: cleanURL(href)
           });
         }
       });
@@ -217,7 +208,14 @@
 
     trackClicks: function () {
       document.addEventListener('click', (e) => {
-        const text = e.target.innerText?.toLowerCase().trim() || "";
+        const el = e.target;
+        const text =
+          el.innerText?.toLowerCase().trim() ||
+          el.getAttribute("aria-label")?.toLowerCase() ||
+          el.getAttribute("alt")?.toLowerCase() ||
+          el.getAttribute("title")?.toLowerCase() ||
+          "";
+
         if (text.includes("оформить заказ")) {
           this.submittedOrder = 1;
           this.intentStages.push("submitted_order");
@@ -248,6 +246,14 @@
           this.intentStages.push("viewed_specs");
         });
       }
+    },
+
+    observeLateButtons: function () {
+      const observer = new MutationObserver(() => {
+        this.trackClicks();
+        this.trackTabViews();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
     }
   };
 })();
