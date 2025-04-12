@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.14";
+  const RIVOX_VERSION = "1.1.15";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -33,7 +33,6 @@
       this.sessionStart = Date.now();
       this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
 
-      // Поведенческие параметры
       this.scrollDepth = 0;
       this.scrollCount = 0;
       this.scrollSpeed = 0;
@@ -47,13 +46,15 @@
       this.productFocusTime = 0;
       this.currentProductFocusStart = null;
 
-      // События
       this.visitedCart = 0;
       this.formSubmitted = 0;
       this.purchaseCompleted = 0;
+      this.submittedOrder = 0;
+      this.startedPayment = 0;
+      this.viewedReviews = 0;
+      this.viewedSpecs = 0;
       this.intentStages = [];
 
-      // Доп. фичи
       this.pagesViewed = 1;
       const path = window.location.pathname.toLowerCase();
       this.pageType = document.body.getAttribute("data-page-type") || (path.includes("/catalog/") ? "catalog" : '');
@@ -65,9 +66,8 @@
 
       localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
 
-      // Новая фича: время с прошлого визита
       const lastVisit = localStorage.getItem("rivox_last_visit") || Date.now();
-      this.timeSinceLastVisit = Math.floor((Date.now() - lastVisit) / 1000); // в секундах
+      this.timeSinceLastVisit = Math.floor((Date.now() - lastVisit) / 1000);
       localStorage.setItem("rivox_last_visit", Date.now());
 
       this.deviceType = detectDevice();
@@ -109,6 +109,8 @@
         try {
           this.trackScroll();
           this.trackProductViews();
+          this.trackClicks();
+          this.trackTabViews();
 
           this.send("session_start", {
             url: window.location.href,
@@ -147,6 +149,11 @@
         rivox_version: RIVOX_VERSION,
         time_since_last_visit: this.timeSinceLastVisit,
         scroll_speed: this.scrollSpeed,
+        viewed_reviews: this.viewedReviews,
+        viewed_specs: this.viewedSpecs,
+        submitted_order: this.submittedOrder,
+        started_payment: this.startedPayment,
+        intent_stages: this.intentStages,
         ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, truncate(v)]))
       };
 
@@ -206,6 +213,41 @@
           });
         }
       });
+    },
+
+    trackClicks: function () {
+      document.addEventListener('click', (e) => {
+        const text = e.target.innerText?.toLowerCase().trim() || "";
+        if (text.includes("оформить заказ")) {
+          this.submittedOrder = 1;
+          this.intentStages.push("submitted_order");
+        }
+        if (text.includes("оплатить") || text.includes("перейти к оплате")) {
+          this.startedPayment = 1;
+          this.intentStages.push("started_payment");
+        }
+        if (text.includes("в 1 клик") || text.includes("купить")) {
+          this.formSubmitted = 1;
+          this.intentStages.push("clicked_buy");
+        }
+      });
+    },
+
+    trackTabViews: function () {
+      const reviews = document.querySelector('a[href="#comments"]');
+      if (reviews) {
+        reviews.addEventListener('click', () => {
+          this.viewedReviews = 1;
+          this.intentStages.push("viewed_reviews");
+        });
+      }
+      const specs = document.querySelector('a[href="#description"]');
+      if (specs) {
+        specs.addEventListener('click', () => {
+          this.viewedSpecs = 1;
+          this.intentStages.push("viewed_specs");
+        });
+      }
     }
   };
 })();
