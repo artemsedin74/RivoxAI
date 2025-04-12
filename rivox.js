@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.3";
+  const RIVOX_VERSION = "1.1.5";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -20,9 +20,16 @@
       this.returnedToProduct = 0;
       this.productFocusTime = 0;
       this.currentProductFocusStart = null;
+
       this.visitedCart = 0;
       this.formSubmitted = 0;
       this.purchaseCompleted = 0;
+      this.addedToCart = 0;
+      this.submittedOrder = 0;
+      this.startedPayment = 0;
+      this.viewedReviews = 0;
+      this.viewedSpecs = 0;
+
       this.lastClickMeta = {};
 
       const cartPaths = ["/cart", "/basket", "/checkout", "/order", "/korzina"];
@@ -154,22 +161,15 @@
         const name = el.name || '';
         const href = el.href || '';
         const finalText = text || htmlText || '';
-
         const lowered = finalText.toLowerCase();
 
-        const formKeywords = [
-          "оставить заявку", "получить программу", "записаться", "купить", "заказать",
-          "купить в 1 клик", "оплатить", "купить в кредит", "купить в рассрочку",
-          "кредит", "рассрочка", "сплит", "выбор оплаты", "выбор метода оплаты"
-        ];
-        if (formKeywords.some(kw => lowered.includes(kw))) {
-          this.formSubmitted = 1;
-        }
+        const checkMatch = (keywords) => keywords.some(kw => lowered.includes(kw));
 
+        const formKeywords = ["оставить заявку", "получить программу", "записаться", "купить", "заказать", "купить в 1 клик", "оплатить", "купить в кредит", "купить в рассрочку", "кредит", "рассрочка", "сплит", "выбор оплаты", "выбор метода оплаты"];
         const cartKeywords = ["в корзину", "добавить в корзину"];
-        if (cartKeywords.some(kw => lowered.includes(kw))) {
-          this.visitedCart = 1;
-        }
+
+        if (checkMatch(formKeywords)) this.formSubmitted = 1;
+        if (checkMatch(cartKeywords)) this.visitedCart = 1;
 
         this.lastClickMeta = {
           click_tag: tag,
@@ -197,7 +197,7 @@
         const fullHeight = document.body.scrollHeight;
         const scrollDepth = (scrollPosition / fullHeight) * 100;
         if (scrollDepth > 1) {
-          this.sentScroll = 1;
+          this.sentScroll = scrollDepth.toFixed(0);
         }
       }, { passive: true });
     },
@@ -259,7 +259,7 @@
         const timeOnPage = Math.round((Date.now() - this.sessionStart) / 1000);
         this.send('session_summary', {
           time_on_page: timeOnPage,
-          scroll_depth: this.sentScroll ? 90 : 0,
+          scroll_depth: this.sentScroll || 0,
           scroll_count: this.scrollCount,
           click_count: this.clickCount,
           product_clicks: Array.from(this.productClickUrls),
