@@ -16,13 +16,13 @@
       u.search = "";
       u.hash = "";
       return u.pathname;
-    } catch (e) {
+    } catch {
       return url;
     }
   }
 
   window.Rivox = {
-    init: function (clientToken, endpoint) {
+    init(clientToken, endpoint) {
       this.clientToken = clientToken;
       this.endpoint = endpoint;
 
@@ -34,6 +34,7 @@
         const value = this.utm.get(param);
         if (value) localStorage.setItem(`rivox_${param}`, value);
       });
+
       ["utm_source", "utm_campaign", "utm_medium"].forEach(param => {
         if (!this.utm.get(param)) {
           const saved = localStorage.getItem(`rivox_${param}`);
@@ -42,7 +43,7 @@
       });
 
       this.sessionStart = Date.now();
-      this.sessionId = Date.now() + "-" + Math.random().toString(36).substring(2, 10);
+      this.sessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
 
       this.scrollDepth = 0;
       this.scrollCount = 0;
@@ -50,8 +51,11 @@
       this.lastScrollTime = Date.now();
       this.lastScrollY = window.scrollY;
       this.clickCount = 0;
-      this.eventCount = 0;
       this.productViews = new Set();
+      this.productClickUrls = new Set();
+      this.returnedToProduct = 0;
+      this.focusTimeOnProductCard = 0;
+      this.currentProductFocusStart = null;
 
       this.visitedCart = 0;
       this.formSubmitted = 0;
@@ -61,19 +65,20 @@
       this.viewedReviews = 0;
       this.viewedSpecs = 0;
       this.intentStages = [];
+      this.addedToCart = 0;
 
       this.pagesViewed = 1;
       const path = window.location.pathname.toLowerCase();
       this.pageType = document.body.getAttribute("data-page-type") || (path.includes("/catalog/") ? "catalog" : '');
       this.actionHistory = [];
-      this.returnVisits = localStorage.getItem("rivox_return_visits") || 0;
+      this.returnVisits = +localStorage.getItem("rivox_return_visits") || 0;
       this.formInteraction = 0;
       this.ctaVisible = 0;
       this.hasContactInfo = /(\u000b|\+7|8\d{10}|@|\d{3}-\d{3}-\d{4})/.test(document.body.innerText) ? 1 : 0;
 
-      localStorage.setItem("rivox_return_visits", Number(this.returnVisits) + 1);
+      localStorage.setItem("rivox_return_visits", this.returnVisits + 1);
 
-      const lastVisit = localStorage.getItem("rivox_last_visit") || Date.now();
+      const lastVisit = +localStorage.getItem("rivox_last_visit") || Date.now();
       this.timeSinceLastVisit = Math.floor((Date.now() - lastVisit) / 1000);
       localStorage.setItem("rivox_last_visit", Date.now());
 
@@ -92,13 +97,13 @@
           attempts++;
           if (typeof ym === 'function') {
             try {
-              ym(94550231, 'getClientID', (clientID) => {
-                this.ym_uid = clientID;
-                localStorage.setItem("rivox_client_id", clientID);
+              ym(94550231, 'getClientID', (id) => {
+                this.ym_uid = id;
+                localStorage.setItem("rivox_client_id", id);
                 clearInterval(interval);
                 resolve();
               });
-            } catch (e) {
+            } catch {
               clearInterval(interval);
               resolve();
             }
@@ -111,17 +116,17 @@
       });
     },
 
-    start: function () {
+    start() {
       this.waitForClientID.then(() => {
         try {
           this.trackScroll();
           this.trackProductViews();
           this.trackClicks();
           this.trackTabViews();
-          this.observeLateButtons();
           this.trackFilters();
           this.trackPromoClicks();
           this.trackFormModals();
+          this.observeLateButtons();
 
           this.send("session_start", {
             url: window.location.href,
@@ -131,19 +136,30 @@
             scroll_speed: this.scrollSpeed,
             time_since_last_visit: this.timeSinceLastVisit,
             pages_viewed: this.pagesViewed,
-            number_of_products_viewed: this.productViews.size,
             viewed_reviews: this.viewedReviews,
             viewed_specs: this.viewedSpecs,
             submitted_order: this.submittedOrder,
             started_payment: this.startedPayment,
-            intent_stages: this.intentStages
+            visited_cart: this.visitedCart,
+            form_submitted: this.formSubmitted,
+            added_to_cart: this.addedToCart,
+            intent_stages: this.intentStages,
+            number_of_products_viewed: this.productViews.size,
+            returned_to_same_product: this.returnedToProduct,
+            focus_time_on_product_card: this.focusTimeOnProductCard,
+            form_interaction: this.formInteraction,
+            has_contact_info: this.hasContactInfo,
+            page_type: this.pageType
           });
 
           window.addEventListener("beforeunload", () => {
             const timeOnPage = Math.floor((Date.now() - this.sessionStart) / 1000);
             this.send("session_summary", {
               time_on_page: timeOnPage,
-              client_id: this.ym_uid
+              client_id: this.ym_uid,
+              click_count: this.clickCount,
+              scroll_count: this.scrollCount,
+              product_clicks: [...this.productClickUrls]
             });
           });
 
@@ -153,7 +169,7 @@
       });
     },
 
-    send: function (event, data = {}) {
+    send(event, data = {}) {
       if (!this.endpoint || this.eventCount > 50) return;
       this.eventCount++;
 
@@ -181,14 +197,12 @@
       navigator.sendBeacon(this.endpoint, JSON.stringify(payload));
     },
 
-    trackScroll: function () {
+    trackScroll() {
       window.addEventListener('scroll', () => {
         const now = Date.now();
         const delta = now - this.lastScrollTime;
         const distance = Math.abs(window.scrollY - this.lastScrollY);
-        const speed = delta > 0 ? distance / (delta / 1000) : 0;
-
-        this.scrollSpeed = Math.round(speed);
+        this.scrollSpeed = delta > 0 ? Math.round(distance / (delta / 1000)) : 0;
         this.scrollCount++;
         this.lastScrollTime = now;
         this.lastScrollY = window.scrollY;
@@ -198,13 +212,14 @@
       });
     },
 
-    trackProductViews: function () {
+    trackProductViews() {
       document.querySelectorAll('.catalog-item__link').forEach(link => {
         const href = link.getAttribute('href');
         const title = link.querySelector('.catalog-item__name')?.innerText?.trim();
-
         if (href && !this.productViews.has(href)) {
+          if (this.productViews.has(href)) this.returnedToProduct = 1;
           this.productViews.add(href);
+          this.productClickUrls.add(cleanURL(href));
           this.send("product_view", {
             href,
             title,
@@ -212,10 +227,23 @@
           });
         }
       });
+
+      document.querySelectorAll('.catalog-item').forEach(card => {
+        card.addEventListener("mouseenter", () => {
+          this.currentProductFocusStart = Date.now();
+        });
+        card.addEventListener("mouseleave", () => {
+          if (this.currentProductFocusStart) {
+            this.focusTimeOnProductCard += Math.floor((Date.now() - this.currentProductFocusStart) / 1000);
+            this.currentProductFocusStart = null;
+          }
+        });
+      });
     },
 
-    trackClicks: function () {
+    trackClicks() {
       document.addEventListener('click', (e) => {
+        this.clickCount++;
         const el = e.target;
         const text = el.innerText?.toLowerCase().trim() || el.getAttribute("aria-label")?.toLowerCase() || el.getAttribute("alt")?.toLowerCase() || el.getAttribute("title")?.toLowerCase() || "";
 
@@ -231,10 +259,14 @@
           this.formSubmitted = 1;
           this.intentStages.push("clicked_buy");
         }
+        if (text.includes("в корзину") || text.includes("добавить в корзину")) {
+          this.addedToCart = 1;
+          this.intentStages.push("added_to_cart");
+        }
       });
     },
 
-    trackTabViews: function () {
+    trackTabViews() {
       const reviews = document.querySelector('a[href="#comments"]');
       if (reviews) {
         reviews.addEventListener('click', () => {
@@ -251,7 +283,7 @@
       }
     },
 
-    trackFilters: function () {
+    trackFilters() {
       document.querySelectorAll('.js-filter-item input[type="checkbox"]').forEach(input => {
         input.addEventListener('change', () => {
           this.intentStages.push("filter_selected");
@@ -263,7 +295,7 @@
       });
     },
 
-    trackPromoClicks: function () {
+    trackPromoClicks() {
       document.querySelectorAll('.main-slider__slide').forEach(banner => {
         banner.addEventListener('click', () => {
           this.intentStages.push("clicked_promo");
@@ -274,7 +306,7 @@
       });
     },
 
-    trackFormModals: function () {
+    trackFormModals() {
       const observer = new MutationObserver(() => {
         const modal = document.querySelector('.modal--open');
         if (modal && modal.innerText.toLowerCase().includes('номер') && !this.formInteraction) {
@@ -285,7 +317,7 @@
       observer.observe(document.body, { childList: true, subtree: true });
     },
 
-    observeLateButtons: function () {
+    observeLateButtons() {
       const observer = new MutationObserver(() => {
         this.trackClicks();
         this.trackTabViews();
