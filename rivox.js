@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "1.1.19";
+  const RIVOX_VERSION = "1.1.20";
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
   if (isBot) return;
 
@@ -214,7 +214,7 @@
     },
 
     trackScroll() {
-      window.addEventListener('scroll', () => {
+      const handler = () => {
         const now = Date.now();
         const delta = now - this.lastScrollTime;
         const distance = Math.abs(window.scrollY - this.lastScrollY);
@@ -225,7 +225,39 @@
 
         const docHeight = document.documentElement.scrollHeight - window.innerHeight;
         this.scrollDepth = Math.round((window.scrollY / docHeight) * 100);
-      });
+      };
+
+      window.addEventListener('scroll', handler);
+      window.addEventListener('touchmove', handler, { passive: true });
+    },
+
+    trackClicks() {
+      const handler = (e) => {
+        this.clickCount++;
+        const el = e.target;
+        const text = el.innerText?.toLowerCase().trim() || el.getAttribute("aria-label")?.toLowerCase() || el.getAttribute("alt")?.toLowerCase() || el.getAttribute("title")?.toLowerCase() || "";
+
+        if (text.includes("оформить заказ")) {
+          this.submittedOrder = 1;
+          this.intentStages.push("submitted_order");
+        }
+        if (text.includes("оплатить") || text.includes("перейти к оплате")) {
+          this.startedPayment = 1;
+          this.intentStages.push("started_payment");
+        }
+        if (text.includes("в 1 клик") || text.includes("купить")) {
+          this.formSubmitted = 1;
+          this.intentStages.push("clicked_buy");
+        }
+        if (text.includes("в корзину") || text.includes("добавить в корзину")) {
+          this.addedToCart = 1;
+          this.intentStages.push("added_to_cart");
+        }
+      };
+
+      document.addEventListener('click', handler);
+      document.addEventListener('touchstart', handler, { passive: true });
+      document.addEventListener('pointerdown', handler);
     },
 
     trackProductViews() {
@@ -254,31 +286,6 @@
             this.currentProductFocusStart = null;
           }
         });
-      });
-    },
-
-    trackClicks() {
-      document.addEventListener('click', (e) => {
-        this.clickCount++;
-        const el = e.target;
-        const text = el.innerText?.toLowerCase().trim() || el.getAttribute("aria-label")?.toLowerCase() || el.getAttribute("alt")?.toLowerCase() || el.getAttribute("title")?.toLowerCase() || "";
-
-        if (text.includes("оформить заказ")) {
-          this.submittedOrder = 1;
-          this.intentStages.push("submitted_order");
-        }
-        if (text.includes("оплатить") || text.includes("перейти к оплате")) {
-          this.startedPayment = 1;
-          this.intentStages.push("started_payment");
-        }
-        if (text.includes("в 1 клик") || text.includes("купить")) {
-          this.formSubmitted = 1;
-          this.intentStages.push("clicked_buy");
-        }
-        if (text.includes("в корзину") || text.includes("добавить в корзину")) {
-          this.addedToCart = 1;
-          this.intentStages.push("added_to_cart");
-        }
       });
     },
 
