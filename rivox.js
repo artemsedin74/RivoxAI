@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "2.26.1";
+  const RIVOX_VERSION = "2.26.2";
 
   const SESSION_TIMEOUT = 30 * 60 * 1000;
   const isBot = /bot|crawl|spider|yandex|googlebot/i.test(navigator.userAgent);
@@ -178,6 +178,14 @@
       this.collectProductIds();
       this.observeProductMutations();
       this.trackAutoGoals();
+
+      window.addEventListener("beforeunload", () => {
+        try { this.sendSessionSummary(); } catch (e) {}
+      });
+
+      window.addEventListener("pagehide", () => {
+        try { this.sendSessionSummary(); } catch (e) {}
+      });
     }
   };
 
