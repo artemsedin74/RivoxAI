@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "4.3.2";
+  const RIVOX_VERSION = "4.3.3";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -53,22 +53,31 @@
     },
 
     start() {
-      if (!this.state.sessionId || !this.state.clientId) {
-        this.log?.warn?.("⏳ Tracking skipped: session/client ID missing");
-        return;
-      }
-      try {
-        this.trackScroll();
-        this.trackClicks();
-        this.trackProductViews();
-        this.trackFormModals();
-        this.trackTabViews();
-        this.trackFocus();
-        this.trackReturnScroll();
-        this.observeLateButtons();
-      } catch (e) {
-        this.log?.error?.("⚠️ error in start()", e);
-      }
+      const waitUntilReady = (attempt = 0) => {
+        const ready = this.state.sessionId && this.state.clientId;
+        if (ready) {
+          try {
+            this.trackScroll();
+            this.trackClicks();
+            this.trackProductViews();
+            this.trackFormModals();
+            this.trackTabViews();
+            this.trackFocus();
+            this.trackReturnScroll();
+            this.observeLateButtons();
+            this.log?.info?.("🟢 RIVOX tracking start");
+          } catch (e) {
+            this.log?.error?.("⚠️ error in start()", e);
+          }
+        } else {
+          if (attempt > 50) {
+            this.log?.warn?.("⏳ Tracking aborted after timeout: session/client ID missing");
+            return;
+          }
+          setTimeout(() => waitUntilReady(attempt + 1), 100);
+        }
+      };
+      waitUntilReady();
     },
 
     interceptYMGoals() {
