@@ -1,4 +1,3 @@
-
 (function () {
   const RIVOX_VERSION = "4.0.0";
 
@@ -36,12 +35,6 @@
 
       this.getClientId();
       this.observeSPAChanges();
-      this.trackHoverEnhanced();
-      this.trackScrollPattern();
-      this.trackEcommerceDataLayer();
-      this.trackGoals();
-      this.trackUnknownClicks();
-      this.detectSuccessfulPayment();
       this.autoFlush();
     },
 
@@ -62,7 +55,9 @@
         if (typeof ym === "function" && counterId) {
           ym(counterId, 'getClientID', id => {
             this.state.clientId = id;
-            try { localStorage.setItem('rivox_client_id', id); } catch (_) {}
+            try {
+              localStorage.setItem('rivox_client_id', id);
+            } catch (_) {}
           });
         } else {
           this.state.clientId = localStorage.getItem('rivox_client_id') || this.generateSessionId();
@@ -86,14 +81,14 @@
       const body = JSON.stringify(payload);
       const url = this.state.endpoint;
 
-      navigator.sendBeacon(url, body);
-    },
+      const form = new FormData();
+      form.append("payload", body);
 
-    reinitTrackers() {
-      this.trackHoverEnhanced?.();
-      this.trackScrollPattern?.();
-      this.trackEcommerceDataLayer?.();
-      this.trackGoals?.();
+      fetch(url, {
+        method: "POST",
+        body: form,
+        mode: "no-cors"
+      });
     },
 
     observeSPAChanges: function () {
@@ -122,6 +117,13 @@
 
       ["popstate", "hashchange", "spa:navigation", "changestate", "routeChanged", "locationchange"]
         .forEach(evt => window.addEventListener(evt, debouncedHandle, { passive: true }));
+    },
+
+    reinitTrackers() {
+      this.trackHoverEnhanced?.();
+      this.trackScrollPattern?.();
+      this.trackEcommerceDataLayer?.();
+      this.trackGoals?.();
     },
 
     trackHoverEnhanced: function () {},
@@ -168,20 +170,12 @@
     out.scroll_depth_max = scroll.reduce((max, s) => Math.max(max, s.pos || 0), 0);
 
     const hoverTimes = Object.values(hover).map(Number);
-    out.hover_time_on_cta_avg = hoverTimes.length
-      ? Math.round(hoverTimes.reduce((a, b) => a + b, 0) / hoverTimes.length)
-      : 0;
-    out.hover_time_on_cta_max = hoverTimes.length
-      ? Math.max(...hoverTimes)
-      : 0;
+    out.hover_time_on_cta_avg = hoverTimes.length ? Math.round(hoverTimes.reduce((a, b) => a + b, 0) / hoverTimes.length) : 0;
+    out.hover_time_on_cta_max = hoverTimes.length ? Math.max(...hoverTimes) : 0;
 
     const hoverTimesProd = Object.values(hoverProduct).map(Number);
-    out.hover_time_on_product_avg = hoverTimesProd.length
-      ? Math.round(hoverTimesProd.reduce((a, b) => a + b, 0) / hoverTimesProd.length)
-      : 0;
-    out.hover_time_on_product_max = hoverTimesProd.length
-      ? Math.max(...hoverTimesProd)
-      : 0;
+    out.hover_time_on_product_avg = hoverTimesProd.length ? Math.round(hoverTimesProd.reduce((a, b) => a + b, 0) / hoverTimesProd.length) : 0;
+    out.hover_time_on_product_max = hoverTimesProd.length ? Math.max(...hoverTimesProd) : 0;
 
     out.goals_count = goals.length;
     goals.forEach(g => {
