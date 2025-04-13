@@ -6,12 +6,12 @@
 
     // Configuration
     const config = {
-        endpoint: 'YOUR_GOOGLE_APPS_SCRIPT_ENDPOINT',
+        endpoint: 'https://spb.sotovik.shop/ska/analytics/collect',
         sessionTimeout: 30 * 60 * 1000, // 30 minutes
         scrollChunkSize: 100, // pixels
         hoverThreshold: 1000, // ms
         formInteractionThreshold: 2000, // ms
-        allowedDomains: ['spb.sotovik.shop'], // Add allowed domains
+        allowedDomains: ['spb.sotovik.shop', 'ska.sotovik.shop'],
         mlFeatures: {
             collectScrollMap: true,
             trackFormInteractions: true,
@@ -43,10 +43,14 @@
         }
     };
 
+    function isAllowedDomain(hostname) {
+        return config.allowedDomains.some(domain => hostname.includes(domain));
+    }
+
     // Add trackNavigation function at the top level
     function trackNavigation() {
         const currentDomain = window.location.hostname;
-        if (!config.allowedDomains.includes(currentDomain)) {
+        if (!isAllowedDomain(currentDomain)) {
             console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
             return;
         }
@@ -62,11 +66,12 @@
     // Initialize SDK
     function init() {
         const currentDomain = window.location.hostname;
-        if (!config.allowedDomains.includes(currentDomain)) {
+        if (!isAllowedDomain(currentDomain)) {
             console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
             return;
         }
         
+        console.log('RIVOX SDK initialized on domain:', currentDomain);
         setupEventListeners();
         setupMLFeatures();
         waitScrollAndSend();
@@ -303,17 +308,29 @@
         };
 
         // Send data using beacon or fetch
-        if (navigator.sendBeacon) {
-            navigator.sendBeacon(config.endpoint, JSON.stringify(summary));
-        } else {
-            fetch(config.endpoint, {
-                method: 'POST',
-                body: JSON.stringify(summary),
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                keepalive: true
-            });
+        try {
+            if (navigator.sendBeacon) {
+                const result = navigator.sendBeacon(config.endpoint, JSON.stringify(summary));
+                console.log('Data sent via beacon:', result);
+            } else {
+                fetch(config.endpoint, {
+                    method: 'POST',
+                    body: JSON.stringify(summary),
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    keepalive: true
+                }).then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    console.log('Data sent via fetch successfully');
+                }).catch(error => {
+                    console.warn('Error sending data:', error);
+                });
+            }
+        } catch (error) {
+            console.warn('Error sending session data:', error);
         }
     }
 
