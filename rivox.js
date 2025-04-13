@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "4.3.6";
+  const RIVOX_VERSION = "4.3.7";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -15,19 +15,9 @@
       sessionStart: Date.now(),
       summarySent: false,
       trafficSource: {},
-      sessionMetrics: {
-        scroll_chunk_count: 0,
-        scroll_depth_max: 0,
-        scroll_jerk_count: 0,
-        scroll_idle_count: 0,
-        hover_time_on_cta_avg: 0,
-        hover_time_on_cta_max: 0,
-        hover_time_on_product_avg: 0,
-        hover_time_on_product_max: 0,
-      },
-      pageContext: {
-        ecommerce_event_types: [],
-      },
+      sessionMetrics: {},
+      pageContext: {},
+      missing_product_ids: [],
       unknown_clicks: [],
       goals: [],
     },
@@ -37,94 +27,136 @@
       this._initialized = true;
 
       this.state.clientToken = clientToken;
-      this.state.endpoint = endpoint;
-      this.config.ymCounterId = ymCounterId;
+      this.config.endpoint = endpoint;
       this.state.sessionStart = Date.now();
+      this.config.ymCounterId = ymCounterId;
 
-      this.state.sessionId = `sess-${Math.random().toString(36).substring(2)}-${Date.now()}`;
-      this.state.clientId = await this.getClientId();
+      this.state.sessionId = `sess-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`;
+
+      const clientId = await this.getClientId();
+      this.state.clientId = clientId;
+
+      this.saveUTMs();
+      this.observeSPAChanges();
+      this.interceptYMGoals();
 
       this.log.info("RIVOX INIT", {
         sessionId: this.state.sessionId,
         clientId: this.state.clientId
       });
-
-      this.saveUTMs();
-      this.observeSPAChanges();
-      this.interceptYMGoals();
     },
 
     start() {
-      this.trackScroll();
-      this.trackClicks();
-      this.trackProductViews();
-      this.trackFormModals();
-      this.trackTabViews();
-      this.trackFocus();
-      this.trackReturnScroll();
-      this.observeLateButtons();
-      this.log.info("🟢 RIVOX tracking start");
-    },
-
-    trackScroll() {
-      let lastY = window.scrollY, lastTime = Date.now();
-
-      window.addEventListener("scroll", () => {
-        const now = Date.now();
-        const deltaY = Math.abs(window.scrollY - lastY);
-        const deltaTime = now - lastTime;
-
-        if (deltaY > 20) {
-          this.state.sessionMetrics.scroll_chunk_count++;
-          this.state.sessionMetrics.scroll_depth_max = Math.max(
-            this.state.sessionMetrics.scroll_depth_max,
-            Math.round((window.scrollY + window.innerHeight) / document.body.scrollHeight * 100)
-          );
+      const waitUntilReady = (attempt = 0) => {
+        const ready = this.state.sessionId && this.state.clientId;
+        if (ready) {
+          try {
+            this.trackScroll?.();
+            this.trackClicks?.();
+            this.trackProductViews?.();
+            this.trackFormModals?.();
+            this.trackTabViews?.();
+            this.trackFocus?.();
+            this.trackReturnScroll?.();
+            this.observeLateButtons?.();
+            this.log.info("🟢 RIVOX tracking start");
+          } catch (e) {
+            this.log.error("⚠️ error in start()", e);
+          }
+        } else {
+          if (attempt > 50) {
+            this.log.warn("⏳ Tracking aborted after timeout");
+            return;
+          }
+          setTimeout(() => waitUntilReady(attempt + 1), 100);
         }
-
-        if (deltaY > 150) this.state.sessionMetrics.scroll_jerk_count++;
-        if (deltaTime > 1000) this.state.sessionMetrics.scroll_idle_count++;
-
-        lastY = window.scrollY;
-        lastTime = now;
-      });
+      };
+      waitUntilReady();
     },
 
-    trackClicks() {
-      document.addEventListener("click", e => {
-        const el = e.target.closest("a, button, .product, .cta");
-        if (!el) return;
-
-        const text = el.textContent?.trim()?.substring(0, 100);
-        const cls = el.className || "";
-        const href = el.href || "";
-        const id = el.id || "";
-        const tag = el.tagName;
-        const name = el.name || "";
-
-        this.state.unknown_clicks.push({ text, cls, href, id, tag, name });
-      });
-    },
-
-    trackFocus() {
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") {
-          this.state.sessionStart = Date.now();
+    interceptYMGoals() {
+      if (typeof ym !== "function") return;
+      const originalYM = ym;
+      window.ym = (...args) => {
+        try {
+          const [counterId, method, goalName] = args;
+          if (method === 'reachGoal' && typeof goalName === 'string') {
+            this.state.goals.push(goalName);
+            this.log.info("🎯 Goal intercepted:", goalName);
+          }
+        } catch (e) {
+          this.log.warn("⚠️ Failed to intercept goal", e);
         }
-      });
+        return originalYM(...args);
+      };
     },
 
-    observeLateButtons() {
-      const observer = new MutationObserver(() => {
-        // In future: auto-track appearing buttons
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
+    sendSessionSummary() {
+      if (this.state.summarySent) return;
+      if (!this.state.sessionId || !this.state.clientId) {
+        this.log.warn("⏳ Skipping sendSessionSummary: identifiers not ready");
+        return;
+      }
+      this.state.summarySent = true;
+
+      const payload = this.flattenFeatures(this.state);
+      const body = JSON.stringify(payload);
+      const url = this.config.endpoint;
+
+      const success = navigator.sendBeacon(url, body);
+      if (!success) {
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          mode: "no-cors"
+        }).catch(err => {
+          this.log.error(err, { context: "sendSummary fallback" });
+        });
+      }
     },
 
-    trackProductViews() {},
-    trackFormModals() {},
-    trackTabViews() {},
-    trackReturnScroll() {},
+    flattenFeatures(state) {
+      const now = Date.now();
+      const utms = this.getAllUTMs();
+      return {
+        clientToken: state.clientToken,
+        session_id: state.sessionId,
+        client_id: state.clientId || localStorage.getItem("rivox_client_id") || "",
+        timestamp: new Date().toISOString(),
+        url: window.location.href,
+        referrer: document.referrer || "",
+        user_agent: navigator.userAgent,
+        device_type: /mobile/i.test(navigator.userAgent) ? "mobile" : "desktop",
+        browser: this.detectBrowser(),
+        platform: navigator.userAgentData?.platform || navigator.platform || "",
+        rivox_version: RIVOX_VERSION,
+        ...utms,
+        scroll_chunk_count: state.sessionMetrics.scroll_chunk_count || 0,
+        scroll_depth_max: state.sessionMetrics.scroll_depth_max || 0,
+        scroll_jerk_count: state.sessionMetrics.scroll_jerk_count || 0,
+        scroll_idle_count: state.sessionMetrics.scroll_idle_count || 0,
+        hover_time_on_cta_avg: state.sessionMetrics.hover_time_on_cta_avg || 0,
+        hover_time_on_cta_max: state.sessionMetrics.hover_time_on_cta_max || 0,
+        hover_time_on_product_avg: state.sessionMetrics.hover_time_on_product_avg || 0,
+        hover_time_on_product_max: state.sessionMetrics.hover_time_on_product_max || 0,
+        goals_count: state.goals?.length || 0,
+        goals: state.goals.join(", ") || "",
+        ecommerce_event_count: state.pageContext.ecommerce_event_count || 0,
+        ecommerce_event_types: (state.pageContext.ecommerce_event_types || []).join(", "),
+        ecommerce_add_to_cart_count: state.pageContext.ecommerce_add_to_cart_count || 0,
+        ecommerce_purchase_value: state.pageContext.ecommerce_purchase_value || 0,
+        ecommerce_currency: state.pageContext.ecommerce_currency || "RUB",
+        session_duration_sec: Math.floor((now - state.sessionStart) / 1000),
+        time_on_page_sec: Math.floor((now - state.sessionStart) / 1000),
+        unknown_clicks_count: state.unknown_clicks.length || 0,
+        form_interaction: state.pageContext.form_interaction || 0,
+        number_of_products_viewed: state.pageContext.number_of_products_viewed || 0,
+        focus_time_on_product_card: state.pageContext.focus_time_on_product_card || 0,
+        scroll_return_count: state.pageContext.scroll_return_count || 0,
+        has_contact_info: state.pageContext.has_contact_info || 0
+      };
+    },
 
     async getClientId() {
       try {
@@ -140,6 +172,24 @@
       }
     },
 
+    getUTM(key) {
+      try {
+        const url = new URL(window.location.href);
+        return url.searchParams.get(key) || localStorage.getItem(`rivox_${key}`);
+      } catch {
+        return null;
+      }
+    },
+
+    getAllUTMs() {
+      const keys = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
+      const obj = {};
+      for (const k of keys) {
+        obj[k] = this.getUTM(k);
+      }
+      return obj;
+    },
+
     saveUTMs() {
       try {
         const url = new URL(window.location.href);
@@ -148,67 +198,6 @@
           if (val) localStorage.setItem(`rivox_${key}`, val);
         });
       } catch {}
-    },
-
-    observeSPAChanges() {
-      const observer = new MutationObserver(() => {
-        idle(() => this.sendSessionSummary());
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-    },
-
-    interceptYMGoals() {
-      if (typeof ym !== "function") return;
-      const originalYM = ym;
-      window.ym = (...args) => {
-        try {
-          const [counterId, method, goalName] = args;
-          if (method === 'reachGoal' && typeof goalName === 'string') {
-            this.state.goals.push(goalName);
-          }
-        } catch {}
-        return originalYM(...args);
-      };
-    },
-
-    sendSessionSummary() {
-      if (this.state.summarySent) return;
-      this.state.summarySent = true;
-
-      const payload = {
-        ...this.state.sessionMetrics,
-        ...this.getAllUTMs(),
-        ...this.state.pageContext,
-        session_id: this.state.sessionId,
-        client_id: this.state.clientId,
-        clientToken: this.state.clientToken,
-        user_agent: navigator.userAgent,
-        device_type: /mobile/i.test(navigator.userAgent) ? "mobile" : "desktop",
-        browser: this.detectBrowser(),
-        platform: navigator.platform,
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        referrer: document.referrer || "",
-        rivox_version: RIVOX_VERSION,
-        product_clicks: this.state.unknown_clicks,
-        goals_count: this.state.goals.length,
-        goals: this.state.goals.join(","),
-        session_duration_sec: Math.floor((Date.now() - this.state.sessionStart) / 1000),
-        time_on_page_sec: Math.floor((Date.now() - this.state.sessionStart) / 1000),
-        unknown_clicks_count: this.state.unknown_clicks.length
-      };
-
-      const body = JSON.stringify(payload);
-      navigator.sendBeacon(this.state.endpoint, body);
-    },
-
-    getAllUTMs() {
-      const keys = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
-      const obj = {};
-      for (const k of keys) {
-        obj[k] = localStorage.getItem(`rivox_${k}`) || null;
-      }
-      return obj;
     },
 
     detectBrowser() {
@@ -222,10 +211,17 @@
       return "Unknown";
     },
 
+    observeSPAChanges() {
+      const observer = new MutationObserver(() => {
+        idle(() => this.sendSessionSummary());
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    },
+
     log: {
       error: (msg, ctx) => console.error("[RIVOX]", msg, ctx),
       info: (msg, ctx) => console.info("[RIVOX]", msg, ctx),
-      warn: (msg, ctx) => console.warn("[RIVOX]", msg, ctx),
+      warn: (msg, ctx) => console.warn("[RIVOX]", msg, ctx)
     }
   };
 
