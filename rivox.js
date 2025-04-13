@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "4.0.0";
+  const RIVOX_VERSION = "4.1.0";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -106,15 +106,24 @@
     },
 
     flattenFeatures(state) {
+      const now = Date.now();
       return {
         clientToken: state.clientToken,
         session_id: state.sessionId,
-        client_id: state.clientId,
+        client_id: state.clientId || localStorage.getItem("rivox_client_id") || "",
         user_agent: navigator.userAgent,
         device_type: /mobile/i.test(navigator.userAgent) ? "mobile" : "desktop",
+        browser: navigator.userAgentData?.brands?.[0]?.brand || "",
+        platform: navigator.userAgentData?.platform || navigator.platform || "",
+        timestamp: new Date().toISOString(),
+        rivox_version: RIVOX_VERSION,
+        url: window.location.href,
+        referrer: document.referrer || "",
         utm_source: this.getUTM("utm_source"),
         utm_medium: this.getUTM("utm_medium"),
         utm_campaign: this.getUTM("utm_campaign"),
+        utm_content: this.getUTM("utm_content"),
+        utm_term: this.getUTM("utm_term"),
         scroll_chunk_count: state.sessionMetrics.scroll_chunk_count || 0,
         scroll_depth_max: state.sessionMetrics.scroll_depth_max || 0,
         scroll_jerk_count: state.sessionMetrics.scroll_jerk_count || 0,
@@ -125,12 +134,12 @@
         hover_time_on_product_max: state.sessionMetrics.hover_time_on_product_max || 0,
         goals_count: state.goals?.length || 0,
         ecommerce_event_count: state.pageContext.ecommerce_event_count || 0,
-        ecommerce_event_types: state.pageContext.ecommerce_event_types || [],
+        ecommerce_event_types: (state.pageContext.ecommerce_event_types || []).join(", "),
         ecommerce_add_to_cart_count: state.pageContext.ecommerce_add_to_cart_count || 0,
         ecommerce_purchase_value: state.pageContext.ecommerce_purchase_value || 0,
         ecommerce_currency: state.pageContext.ecommerce_currency || "RUB",
-        session_duration_sec: Math.floor((Date.now() - state.sessionStart) / 1000),
-        time_on_page_sec: Math.floor((Date.now() - state.sessionStart) / 1000),
+        session_duration_sec: Math.floor((now - state.sessionStart) / 1000),
+        time_on_page_sec: Math.floor((now - state.sessionStart) / 1000),
         unknown_clicks_count: state.unknown_clicks.length || 0,
         form_interaction: state.pageContext.form_interaction || 0,
       };
