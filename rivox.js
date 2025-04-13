@@ -451,6 +451,240 @@ function getYandexCounterId() {
         sessionData.ml_features.funnel_analysis = analyzeFunnel();
     }
 
+    // Calculate session-level delta features
+    function calculateDeltaFeatures() {
+        const now = Date.now();
+        const sessionDuration = now - sessionData.start_time;
+        
+        // Time to first click
+        const firstClick = sessionData.time_between_clicks[0];
+        const timeToFirstClick = firstClick ? firstClick.timestamp - sessionData.start_time : null;
+        
+        // Average time between events
+        const totalEvents = sessionData.hover_events.length + 
+                           sessionData.cta_clicks.length + 
+                           sessionData.form_interactions.length;
+        const avgTimeBetweenEvents = totalEvents > 1 ? 
+            sessionDuration / totalEvents : null;
+        
+        // Click burst detection
+        const clickBursts = [];
+        let currentBurst = [];
+        const BURST_WINDOW = 5000; // 5 seconds
+        
+        sessionData.time_between_clicks.forEach((click, index) => {
+            if (index === 0) {
+                currentBurst.push(click);
+                return;
+            }
+            
+            const timeSinceLastClick = click.timestamp - sessionData.time_between_clicks[index-1].timestamp;
+            if (timeSinceLastClick <= BURST_WINDOW) {
+                currentBurst.push(click);
+            } else {
+                if (currentBurst.length > 1) {
+                    clickBursts.push(currentBurst);
+                }
+                currentBurst = [click];
+            }
+        });
+        
+        if (currentBurst.length > 1) {
+            clickBursts.push(currentBurst);
+        }
+        
+        return {
+            time_to_first_click: timeToFirstClick,
+            avg_time_between_events: avgTimeBetweenEvents,
+            click_burst_count: clickBursts.length,
+            click_bursts: clickBursts
+        };
+    }
+
+    // Calculate intent score
+    function calculateIntentScore() {
+        const goalsReached = sessionData.conversion_data.goals_reached.length;
+        const almostReached = sessionData.hover_events.filter(e => 
+            e.element.includes('btn') || 
+            e.element.includes('button') || 
+            e.element.includes('cta')
+        ).length;
+        
+        const ignoredElements = sessionData.cta_clicks.filter(click => 
+            !sessionData.hover_events.some(hover => 
+                hover.element === click.element
+            )
+        ).length;
+        
+        const totalOpportunities = goalsReached + almostReached + ignoredElements;
+        const intentScore = totalOpportunities > 0 ? 
+            ((goalsReached * 1.0) + (almostReached * 0.5)) / totalOpportunities * 100 : 0;
+        
+        return {
+            goals_reached: goalsReached,
+            almost_reached: almostReached,
+            ignored: ignoredElements,
+            intent_score: intentScore
+        };
+    }
+
+    // Track product dwell time
+    function trackProductDwellTime() {
+        const productElements = document.querySelectorAll('[data-product-id]');
+        const dwellTimes = {};
+        
+        productElements.forEach(element => {
+            const productId = element.getAttribute('data-product-id');
+            if (!dwellTimes[productId]) {
+                dwellTimes[productId] = {
+                    startTime: null,
+                    totalTime: 0,
+                    interactions: 0
+                };
+            }
+            
+            // Track hover
+            element.addEventListener('mouseenter', () => {
+                dwellTimes[productId].startTime = Date.now();
+            });
+            
+            element.addEventListener('mouseleave', () => {
+                if (dwellTimes[productId].startTime) {
+                    const dwellTime = Date.now() - dwellTimes[productId].startTime;
+                    dwellTimes[productId].totalTime += dwellTime;
+                    dwellTimes[productId].interactions++;
+                    dwellTimes[productId].startTime = null;
+                    
+                    // Update session data
+                    sessionData.product_dwell_times = sessionData.product_dwell_times || {};
+                    sessionData.product_dwell_times[productId] = dwellTimes[productId];
+                }
+            });
+        });
+    }
+
+    // Track return visits
+    function trackReturnVisits() {
+        const lastVisit = localStorage.getItem('rivox_last_visit');
+        const now = Date.now();
+        
+        if (lastVisit) {
+            const daysSinceLastVisit = (now - parseInt(lastVisit)) / (1000 * 60 * 60 * 24);
+            
+            if (daysSinceLastVisit <= 1) {
+                sessionData.return_visits = sessionData.return_visits || {};
+                sessionData.return_visits.last_24h = (sessionData.return_visits.last_24h || 0) + 1;
+            }
+            if (daysSinceLastVisit <= 3) {
+                sessionData.return_visits.last_3d = (sessionData.return_visits.last_3d || 0) + 1;
+            }
+            if (daysSinceLastVisit <= 7) {
+                sessionData.return_visits.last_7d = (sessionData.return_visits.last_7d || 0) + 1;
+            }
+        }
+        
+        localStorage.setItem('rivox_last_visit', now.toString());
+    }
+
+    // Track session reactivation
+    function trackSessionReactivation() {
+        const lastActivity = sessionData.last_activity;
+        const now = Date.now();
+        const INACTIVITY_THRESHOLD = 20 * 1000; // 20 seconds
+        const REACTIVATION_WINDOW = 5 * 60 * 1000; // 5 minutes
+        
+        if (lastActivity && (now - lastActivity) > INACTIVITY_THRESHOLD) {
+            const timeSinceInactive = now - lastActivity;
+            if (timeSinceInactive <= REACTIVATION_WINDOW) {
+                sessionData.session_reactivations = sessionData.session_reactivations || [];
+                sessionData.session_reactivations.push({
+                    timestamp: now,
+                    inactive_duration: timeSinceInactive
+                });
+            }
+        }
+    }
+
+    // Track engagement decay
+    function trackEngagementDecay() {
+        const SESSION_CHUNKS = 5; // Divide session into 5 chunks
+        const chunkDuration = (Date.now() - sessionData.start_time) / SESSION_CHUNKS;
+        
+        const activityByChunk = Array(SESSION_CHUNKS).fill(0);
+        const allEvents = [
+            ...sessionData.hover_events,
+            ...sessionData.cta_clicks,
+            ...sessionData.form_interactions
+        ];
+        
+        allEvents.forEach(event => {
+            const chunkIndex = Math.floor((event.timestamp - sessionData.start_time) / chunkDuration);
+            if (chunkIndex < SESSION_CHUNKS) {
+                activityByChunk[chunkIndex]++;
+            }
+        });
+        
+        // Calculate decay rate
+        const decayRate = activityByChunk.reduce((sum, count, index) => {
+            return sum + (count * (SESSION_CHUNKS - index));
+        }, 0) / (SESSION_CHUNKS * (SESSION_CHUNKS + 1) / 2);
+        
+        sessionData.engagement_decay = {
+            activity_by_chunk: activityByChunk,
+            decay_rate: decayRate
+        };
+    }
+
+    // Calculate behavioral similarity
+    function calculateBehavioralSimilarity() {
+        // Get successful session profiles from localStorage
+        const successfulProfiles = JSON.parse(localStorage.getItem('rivox_successful_profiles') || '[]');
+        
+        if (successfulProfiles.length === 0) return null;
+        
+        // Current session features
+        const currentFeatures = {
+            scroll_depth: Math.max(...sessionData.scroll_depth_percentages.map(d => d.depth)),
+            time_on_site: Date.now() - sessionData.start_time,
+            interaction_count: sessionData.user_behavior.total_interactions,
+            dwell_time: Object.values(sessionData.product_dwell_times || {}).reduce((sum, t) => sum + t.totalTime, 0),
+            intent_score: calculateIntentScore().intent_score
+        };
+        
+        // Calculate similarity scores
+        const similarityScores = successfulProfiles.map(profile => {
+            const distance = Math.sqrt(
+                Object.keys(currentFeatures).reduce((sum, key) => {
+                    const diff = (currentFeatures[key] - profile[key]) / profile[key];
+                    return sum + diff * diff;
+                }, 0)
+            );
+            return 1 / (1 + distance); // Convert distance to similarity score
+        });
+        
+        const avgSimilarity = similarityScores.reduce((sum, score) => sum + score, 0) / similarityScores.length;
+        
+        return {
+            similarity_score: avgSimilarity,
+            successful_profiles_count: successfulProfiles.length
+        };
+    }
+
+    // Update session data structure
+    function updateSessionData() {
+        // Add new ML features
+        sessionData.ml_features = {
+            ...sessionData.ml_features,
+            delta_features: calculateDeltaFeatures(),
+            intent_score: calculateIntentScore(),
+            product_dwell_times: sessionData.product_dwell_times || {},
+            return_visits: sessionData.return_visits || {},
+            session_reactivations: sessionData.session_reactivations || [],
+            engagement_decay: sessionData.engagement_decay || {},
+            behavioral_similarity: calculateBehavioralSimilarity()
+        };
+    }
+
     // Enhanced waitScrollAndSend implementation
     function waitScrollAndSend() {
         let isSent = false;
