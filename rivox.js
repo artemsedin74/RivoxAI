@@ -22,6 +22,12 @@
       goals: [],
     },
 
+    generateSessionId() {
+      const rand = Math.random().toString(36).substring(2, 10);
+      const time = Date.now().toString();
+      return `sess-${rand}-${time}`;
+    },
+
     async init(clientToken, endpoint, ymCounterId) {
       if (this._initialized) return;
       this._initialized = true;
