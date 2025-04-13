@@ -92,7 +92,7 @@
     }
 
     // Initialize SDK
-    function init() {
+    async function init() {
         const currentDomain = window.location.hostname;
         if (!isAllowedDomain(currentDomain)) {
             console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
@@ -103,6 +103,52 @@
             console.log('RIVOX SDK initialized on domain:', currentDomain);
             console.log('Using endpoint:', config.endpoint);
         }
+
+        // Wait for client id before initializing session
+        const clientId = await generateClientId();
+        if (!clientId) {
+            console.error('Could not initialize RIVOX SDK: Yandex.Metrika client ID is required');
+            return;
+        }
+
+        // Initialize session data with Yandex.Metrika client id
+        sessionData = {
+            client_id: clientId,
+            session_id: generateSessionId(),
+            start_time: Date.now(),
+            last_activity: Date.now(),
+            page_views: [],
+            scroll_chunks: [],
+            hover_events: [],
+            form_interactions: [],
+            cta_clicks: [],
+            modal_interactions: [],
+            utm_data: collectUtmData(),
+            traffic_source: {
+                referrer: document.referrer,
+                landing_page: window.location.href,
+                entry_point: window.location.pathname
+            },
+            user_behavior: {
+                time_to_first_interaction: null,
+                total_interactions: 0,
+                interaction_frequency: [],
+                scroll_depth_percentages: [],
+                time_between_clicks: [],
+                mouse_movement_heatmap: [],
+                viewport_size: {
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                }
+            },
+            ml_features: {
+                interest_signals: [],
+                behavior_patterns: [],
+                user_segment: null,
+                conversion_probability: null,
+                funnel_analysis: {}
+            }
+        };
 
         setupEventListeners();
         setupMLFeatures();
@@ -535,10 +581,35 @@
     }
 
     function generateClientId() {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            const r = Math.random() * 16 | 0;
-            const v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
+        // Try to get Yandex.Metrika client id
+        return new Promise((resolve) => {
+            // Check if Yandex.Metrika is available
+            if (typeof ym === 'undefined') {
+                console.error('Yandex.Metrika not found. Please ensure it is properly installed.');
+                resolve(null);
+                return;
+            }
+
+            // Get counter id (usually the first one if multiple counters exist)
+            const counterIds = Object.keys(window['yaCounter'] || {});
+            const counterId = counterIds[0] || window.ymCounterId;
+
+            if (!counterId) {
+                console.error('Yandex.Metrika counter ID not found');
+                resolve(null);
+                return;
+            }
+
+            // Get client id from Yandex.Metrika
+            ym(counterId, 'getClientID', function(clientID) {
+                if (clientID) {
+                    console.log('Using Yandex.Metrika client ID:', clientID);
+                    resolve(clientID);
+                } else {
+                    console.error('Failed to get Yandex.Metrika client ID');
+                    resolve(null);
+                }
+            });
         });
     }
 
