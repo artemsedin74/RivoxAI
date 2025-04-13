@@ -1,5 +1,5 @@
-// rivox.js v2.26.3
-const RIVOX_VERSION = "2.26.3";
+// rivox.js v2.26.4
+const RIVOX_VERSION = "2.26.4";
 
 window.Rivox = {
   state: {
