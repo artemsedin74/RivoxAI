@@ -22,7 +22,7 @@
       goals: [],
     },
 
-    init(clientToken, endpoint, ymCounterId) {
+    async init(clientToken, endpoint, ymCounterId) {
       if (this._initialized) return;
       this._initialized = true;
 
@@ -32,7 +32,7 @@
       this.state.sessionStart = Date.now();
       this.config.ymCounterId = ymCounterId;
 
-      this.getClientId();
+      this.state.clientId = await this.getClientId();
       this.observeSPAChanges();
     },
 
@@ -47,40 +47,41 @@
       }
     },
 
-    getClientId() {
-      const counterId = this.config.ymCounterId;
-      if (!counterId || typeof ym !== "function") {
-        this.state.clientId = "";
-        return;
+    async getClientId() {
+      const cookieId = document.cookie.match(/_ym_uid=([^;]+)/)?.[1];
+      if (cookieId) {
+        try { localStorage.setItem("rivox_client_id", cookieId); } catch {}
+        this.log?.info?.("✅ client_id from cookie", cookieId);
+        return cookieId;
       }
 
-      let retries = 0;
-      const maxRetries = 20;
+      const counterId = this.config.ymCounterId;
+      if (!counterId || typeof ym !== "function") return "";
 
-      const tryGet = () => {
-        try {
-          ym(counterId, 'getClientID', id => {
-            if (typeof id === "string" && id.length > 10) {
-              this.state.clientId = id;
-              try {
-                localStorage.setItem("rivox_client_id", id);
-              } catch (_) {}
-              this.log?.info?.("✅ ClientID from YM", id);
-            } else if (retries < maxRetries) {
-              retries++;
-              setTimeout(tryGet, 250);
-            } else {
-              this.state.clientId = "";
-              this.log?.warn?.("⚠️ YM clientID not available after retries");
-            }
-          });
-        } catch (e) {
-          this.state.clientId = "";
-          this.log?.error?.(e, { context: "getClientId" });
-        }
-      };
-
-      tryGet();
+      return await new Promise(resolve => {
+        let attempts = 0;
+        const maxAttempts = 20;
+        const interval = setInterval(() => {
+          attempts++;
+          if (typeof ym === "function") {
+            try {
+              ym(counterId, 'getClientID', id => {
+                if (typeof id === "string" && id.length > 10) {
+                  clearInterval(interval);
+                  try { localStorage.setItem("rivox_client_id", id); } catch {}
+                  this.log?.info?.("✅ client_id from ym(...)", id);
+                  resolve(id);
+                }
+              });
+            } catch {}
+          }
+          if (attempts >= maxAttempts) {
+            clearInterval(interval);
+            this.log?.warn?.("⚠️ client_id not found via ym()");
+            resolve("");
+          }
+        }, 250);
+      });
     },
 
     sendSessionSummary() {
@@ -95,9 +96,7 @@
       if (!success) {
         fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
           body,
           mode: "no-cors"
         }).catch(err => {
