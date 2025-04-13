@@ -6,7 +6,8 @@
 
     // Configuration
     const config = {
-        endpoint: 'https://spb.sotovik.shop/ska/analytics/collect',
+        endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
+        debug: true, // Enable debug mode
         sessionTimeout: 30 * 60 * 1000, // 30 minutes
         scrollChunkSize: 100, // pixels
         hoverThreshold: 1000, // ms
@@ -294,11 +295,14 @@
     }
 
     // Send session summary
-    function sendSessionSummary() {
+    async function sendSessionSummary() {
         // Prepare final data
         const summary = {
             ...sessionData,
             session_duration: Date.now() - sessionData.start_time,
+            domain: window.location.hostname,
+            path: window.location.pathname,
+            timestamp: new Date().toISOString(),
             ml_features: {
                 ...sessionData.ml_features,
                 scroll_heatmap: generateScrollHeatmap(),
@@ -307,30 +311,70 @@
             }
         };
 
-        // Send data using beacon or fetch
+        // Log data in debug mode
+        if (config.debug) {
+            console.log('Preparing to send session data:', summary);
+        }
+
         try {
+            // Try sendBeacon first for better reliability during page unload
             if (navigator.sendBeacon) {
-                const result = navigator.sendBeacon(config.endpoint, JSON.stringify(summary));
-                console.log('Data sent via beacon:', result);
-            } else {
-                fetch(config.endpoint, {
-                    method: 'POST',
-                    body: JSON.stringify(summary),
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    keepalive: true
-                }).then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    console.log('Data sent via fetch successfully');
-                }).catch(error => {
-                    console.warn('Error sending data:', error);
+                const blob = new Blob([JSON.stringify(summary)], {
+                    type: 'application/json'
                 });
+                const result = navigator.sendBeacon(config.endpoint, blob);
+                
+                if (config.debug) {
+                    console.log('Data sent via beacon:', result);
+                }
+                
+                return;
+            }
+
+            // Fallback to fetch with CORS mode
+            const response = await fetch(config.endpoint, {
+                method: 'POST',
+                mode: 'cors',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(summary),
+                keepalive: true
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const responseData = await response.json();
+            
+            if (config.debug) {
+                console.log('Data sent successfully. Response:', responseData);
             }
         } catch (error) {
-            console.warn('Error sending session data:', error);
+            console.error('Failed to send session data:', error);
+            
+            // Store failed request for retry
+            if (window.localStorage) {
+                try {
+                    const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+                    failedRequests.push({
+                        timestamp: Date.now(),
+                        data: summary
+                    });
+                    // Keep only last 10 failed requests to prevent storage overflow
+                    if (failedRequests.length > 10) {
+                        failedRequests.shift();
+                    }
+                    localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
+                    
+                    if (config.debug) {
+                        console.log('Failed request stored for retry');
+                    }
+                } catch (e) {
+                    console.warn('Failed to store failed request:', e);
+                }
+            }
         }
     }
 
