@@ -1,9 +1,9 @@
 /**
- * RIVOX SDK v4.6.1 — FULL TRACK MODE + ML + ECOMMERCE
+ * RIVOX SDK v4.6.2 — FULL TRACK MODE + ML + ECOMMERCE + SESSION END LOGIC
  * One-file tracking solution with no external dependencies
  */
 (function () {
-  const RIVOX_VERSION = "4.6.1";
+  const RIVOX_VERSION = "4.6.2";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -57,6 +57,14 @@
       this.checkContactInfo();
       this.detectPageType();
       this.observeCTA();
+
+      window.addEventListener("beforeunload", () => {
+        this.sendSessionSummary();
+      });
+
+      setTimeout(() => {
+        this.sendSessionSummary();
+      }, 20 * 60 * 1000); // 20 минут таймер
 
       this.log.info("RIVOX INIT", {
         sessionId: this.state.sessionId,
