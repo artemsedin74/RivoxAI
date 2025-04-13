@@ -51,6 +51,13 @@
         cta_clicks: [],
         modal_interactions: [],
         utm_data: collectUtmData(),
+        metrika_goals: [],
+        conversion_data: {
+            goals_reached: [],
+            ecommerce_data: [],
+            last_goal_timestamp: null,
+            conversion_path: []
+        },
         traffic_source: {
             referrer: document.referrer,
             landing_page: window.location.href,
@@ -138,6 +145,13 @@
             cta_clicks: [],
             modal_interactions: [],
             utm_data: collectUtmData(),
+            metrika_goals: [],
+            conversion_data: {
+                goals_reached: [],
+                ecommerce_data: [],
+                last_goal_timestamp: null,
+                conversion_path: []
+            },
             traffic_source: {
                 referrer: document.referrer,
                 landing_page: window.location.href,
@@ -166,6 +180,7 @@
 
         setupEventListeners();
         setupMLFeatures();
+        setupMetrikaGoalsTracking();
         waitScrollAndSend();
         trackNavigation();
     }
@@ -1388,6 +1403,167 @@
             intensity: data.count,
             avgTimeSpent: data.avgTime
         }));
+    }
+
+    // Add Yandex.Metrika goals tracking
+    function setupMetrikaGoalsTracking() {
+        if (typeof ym === 'undefined') {
+            console.error('Yandex.Metrika not found for goals tracking');
+            return;
+        }
+
+        // Get counter id
+        const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
+        const counterId = counterObjects.length > 0 ? 
+            counterObjects[0].replace('yaCounter', '') : 
+            window.ymCounterId;
+
+        if (!counterId) {
+            console.error('Yandex.Metrika counter ID not found for goals tracking');
+            return;
+        }
+
+        // Track reachGoal calls
+        const originalReachGoal = ym;
+        window.ym = function(counterId, method, ...args) {
+            if (method === 'reachGoal') {
+                const goalName = args[0];
+                const goalParams = args[1] || {};
+                
+                // Record goal data
+                const goalData = {
+                    timestamp: Date.now(),
+                    name: goalName,
+                    parameters: goalParams,
+                    page_url: window.location.href,
+                    referrer: document.referrer,
+                    user_agent: navigator.userAgent,
+                    client_id: sessionData.client_id,
+                    session_duration: Date.now() - sessionData.start_time,
+                    conversion_context: {
+                        last_interaction: sessionData.last_activity,
+                        scroll_depth: getMaxScrollDepth(),
+                        interaction_count: getTotalInteractions(),
+                        form_interactions: sessionData.form_interactions.length,
+                        time_to_convert: Date.now() - sessionData.start_time
+                    }
+                };
+
+                sessionData.metrika_goals.push(goalData);
+                sessionData.conversion_data.goals_reached.push(goalData);
+                sessionData.conversion_data.last_goal_timestamp = Date.now();
+
+                // Update conversion path
+                sessionData.conversion_data.conversion_path.push({
+                    timestamp: Date.now(),
+                    type: 'goal',
+                    name: goalName,
+                    url: window.location.href
+                });
+
+                // Send goal data immediately
+                sendGoalData(goalData);
+            }
+            
+            // Call original ym function
+            return originalReachGoal.apply(this, arguments);
+        };
+
+        // Track ecommerce events
+        const originalEcommerce = window.dataLayer ? window.dataLayer.push : null;
+        if (originalEcommerce) {
+            window.dataLayer.push = function(data) {
+                if (data && data.ecommerce) {
+                    const ecommerceData = {
+                        timestamp: Date.now(),
+                        type: getEcommerceEventType(data.ecommerce),
+                        data: data.ecommerce,
+                        page_url: window.location.href,
+                        client_id: sessionData.client_id
+                    };
+
+                    sessionData.conversion_data.ecommerce_data.push(ecommerceData);
+                    
+                    // Update conversion path
+                    sessionData.conversion_data.conversion_path.push({
+                        timestamp: Date.now(),
+                        type: 'ecommerce',
+                        action: ecommerceData.type,
+                        data: {
+                            products: getEcommerceProducts(data.ecommerce),
+                            value: getEcommerceValue(data.ecommerce)
+                        }
+                    });
+                }
+                return originalEcommerce.apply(this, arguments);
+            };
+        }
+    }
+
+    // Helper functions for goals tracking
+    function getMaxScrollDepth() {
+        if (!sessionData.scroll_chunks.length) return 0;
+        return Math.max(...sessionData.scroll_chunks.map(chunk => 
+            (chunk.position / (document.documentElement.scrollHeight - window.innerHeight)) * 100
+        ));
+    }
+
+    function getTotalInteractions() {
+        return sessionData.hover_events.length + 
+               sessionData.cta_clicks.length + 
+               sessionData.form_interactions.length + 
+               sessionData.modal_interactions.length;
+    }
+
+    function getEcommerceEventType(ecommerce) {
+        if (ecommerce.purchase) return 'purchase';
+        if (ecommerce.add) return 'add_to_cart';
+        if (ecommerce.remove) return 'remove_from_cart';
+        if (ecommerce.detail) return 'view_product';
+        if (ecommerce.impressions) return 'view_product_list';
+        return 'other';
+    }
+
+    function getEcommerceProducts(ecommerce) {
+        const products = [];
+        if (ecommerce.purchase) products.push(...(ecommerce.purchase.products || []));
+        if (ecommerce.add) products.push(...(ecommerce.add.products || []));
+        if (ecommerce.remove) products.push(...(ecommerce.remove.products || []));
+        if (ecommerce.detail) products.push(...(ecommerce.detail.products || []));
+        if (ecommerce.impressions) products.push(...ecommerce.impressions);
+        return products.map(p => ({
+            id: p.id,
+            name: p.name,
+            price: p.price,
+            quantity: p.quantity
+        }));
+    }
+
+    function getEcommerceValue(ecommerce) {
+        if (ecommerce.purchase && ecommerce.purchase.actionField) {
+            return ecommerce.purchase.actionField.revenue;
+        }
+        return null;
+    }
+
+    // Send goal data immediately
+    function sendGoalData(goalData) {
+        const endpoint = getEndpointUrl();
+        
+        if (config.debug) {
+            console.log('Sending goal data:', goalData);
+        }
+
+        // Try to send via JSONP
+        sendDataJSONP({
+            type: 'goal',
+            client_id: sessionData.client_id,
+            session_id: sessionData.session_id,
+            goal_data: goalData,
+            conversion_path: sessionData.conversion_data.conversion_path
+        }).catch(error => {
+            console.error('Failed to send goal data:', error);
+        });
     }
 
     // Expose public API
