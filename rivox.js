@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "4.3.3";
+  const RIVOX_VERSION = "4.3.4";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -20,12 +20,6 @@
       missing_product_ids: [],
       unknown_clicks: [],
       goals: [],
-    },
-
-    generateSessionId() {
-      const rand = Math.random().toString(36).substring(2, 10);
-      const time = Date.now().toString();
-      return `sess-${rand}-${time}`;
     },
 
     async init(clientToken, endpoint, ymCounterId) {
@@ -58,6 +52,10 @@
       this.interceptYMGoals();
     },
 
+    generateSessionId() {
+      return "sess-" + Math.random().toString(36).substring(2) + "-" + Date.now();
+    },
+
     start() {
       const waitUntilReady = (attempt = 0) => {
         const ready = this.state.sessionId && this.state.clientId;
@@ -84,6 +82,113 @@
         }
       };
       waitUntilReady();
+    },
+
+    trackScroll() {
+      let lastScrollTop = 0, maxDepth = 0, scrollChunks = 0, idleCount = 0, jerkCount = 0;
+
+      window.addEventListener("scroll", () => {
+        const scrollTop = window.scrollY || document.documentElement.scrollTop;
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const percent = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+
+        const delta = Math.abs(scrollTop - lastScrollTop);
+        if (delta > 30) jerkCount++;
+        else idleCount++;
+
+        scrollChunks++;
+        maxDepth = Math.max(maxDepth, percent);
+        lastScrollTop = scrollTop;
+
+        Object.assign(this.state.sessionMetrics, {
+          scroll_chunk_count: scrollChunks,
+          scroll_depth_max: Math.floor(maxDepth),
+          scroll_jerk_count: jerkCount,
+          scroll_idle_count: idleCount
+        });
+      }, { passive: true });
+    },
+
+    trackClicks() {
+      document.addEventListener("click", e => {
+        const t = e.target.closest("a, button, input, [role='button']");
+        if (!t) return;
+        this.state.unknown_clicks.push({
+          tag: t.tagName,
+          id: t.id,
+          class: t.className,
+          name: t.name,
+          text: t.innerText?.slice(0, 50),
+          href: t.href || null
+        });
+      }, true);
+    },
+
+    trackFormModals() {
+      const observer = new MutationObserver(() => {
+        const forms = document.querySelectorAll("form, [class*='form'], [id*='form']");
+        if (forms.length > 0) {
+          this.state.pageContext.form_interaction = 1;
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    },
+
+    trackProductViews() {
+      const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            this.state.pageContext.number_of_products_viewed =
+              (this.state.pageContext.number_of_products_viewed || 0) + 1;
+          }
+        }
+      }, { threshold: 0.5 });
+
+      idle(() => {
+        document.querySelectorAll(".product, [data-product-id], .product-card").forEach(el => observer.observe(el));
+      });
+    },
+
+    trackTabViews() {
+      window.addEventListener("focus", () => {
+        this.state.pageContext.focus_time_on_product_card =
+          (this.state.pageContext.focus_time_on_product_card || 0) + 1;
+      });
+    },
+
+    trackFocus() {
+      let focusTime = 0;
+      let lastFocus = Date.now();
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          lastFocus = Date.now();
+        } else {
+          focusTime += Date.now() - lastFocus;
+          this.state.pageContext.focus_time_on_product_card = Math.floor(focusTime / 1000);
+        }
+      });
+    },
+
+    trackReturnScroll() {
+      let lastY = window.scrollY;
+      window.addEventListener("scroll", () => {
+        const current = window.scrollY;
+        if (current < lastY - 100) {
+          this.state.pageContext.scroll_return_count =
+            (this.state.pageContext.scroll_return_count || 0) + 1;
+        }
+        lastY = current;
+      }, { passive: true });
+    },
+
+    observeLateButtons() {
+      setTimeout(() => {
+        document.querySelectorAll("button").forEach(b => {
+          b.addEventListener("click", () => {
+            this.state.pageContext.has_contact_info = 1;
+          });
+        });
+      }, 3000);
     },
 
     interceptYMGoals() {
