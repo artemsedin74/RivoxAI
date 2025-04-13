@@ -25,6 +25,8 @@ function getYandexCounterId() {
         hoverThreshold: 1000,
         formInteractionThreshold: 2000,
         allowedDomains: ['spb.sotovik.shop'],
+        initDelay: 300,    // Default delay before starting trackers (ms)
+        sendDelay: 4000,   // Default delay before final send (ms)
         mlFeatures: {
             collectScrollMap: true,
             trackFormInteractions: true,
@@ -87,8 +89,42 @@ function getYandexCounterId() {
         return config.endpoint;
     }
 
+    // Load configuration from script data attributes
+    function loadConfig() {
+        const script = document.querySelector('script[data-token]');
+        if (!script) {
+            console.error('RIVOX SDK script tag with data-token not found');
+            return null;
+        }
+
+        // Get token
+        const token = script.dataset.token;
+        if (!token) {
+            console.error('RIVOX SDK token not specified');
+            return null;
+        }
+
+        // Get optional delays
+        const initDelay = parseInt(script.dataset.initDelay) || config.initDelay;
+        const sendDelay = parseInt(script.dataset.sendDelay) || config.sendDelay;
+
+        if (config.debug) {
+            console.log('RIVOX SDK Configuration:', {
+                token,
+                initDelay,
+                sendDelay
+            });
+        }
+
+        return {
+            token,
+            initDelay,
+            sendDelay
+        };
+    }
+
     // Initialize SDK
-    async function initRivoxSDK() {
+    async function init() {
         const currentDomain = window.location.hostname;
         if (!isAllowedDomain(currentDomain)) {
             console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
@@ -97,6 +133,10 @@ function getYandexCounterId() {
         
         console.log('RIVOX SDK initializing...');
         
+        // Load configuration
+        const userConfig = loadConfig();
+        if (!userConfig) return;
+
         // Wait for client id before proceeding
         const clientId = await generateClientId();
         if (!clientId) {
@@ -155,8 +195,22 @@ function getYandexCounterId() {
         setupEventListeners();
         setupMLFeatures();
         setupMetrikaGoalsTracking();
-        waitScrollAndSend();
-        trackNavigation();
+
+        // Start trackers with configured delay
+        setTimeout(() => {
+            if (typeof RIVOX.start === 'function') {
+                console.log("🟢 RIVOX tracking start");
+                RIVOX.start();
+            }
+        }, userConfig.initDelay);
+
+        // Final send with configured delay
+        setTimeout(() => {
+            if (typeof RIVOX.sendSessionSummary === 'function') {
+                console.log("📤 RIVOX manual send");
+                RIVOX.sendSessionSummary();
+            }
+        }, userConfig.sendDelay);
     }
 
     // Enhanced event listeners setup
@@ -1548,7 +1602,7 @@ function getYandexCounterId() {
 
     // Expose public API
     window.RIVOX = {
-        init: initRivoxSDK,
+        init: init,
         sendSessionSummary,
         config
     };
@@ -1566,7 +1620,7 @@ function getYandexCounterId() {
         }
 
         // Initialize SDK only after Metrika is detected
-        initRivoxSDK().catch(error => {
+        init().catch(error => {
             console.error('Failed to initialize RIVOX SDK:', error);
         });
     })();
