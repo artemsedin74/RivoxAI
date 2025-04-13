@@ -9,6 +9,7 @@
       endpoint: "",
       ymCounterId: null,
     },
+
     state: {
       clientToken: null,
       sessionId: null,
@@ -35,7 +36,6 @@
 
       this.getClientId();
       this.observeSPAChanges();
-      this.autoFlush();
     },
 
     generateSessionId() {
@@ -64,13 +64,27 @@
         }
       } catch (e) {
         this.state.clientId = this.generateSessionId();
+        this.log?.error?.(e, { context: "getClientId fallback" });
       }
     },
 
-    autoFlush() {
-      window.addEventListener("beforeunload", () => this.sendSessionSummary());
-      window.addEventListener("pagehide", () => this.sendSessionSummary());
-      setTimeout(() => this.sendSessionSummary(), 15000);
+    observeSPAChanges() {
+      const pushState = history.pushState;
+      const replaceState = history.replaceState;
+      const reinit = () => {
+        this.state.sessionId = this.generateSessionId();
+        this.state.sessionStart = Date.now();
+        this.state.summarySent = false;
+      };
+      history.pushState = function () {
+        pushState.apply(this, arguments);
+        setTimeout(reinit, 150);
+      };
+      history.replaceState = function () {
+        replaceState.apply(this, arguments);
+        setTimeout(reinit, 150);
+      };
+      window.addEventListener('popstate', () => setTimeout(reinit, 150));
     },
 
     sendSessionSummary() {
@@ -81,60 +95,18 @@
       const body = JSON.stringify(payload);
       const url = this.state.endpoint;
 
-      const form = new FormData();
-      form.append("payload", body);
-
+      // Только fetch с no-cors
       fetch(url, {
         method: "POST",
-        body: form,
-        mode: "no-cors"
+        headers: {
+          "Content-Type": "application/json"
+        },
+        mode: "no-cors",
+        body
+      }).catch(err => {
+        this.log?.error?.(err, { context: "sendSummary fallback" });
       });
-    },
-
-    observeSPAChanges: function () {
-      let lastURL = location.href;
-      const debouncedHandle = () => {
-        clearTimeout(this._spaTimer);
-        this._spaTimer = setTimeout(() => {
-          if (location.href !== lastURL) {
-            lastURL = location.href;
-            this.reinitTrackers?.();
-          }
-        }, 150);
-      };
-
-      const patch = (method) => {
-        const orig = history[method];
-        history[method] = function (...args) {
-          const result = orig.apply(this, args);
-          window.dispatchEvent(new Event("spa:navigation"));
-          return result;
-        };
-      };
-
-      patch("pushState");
-      patch("replaceState");
-
-      ["popstate", "hashchange", "spa:navigation", "changestate", "routeChanged", "locationchange"]
-        .forEach(evt => window.addEventListener(evt, debouncedHandle, { passive: true }));
-    },
-
-    reinitTrackers() {
-      this.trackHoverEnhanced?.();
-      this.trackScrollPattern?.();
-      this.trackEcommerceDataLayer?.();
-      this.trackGoals?.();
-    },
-
-    trackHoverEnhanced: function () {},
-    trackScrollPattern: function () {},
-    trackEcommerceDataLayer: function () {},
-    trackGoals: function () {},
-    trackUnknownClicks: function () {},
-    detectSuccessfulPayment: function () {},
-    sendGoal: function () {},
-    defineGoal: function () {},
-    generateStableSelector: function () {},
+    }
   };
 
   function flattenFeatures(state) {
@@ -170,20 +142,21 @@
     out.scroll_depth_max = scroll.reduce((max, s) => Math.max(max, s.pos || 0), 0);
 
     const hoverTimes = Object.values(hover).map(Number);
-    out.hover_time_on_cta_avg = hoverTimes.length ? Math.round(hoverTimes.reduce((a, b) => a + b, 0) / hoverTimes.length) : 0;
+    out.hover_time_on_cta_avg = hoverTimes.length
+      ? Math.round(hoverTimes.reduce((a, b) => a + b, 0) / hoverTimes.length)
+      : 0;
     out.hover_time_on_cta_max = hoverTimes.length ? Math.max(...hoverTimes) : 0;
 
     const hoverTimesProd = Object.values(hoverProduct).map(Number);
-    out.hover_time_on_product_avg = hoverTimesProd.length ? Math.round(hoverTimesProd.reduce((a, b) => a + b, 0) / hoverTimesProd.length) : 0;
+    out.hover_time_on_product_avg = hoverTimesProd.length
+      ? Math.round(hoverTimesProd.reduce((a, b) => a + b, 0) / hoverTimesProd.length)
+      : 0;
     out.hover_time_on_product_max = hoverTimesProd.length ? Math.max(...hoverTimesProd) : 0;
 
     out.goals_count = goals.length;
     goals.forEach(g => {
-      if (typeof g === "string") {
-        out[`goal_${g}`] = 1;
-      } else if (typeof g === "object" && g.name) {
-        out[`goal_${g.name}`] = 1;
-      }
+      if (typeof g === "string") out[`goal_${g}`] = 1;
+      else if (typeof g === "object" && g.name) out[`goal_${g.name}`] = 1;
     });
 
     out.ecommerce_event_count = ecommerce.length;
@@ -205,12 +178,14 @@
     out.ecommerce_event_types = [...types].join(",");
     out.ecommerce_add_to_cart_count = cartCount;
     out.ecommerce_purchase_value = Math.round(purchaseSum);
-    out.ecommerce_currency = currency || null;
+    out.ecommerce_currency = currency || "unknown";
 
     out.session_duration_sec = Math.round((now - state.sessionStart) / 1000);
     out.time_on_page_sec = Math.round(performance.now() / 1000);
     out.unknown_clicks_count = (state.unknown_clicks || []).length;
     out.form_interaction = ctx.form_interaction ? 1 : 0;
+
+    out.page_url = location.href;
 
     return out;
   }
