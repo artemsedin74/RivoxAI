@@ -150,6 +150,7 @@ function getYandexCounterId() {
         sessionData = {
             client_id: clientId,
             session_id: generateSessionId(),
+            data_token: userConfig.token,
             start_time: Date.now(),
             last_activity: Date.now(),
             page_views: [],
