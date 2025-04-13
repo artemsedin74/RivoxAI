@@ -1,3 +1,4 @@
+
 (function () {
   const RIVOX_VERSION = "4.0.0";
 
@@ -35,12 +36,12 @@
 
       this.getClientId();
       this.observeSPAChanges();
-      this.trackHoverEnhanced?.();
-      this.trackScrollPattern?.();
-      this.trackEcommerceDataLayer?.();
-      this.trackGoals?.();
-      this.trackUnknownClicks?.();
-      this.detectSuccessfulPayment?.();
+      this.trackHoverEnhanced();
+      this.trackScrollPattern();
+      this.trackEcommerceDataLayer();
+      this.trackGoals();
+      this.trackUnknownClicks();
+      this.detectSuccessfulPayment();
       this.autoFlush();
     },
 
@@ -50,7 +51,7 @@
         const array = new Uint8Array(8);
         crypto.getRandomValues(array);
         return 'sess-' + Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('') + '-' + Date.now();
-      } catch {
+      } catch (e) {
         return 'sess-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
       }
     },
@@ -85,11 +86,7 @@
       const body = JSON.stringify(payload);
       const url = this.state.endpoint;
 
-      if (navigator.sendBeacon && navigator.sendBeacon(url, body)) {
-        return;
-      }
-
-      sendWithRetry(url, body);
+      navigator.sendBeacon(url, body);
     },
 
     reinitTrackers() {
@@ -99,7 +96,7 @@
       this.trackGoals?.();
     },
 
-    observeSPAChanges() {
+    observeSPAChanges: function () {
       let lastURL = location.href;
       const debouncedHandle = () => {
         clearTimeout(this._spaTimer);
@@ -148,12 +145,15 @@
     const goals = state.goals || [];
     const now = Date.now();
 
-    out.clientToken = state.clientToken || null;
-    out.session_id = state.sessionId || null;
-    out.client_id = state.clientId || null;
+    out.clientToken = state.clientToken;
+    out.session_id = state.sessionId;
+    out.client_id = state.clientId;
     out.user_agent = navigator.userAgent;
-    out.device_type = /mobile/i.test(navigator.userAgent) ? "mobile" :
-                      /tablet|ipad/i.test(navigator.userAgent) ? "tablet" : "desktop";
+    out.device_type = /mobile/i.test(navigator.userAgent)
+      ? "mobile"
+      : /tablet|ipad/i.test(navigator.userAgent)
+      ? "tablet"
+      : "desktop";
     out.referer = document.referrer || null;
 
     const searchParams = new URLSearchParams(location.search);
@@ -168,17 +168,28 @@
     out.scroll_depth_max = scroll.reduce((max, s) => Math.max(max, s.pos || 0), 0);
 
     const hoverTimes = Object.values(hover).map(Number);
-    out.hover_time_on_cta_avg = hoverTimes.length ? Math.round(hoverTimes.reduce((a, b) => a + b, 0) / hoverTimes.length) : 0;
-    out.hover_time_on_cta_max = hoverTimes.length ? Math.max(...hoverTimes) : 0;
+    out.hover_time_on_cta_avg = hoverTimes.length
+      ? Math.round(hoverTimes.reduce((a, b) => a + b, 0) / hoverTimes.length)
+      : 0;
+    out.hover_time_on_cta_max = hoverTimes.length
+      ? Math.max(...hoverTimes)
+      : 0;
 
     const hoverTimesProd = Object.values(hoverProduct).map(Number);
-    out.hover_time_on_product_avg = hoverTimesProd.length ? Math.round(hoverTimesProd.reduce((a, b) => a + b, 0) / hoverTimesProd.length) : 0;
-    out.hover_time_on_product_max = hoverTimesProd.length ? Math.max(...hoverTimesProd) : 0;
+    out.hover_time_on_product_avg = hoverTimesProd.length
+      ? Math.round(hoverTimesProd.reduce((a, b) => a + b, 0) / hoverTimesProd.length)
+      : 0;
+    out.hover_time_on_product_max = hoverTimesProd.length
+      ? Math.max(...hoverTimesProd)
+      : 0;
 
     out.goals_count = goals.length;
     goals.forEach(g => {
-      if (typeof g === "string") out[`goal_${g}`] = 1;
-      else if (typeof g === "object" && g.name) out[`goal_${g.name}`] = 1;
+      if (typeof g === "string") {
+        out[`goal_${g}`] = 1;
+      } else if (typeof g === "object" && g.name) {
+        out[`goal_${g.name}`] = 1;
+      }
     });
 
     out.ecommerce_event_count = ecommerce.length;
@@ -200,7 +211,7 @@
     out.ecommerce_event_types = [...types].join(",");
     out.ecommerce_add_to_cart_count = cartCount;
     out.ecommerce_purchase_value = Math.round(purchaseSum);
-    out.ecommerce_currency = currency || "unknown";
+    out.ecommerce_currency = currency || null;
 
     out.session_duration_sec = Math.round((now - state.sessionStart) / 1000);
     out.time_on_page_sec = Math.round(performance.now() / 1000);
@@ -208,20 +219,6 @@
     out.form_interaction = ctx.form_interaction ? 1 : 0;
 
     return out;
-  }
-
-  function sendWithRetry(url, body, retries = 3) {
-    fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      keepalive: true,
-      mode: "no-cors"
-    }).catch(err => {
-      if (retries > 0) {
-        setTimeout(() => sendWithRetry(url, body, retries - 1), 1000);
-      }
-    });
   }
 
   window.RIVOX = RIVOX;
