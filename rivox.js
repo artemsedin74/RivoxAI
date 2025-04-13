@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "4.3.4";
+  const RIVOX_VERSION = "4.3.5";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -15,10 +15,20 @@
       sessionStart: Date.now(),
       summarySent: false,
       trafficSource: {},
-      sessionMetrics: {},
-      pageContext: {},
-      missing_product_ids: [],
+      sessionMetrics: {
+        click_count: 0,
+        scroll_chunk_count: 0,
+        scroll_jerk_count: 0,
+        scroll_idle_count: 0,
+        scroll_depth_max: 0,
+        scroll_count: 0
+      },
+      pageContext: {
+        product_clicks: [],
+        intent_stages: [],
+      },
       unknown_clicks: [],
+      missing_product_ids: [],
       goals: [],
     },
 
@@ -28,167 +38,41 @@
 
       this.state.clientToken = clientToken;
       this.state.endpoint = endpoint;
-      this.state.sessionStart = Date.now();
       this.config.ymCounterId = ymCounterId;
-
+      this.state.sessionStart = Date.now();
       this.state.sessionId = this.generateSessionId();
 
       const clientId = await this.getClientId();
-      if (!clientId) {
-        this.log?.warn?.("⚠️ Failed to resolve clientId. Generating fallback.");
-        this.state.clientId = String(Date.now()) + Math.random().toString(36).substring(2);
-        localStorage.setItem("rivox_client_id", this.state.clientId);
-      } else {
-        this.state.clientId = clientId;
-      }
-
-      this.log?.info?.("RIVOX INIT", {
-        sessionId: this.state.sessionId,
-        clientId: this.state.clientId
-      });
+      this.state.clientId = clientId || String(Date.now()) + Math.random().toString(36).substring(2);
+      localStorage.setItem("rivox_client_id", this.state.clientId);
 
       this.saveUTMs();
       this.observeSPAChanges();
       this.interceptYMGoals();
     },
 
-    generateSessionId() {
-      return "sess-" + Math.random().toString(36).substring(2) + "-" + Date.now();
-    },
-
     start() {
-      const waitUntilReady = (attempt = 0) => {
-        const ready = this.state.sessionId && this.state.clientId;
-        if (ready) {
+      const wait = (n = 0) => {
+        if (this.state.sessionId && this.state.clientId) {
           try {
             this.trackScroll();
             this.trackClicks();
             this.trackProductViews();
+            this.trackHover();
             this.trackFormModals();
             this.trackTabViews();
             this.trackFocus();
             this.trackReturnScroll();
             this.observeLateButtons();
-            this.log?.info?.("🟢 RIVOX tracking start");
           } catch (e) {
-            this.log?.error?.("⚠️ error in start()", e);
+            this.log?.error?.("RIVOX start error", e);
           }
         } else {
-          if (attempt > 50) {
-            this.log?.warn?.("⏳ Tracking aborted after timeout: session/client ID missing");
-            return;
-          }
-          setTimeout(() => waitUntilReady(attempt + 1), 100);
+          if (n > 20) return;
+          setTimeout(() => wait(n + 1), 150);
         }
       };
-      waitUntilReady();
-    },
-
-    trackScroll() {
-      let lastScrollTop = 0, maxDepth = 0, scrollChunks = 0, idleCount = 0, jerkCount = 0;
-
-      window.addEventListener("scroll", () => {
-        const scrollTop = window.scrollY || document.documentElement.scrollTop;
-        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
-        const percent = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
-
-        const delta = Math.abs(scrollTop - lastScrollTop);
-        if (delta > 30) jerkCount++;
-        else idleCount++;
-
-        scrollChunks++;
-        maxDepth = Math.max(maxDepth, percent);
-        lastScrollTop = scrollTop;
-
-        Object.assign(this.state.sessionMetrics, {
-          scroll_chunk_count: scrollChunks,
-          scroll_depth_max: Math.floor(maxDepth),
-          scroll_jerk_count: jerkCount,
-          scroll_idle_count: idleCount
-        });
-      }, { passive: true });
-    },
-
-    trackClicks() {
-      document.addEventListener("click", e => {
-        const t = e.target.closest("a, button, input, [role='button']");
-        if (!t) return;
-        this.state.unknown_clicks.push({
-          tag: t.tagName,
-          id: t.id,
-          class: t.className,
-          name: t.name,
-          text: t.innerText?.slice(0, 50),
-          href: t.href || null
-        });
-      }, true);
-    },
-
-    trackFormModals() {
-      const observer = new MutationObserver(() => {
-        const forms = document.querySelectorAll("form, [class*='form'], [id*='form']");
-        if (forms.length > 0) {
-          this.state.pageContext.form_interaction = 1;
-        }
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-    },
-
-    trackProductViews() {
-      const observer = new IntersectionObserver((entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            this.state.pageContext.number_of_products_viewed =
-              (this.state.pageContext.number_of_products_viewed || 0) + 1;
-          }
-        }
-      }, { threshold: 0.5 });
-
-      idle(() => {
-        document.querySelectorAll(".product, [data-product-id], .product-card").forEach(el => observer.observe(el));
-      });
-    },
-
-    trackTabViews() {
-      window.addEventListener("focus", () => {
-        this.state.pageContext.focus_time_on_product_card =
-          (this.state.pageContext.focus_time_on_product_card || 0) + 1;
-      });
-    },
-
-    trackFocus() {
-      let focusTime = 0;
-      let lastFocus = Date.now();
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") {
-          lastFocus = Date.now();
-        } else {
-          focusTime += Date.now() - lastFocus;
-          this.state.pageContext.focus_time_on_product_card = Math.floor(focusTime / 1000);
-        }
-      });
-    },
-
-    trackReturnScroll() {
-      let lastY = window.scrollY;
-      window.addEventListener("scroll", () => {
-        const current = window.scrollY;
-        if (current < lastY - 100) {
-          this.state.pageContext.scroll_return_count =
-            (this.state.pageContext.scroll_return_count || 0) + 1;
-        }
-        lastY = current;
-      }, { passive: true });
-    },
-
-    observeLateButtons() {
-      setTimeout(() => {
-        document.querySelectorAll("button").forEach(b => {
-          b.addEventListener("click", () => {
-            this.state.pageContext.has_contact_info = 1;
-          });
-        });
-      }, 3000);
+      wait();
     },
 
     interceptYMGoals() {
@@ -199,36 +83,150 @@
           const [counterId, method, goalName] = args;
           if (method === 'reachGoal' && typeof goalName === 'string') {
             this.state.goals.push(goalName);
-            this.log?.info?.("🎯 Goal intercepted:", goalName);
           }
-        } catch (e) {
-          this.log?.warn?.("⚠️ Failed to intercept goal", e);
-        }
+        } catch {}
         return originalYM(...args);
       };
     },
 
+    trackClicks() {
+      document.addEventListener("click", (e) => {
+        const t = e.target.closest("a, button, input, [role='button']");
+        if (!t) return;
+        this.state.sessionMetrics.click_count += 1;
+        this.state.unknown_clicks.push({
+          tag: t.tagName,
+          id: t.id,
+          class: t.className,
+          name: t.name,
+          text: t.innerText?.slice(0, 100),
+          href: t.href || null
+        });
+      }, true);
+    },
+
+    trackScroll() {
+      let lastY = window.scrollY;
+      let maxDepth = 0;
+
+      window.addEventListener("scroll", () => {
+        const scrollTop = window.scrollY;
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const percent = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+
+        const delta = Math.abs(scrollTop - lastY);
+        if (delta > 30) this.state.sessionMetrics.scroll_jerk_count++;
+        else this.state.sessionMetrics.scroll_idle_count++;
+
+        this.state.sessionMetrics.scroll_chunk_count++;
+        this.state.sessionMetrics.scroll_count++;
+        this.state.sessionMetrics.scroll_depth_max = Math.max(this.state.sessionMetrics.scroll_depth_max, Math.floor(percent));
+
+        if (scrollTop < lastY - 100) {
+          this.state.pageContext.scroll_return_count = (this.state.pageContext.scroll_return_count || 0) + 1;
+        }
+
+        lastY = scrollTop;
+      }, { passive: true });
+    },
+
+    trackHover() {
+      let hoverStart = null;
+      const track = (selector, avgKey, maxKey) => {
+        document.querySelectorAll(selector).forEach((el) => {
+          el.addEventListener("mouseenter", () => {
+            hoverStart = Date.now();
+          });
+          el.addEventListener("mouseleave", () => {
+            const dur = Date.now() - hoverStart;
+            const s = this.state.sessionMetrics;
+            s[avgKey] = ((s[avgKey] || 0) + dur) / 2;
+            s[maxKey] = Math.max(s[maxKey] || 0, dur);
+          });
+        });
+      };
+      idle(() => {
+        track(".product", "hover_time_on_product_avg", "hover_time_on_product_max");
+        track("button, .cta", "hover_time_on_cta_avg", "hover_time_on_cta_max");
+      });
+    },
+
+    trackFormModals() {
+      const observer = new MutationObserver(() => {
+        const forms = document.querySelectorAll("form, [id*='form'], [class*='form']");
+        if (forms.length > 0) {
+          this.state.pageContext.form_interaction = 1;
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    },
+
+    trackTabViews() {
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          this.state.pageContext.intent_stages.push("tab_focus");
+        }
+      });
+    },
+
+    trackFocus() {
+      let focusStart = Date.now();
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          focusStart = Date.now();
+        } else {
+          const dur = Date.now() - focusStart;
+          this.state.pageContext.focus_time_on_product_card =
+            (this.state.pageContext.focus_time_on_product_card || 0) + Math.floor(dur / 1000);
+        }
+      });
+    },
+
+    trackReturnScroll() {
+      // already handled inside trackScroll
+    },
+
+    observeLateButtons() {
+      setTimeout(() => {
+        document.querySelectorAll("button").forEach(b => {
+          b.addEventListener("click", () => {
+            this.state.pageContext.has_contact_info = 1;
+          });
+        });
+      }, 2000);
+    },
+
+    trackProductViews() {
+      const observer = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            this.state.pageContext.number_of_products_viewed =
+              (this.state.pageContext.number_of_products_viewed || 0) + 1;
+          }
+        }
+      }, { threshold: 0.5 });
+
+      idle(() => {
+        document.querySelectorAll(".product, .product-card, [data-product-id]").forEach(el => observer.observe(el));
+      });
+    },
+
     sendSessionSummary() {
       if (this.state.summarySent) return;
-      if (!this.state.sessionId || !this.state.clientId) {
-        this.log?.warn?.("⏳ Skipping sendSessionSummary: identifiers not ready");
-        return;
-      }
+      if (!this.state.sessionId || !this.state.clientId) return;
       this.state.summarySent = true;
 
       const payload = this.flattenFeatures(this.state);
       const body = JSON.stringify(payload);
       const url = this.state.endpoint;
 
-      const success = navigator.sendBeacon(url, body);
-      if (!success) {
+      const ok = navigator.sendBeacon(url, body);
+      if (!ok) {
         fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
           mode: "no-cors"
-        }).catch(err => {
-          this.log?.error?.(err, { context: "sendSummary fallback" });
         });
       }
     },
@@ -249,29 +247,13 @@
         platform: navigator.userAgentData?.platform || navigator.platform || "",
         rivox_version: RIVOX_VERSION,
         ...utms,
-        scroll_chunk_count: state.sessionMetrics.scroll_chunk_count || 0,
-        scroll_depth_max: state.sessionMetrics.scroll_depth_max || 0,
-        scroll_jerk_count: state.sessionMetrics.scroll_jerk_count || 0,
-        scroll_idle_count: state.sessionMetrics.scroll_idle_count || 0,
-        hover_time_on_cta_avg: state.sessionMetrics.hover_time_on_cta_avg || 0,
-        hover_time_on_cta_max: state.sessionMetrics.hover_time_on_cta_max || 0,
-        hover_time_on_product_avg: state.sessionMetrics.hover_time_on_product_avg || 0,
-        hover_time_on_product_max: state.sessionMetrics.hover_time_on_product_max || 0,
-        goals_count: state.goals?.length || 0,
-        goals: state.goals.join(", ") || "",
-        ecommerce_event_count: state.pageContext.ecommerce_event_count || 0,
-        ecommerce_event_types: (state.pageContext.ecommerce_event_types || []).join(", "),
-        ecommerce_add_to_cart_count: state.pageContext.ecommerce_add_to_cart_count || 0,
-        ecommerce_purchase_value: state.pageContext.ecommerce_purchase_value || 0,
-        ecommerce_currency: state.pageContext.ecommerce_currency || "RUB",
-        session_duration_sec: Math.floor((now - state.sessionStart) / 1000),
+        ...state.sessionMetrics,
+        ...state.pageContext,
+        goals_count: state.goals.length,
+        goals: state.goals.join(", "),
         time_on_page_sec: Math.floor((now - state.sessionStart) / 1000),
-        unknown_clicks_count: state.unknown_clicks.length || 0,
-        form_interaction: state.pageContext.form_interaction || 0,
-        number_of_products_viewed: state.pageContext.number_of_products_viewed || 0,
-        focus_time_on_product_card: state.pageContext.focus_time_on_product_card || 0,
-        scroll_return_count: state.pageContext.scroll_return_count || 0,
-        has_contact_info: state.pageContext.has_contact_info || 0
+        session_duration_sec: Math.floor((now - state.sessionStart) / 1000),
+        unknown_clicks_count: state.unknown_clicks.length
       };
     },
 
@@ -283,10 +265,13 @@
           localStorage.setItem("rivox_client_id", id);
         }
         return id;
-      } catch (e) {
-        this.log?.error?.("getClientId failed", e);
+      } catch {
         return null;
       }
+    },
+
+    generateSessionId() {
+      return "sess-" + Math.random().toString(36).substring(2, 10) + "-" + Date.now();
     },
 
     getUTM(key) {
@@ -310,9 +295,9 @@
     saveUTMs() {
       try {
         const url = new URL(window.location.href);
-        ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"].forEach(key => {
-          const val = url.searchParams.get(key);
-          if (val) localStorage.setItem(`rivox_${key}`, val);
+        ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"].forEach(k => {
+          const v = url.searchParams.get(k);
+          if (v) localStorage.setItem(`rivox_${k}`, v);
         });
       } catch {}
     },
