@@ -205,7 +205,7 @@
         addEvent("purchase");
       });
       ["visited_cart", "submitted_order", "started_payment", "viewed_reviews", "viewed_specs"].forEach(event => {
-        window.addEventListener(`rivox:${event}", () => {
+        window.addEventListener(`rivox:${event}`, () => {
           ctx[`ecommerce_${event}`] = true;
           addEvent(event);
         });
