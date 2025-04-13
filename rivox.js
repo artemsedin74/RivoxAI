@@ -1,6 +1,5 @@
 (function () {
   const RIVOX_VERSION = "4.0.0";
-
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -35,10 +34,6 @@
 
       this.getClientId();
       this.observeSPAChanges();
-
-      setTimeout(() => {
-        this.sendSessionSummary();
-      }, 15000);
     },
 
     generateSessionId() {
@@ -46,8 +41,10 @@
         const crypto = window.crypto || window.msCrypto;
         const array = new Uint8Array(8);
         crypto.getRandomValues(array);
-        return 'sess-' + Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('') + '-' + Date.now();
-      } catch (e) {
+        return 'sess-' + Array.from(array)
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('') + '-' + Date.now();
+      } catch {
         return 'sess-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
       }
     },
@@ -67,106 +64,8 @@
         }
       } catch (e) {
         this.state.clientId = this.generateSessionId();
+        this.log?.error?.(e, { context: "getClientId fallback" });
       }
-    },
-
-    observeSPAChanges() {
-      const pushState = history.pushState;
-      const replaceState = history.replaceState;
-
-      const fire = () => {
-        this.state.sessionId = this.generateSessionId();
-        this.state.sessionStart = Date.now();
-      };
-
-      history.pushState = function () {
-        pushState.apply(this, arguments);
-        fire();
-      };
-      history.replaceState = function () {
-        replaceState.apply(this, arguments);
-        fire();
-      };
-
-      window.addEventListener("popstate", fire);
-    },
-
-    flattenFeatures(state) {
-      const out = {};
-      const ctx = state.pageContext || {};
-      const scroll = ctx.scroll_pattern || [];
-      const hover = ctx.hover_time_on_cta || {};
-      const hoverProduct = ctx.hover_time_on_product || {};
-      const ecommerce = ctx.ecommerce_events || [];
-      const goals = state.goals || [];
-      const now = Date.now();
-
-      out.clientToken = state.clientToken || null;
-      out.session_id = state.sessionId || null;
-      out.client_id = state.clientId || null;
-
-      out.user_agent = navigator.userAgent;
-      out.device_type = /mobile/i.test(navigator.userAgent) ? "mobile"
-        : /tablet|ipad/i.test(navigator.userAgent) ? "tablet" : "desktop";
-      out.referer = document.referrer || null;
-
-      const searchParams = new URLSearchParams(location.search);
-      for (const key of ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"]) {
-        out[key] = searchParams.get(key) || null;
-      }
-
-      // Scroll
-      out.scroll_chunk_count = scroll.length;
-      out.scroll_jerk_count = scroll.filter(s => s.jerk).length;
-      out.scroll_return_count = scroll.filter(s => s.return).length;
-      out.scroll_idle_count = scroll.filter(s => s.idle).length;
-      out.scroll_depth_max = scroll.reduce((max, s) => Math.max(max, s.pos || 0), 0);
-
-      // Hover
-      const hoverTimes = Object.values(hover).map(Number);
-      out.hover_time_on_cta_avg = hoverTimes.length ? Math.round(hoverTimes.reduce((a, b) => a + b, 0) / hoverTimes.length) : 0;
-      out.hover_time_on_cta_max = hoverTimes.length ? Math.max(...hoverTimes) : 0;
-
-      const hoverTimesProd = Object.values(hoverProduct).map(Number);
-      out.hover_time_on_product_avg = hoverTimesProd.length ? Math.round(hoverTimesProd.reduce((a, b) => a + b, 0) / hoverTimesProd.length) : 0;
-      out.hover_time_on_product_max = hoverTimesProd.length ? Math.max(...hoverTimesProd) : 0;
-
-      // Goals
-      out.goals_count = goals.length;
-      goals.forEach(g => {
-        if (typeof g === "string") out[`goal_${g}`] = 1;
-        else if (typeof g === "object" && g.name) out[`goal_${g.name}`] = 1;
-      });
-
-      // Ecommerce
-      out.ecommerce_event_count = ecommerce.length;
-      const types = new Set();
-      let cartCount = 0;
-      let purchaseSum = 0;
-      let currency = null;
-
-      ecommerce.forEach(e => {
-        if (!e || typeof e !== "object") return;
-        if (e.type) types.add(e.type);
-        if (e.type === "add_to_cart") cartCount++;
-        if (e.type === "purchase") {
-          purchaseSum += Number(e.revenue || 0);
-          currency = e.currency || currency;
-        }
-      });
-
-      out.ecommerce_event_types = [...types].join(",");
-      out.ecommerce_add_to_cart_count = cartCount;
-      out.ecommerce_purchase_value = Math.round(purchaseSum);
-      out.ecommerce_currency = currency || "unknown";
-
-      // Time
-      out.session_duration_sec = Math.round((now - state.sessionStart) / 1000);
-      out.time_on_page_sec = Math.round(performance.now() / 1000);
-      out.unknown_clicks_count = (state.unknown_clicks || []).length;
-      out.form_interaction = ctx.form_interaction ? 1 : 0;
-
-      return out;
     },
 
     sendSessionSummary() {
@@ -177,16 +76,71 @@
       const body = JSON.stringify(payload);
       const url = this.state.endpoint;
 
-      fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        mode: "no-cors",
-        body,
-      }).catch(err => {
-        this.log?.error?.(err, { context: "sendSummary fallback" });
+      // Надежная отправка через sendBeacon (обход CORS)
+      const success = navigator.sendBeacon(url, body);
+      if (!success) {
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body,
+          mode: "no-cors"
+        }).catch(err => {
+          this.log?.error?.(err, { context: "sendSummary fallback" });
+        });
+      }
+    },
+
+    flattenFeatures(state) {
+      return {
+        clientToken: state.clientToken,
+        session_id: state.sessionId,
+        client_id: state.clientId,
+        user_agent: navigator.userAgent,
+        device_type: /mobile/i.test(navigator.userAgent) ? "mobile" : "desktop",
+        utm_source: this.getUTM("utm_source"),
+        utm_medium: this.getUTM("utm_medium"),
+        utm_campaign: this.getUTM("utm_campaign"),
+        scroll_chunk_count: state.sessionMetrics.scroll_chunk_count || 0,
+        scroll_depth_max: state.sessionMetrics.scroll_depth_max || 0,
+        scroll_jerk_count: state.sessionMetrics.scroll_jerk_count || 0,
+        scroll_idle_count: state.sessionMetrics.scroll_idle_count || 0,
+        hover_time_on_cta_avg: state.sessionMetrics.hover_time_on_cta_avg || 0,
+        hover_time_on_cta_max: state.sessionMetrics.hover_time_on_cta_max || 0,
+        hover_time_on_product_avg: state.sessionMetrics.hover_time_on_product_avg || 0,
+        hover_time_on_product_max: state.sessionMetrics.hover_time_on_product_max || 0,
+        goals_count: state.goals?.length || 0,
+        ecommerce_event_count: state.pageContext.ecommerce_event_count || 0,
+        ecommerce_event_types: state.pageContext.ecommerce_event_types || [],
+        ecommerce_add_to_cart_count: state.pageContext.ecommerce_add_to_cart_count || 0,
+        ecommerce_purchase_value: state.pageContext.ecommerce_purchase_value || 0,
+        ecommerce_currency: state.pageContext.ecommerce_currency || "RUB",
+        session_duration_sec: Math.floor((Date.now() - state.sessionStart) / 1000),
+        time_on_page_sec: Math.floor((Date.now() - state.sessionStart) / 1000),
+        unknown_clicks_count: state.unknown_clicks.length || 0,
+        form_interaction: state.pageContext.form_interaction || 0,
+      };
+    },
+
+    getUTM(key) {
+      try {
+        const url = new URL(window.location.href);
+        return url.searchParams.get(key) || localStorage.getItem(`rivox_${key}`);
+      } catch {
+        return null;
+      }
+    },
+
+    observeSPAChanges() {
+      const observer = new MutationObserver(() => {
+        idle(() => this.sendSessionSummary());
       });
+      observer.observe(document.body, { childList: true, subtree: true });
+    },
+
+    log: {
+      error: (msg, ctx) => console.error("[RIVOX]", msg, ctx)
     }
   };
 
