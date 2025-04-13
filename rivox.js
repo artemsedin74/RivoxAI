@@ -24,7 +24,7 @@ function getYandexCounterId() {
         scrollChunkSize: 100,
         hoverThreshold: 1000,
         formInteractionThreshold: 2000,
-        allowedDomains: ['spb.sotovik.shop', 'ska.sotovik.shop'],
+        allowedDomains: ['spb.sotovik.shop', 'sotovik.shop'],
         mlFeatures: {
             collectScrollMap: true,
             trackFormInteractions: true,
