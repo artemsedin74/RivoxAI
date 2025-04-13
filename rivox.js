@@ -1,6 +1,21 @@
 // RIVOX SDK v4.6.3
 // Enhanced version with ML data collection capabilities
 
+(function waitForYaMetrika(attempts = 0, maxAttempts = 20) {
+    if (attempts >= maxAttempts) {
+        console.error('Failed to detect Yandex.Metrika after', maxAttempts, 'attempts');
+        return;
+    }
+
+    if (typeof ym === 'undefined' && typeof Ya === 'undefined' && !window.yaCounter) {
+        setTimeout(() => waitForYaMetrika(attempts + 1), 500);
+        return;
+    }
+
+    // Initialize SDK only after Metrika is detected
+    initRivoxSDK();
+})();
+
 (function(window) {
     'use strict';
 
@@ -99,19 +114,18 @@
             return;
         }
         
-        if (config.debug) {
-            console.log('RIVOX SDK initialized on domain:', currentDomain);
-            console.log('Using endpoint:', config.endpoint);
-        }
-
-        // Wait for client id before initializing session
+        console.log('RIVOX SDK initializing...');
+        
+        // Wait for client id before proceeding
         const clientId = await generateClientId();
         if (!clientId) {
-            console.error('Could not initialize RIVOX SDK: Yandex.Metrika client ID is required');
+            console.error('Could not initialize RIVOX SDK: Failed to get Yandex.Metrika client ID');
             return;
         }
 
-        // Initialize session data with Yandex.Metrika client id
+        console.log('RIVOX SDK initialized with client ID:', clientId);
+
+        // Initialize session data
         sessionData = {
             client_id: clientId,
             session_id: generateSessionId(),
@@ -153,8 +167,6 @@
         setupEventListeners();
         setupMLFeatures();
         waitScrollAndSend();
-        
-        // Track initial page view
         trackNavigation();
     }
 
@@ -582,144 +594,77 @@
 
     function generateClientId() {
         return new Promise((resolve) => {
-            // Функция для повторных попыток получения ID
-            const retryGetClientId = (attempts = 0, maxAttempts = 5) => {
+            // First try to get from backup
+            const backupId = localStorage.getItem('_ym_client_id_backup');
+            if (backupId) {
+                console.log('Using backed up Yandex.Metrika client ID:', backupId);
+                resolve(backupId);
+                return;
+            }
+
+            // Then try to get from Yandex.Metrika cookies
+            const ymUid = getCookie('_ym_uid');
+            if (ymUid) {
+                console.log('Using Yandex.Metrika cookie ID:', ymUid);
+                try {
+                    localStorage.setItem('_ym_client_id_backup', ymUid);
+                } catch (e) {
+                    console.warn('Could not save client ID to localStorage:', e);
+                }
+                resolve(ymUid);
+                return;
+            }
+
+            // Finally try to get directly from Metrika
+            const getFromMetrika = (attempts = 0, maxAttempts = 5) => {
                 if (attempts >= maxAttempts) {
                     console.error('Failed to get Yandex.Metrika client ID after', maxAttempts, 'attempts');
                     resolve(null);
                     return;
                 }
 
-                // Проверяем наличие Яндекс.Метрики разными способами
-                if (typeof ym === 'undefined' && typeof Ya === 'undefined' && !window.yaCounter) {
-                    console.log(`Waiting for Yandex.Metrika to load (attempt ${attempts + 1}/${maxAttempts})`);
-                    setTimeout(() => retryGetClientId(attempts + 1), 1000);
-                    return;
-                }
-
-                // Пробуем различные способы получения ID счетчика
+                // Get counter id
                 let counterId = null;
                 
-                // Способ 1: через window.yaCounter
-                const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
-                if (counterObjects.length > 0) {
-                    counterId = counterObjects[0].replace('yaCounter', '');
-                }
-                
-                // Способ 2: через window.ymCounterId
-                if (!counterId && window.ymCounterId) {
+                // Try different methods to get counter ID
+                if (window.ymCounterId) {
                     counterId = window.ymCounterId;
-                }
-
-                // Способ 3: через Ya.Metrika
-                if (!counterId && typeof Ya !== 'undefined' && Ya.Metrika && Ya.Metrika.counters) {
-                    const counters = Ya.Metrika.counters();
-                    if (counters.length > 0) {
-                        counterId = counters[0].id;
-                    }
-                }
-
-                // Способ 4: через Ya.Metrika2
-                if (!counterId && typeof Ya !== 'undefined' && Ya.Metrika2 && Ya.Metrika2.counters) {
-                    const counters = Ya.Metrika2.counters();
-                    if (counters.length > 0) {
-                        counterId = counters[0].id;
+                } else {
+                    const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
+                    if (counterObjects.length > 0) {
+                        counterId = counterObjects[0].replace('yaCounter', '');
                     }
                 }
 
                 if (!counterId) {
                     console.log('Counter ID not found, retrying...');
-                    setTimeout(() => retryGetClientId(attempts + 1), 1000);
+                    setTimeout(() => getFromMetrika(attempts + 1), 1000);
                     return;
                 }
 
-                // Функция для получения ID через разные методы
-                const getClientIdViaMethod = (method) => {
-                    return new Promise((resolveMethod) => {
-                        const timeout = setTimeout(() => {
-                            console.log(`${method} timeout, trying next method...`);
-                            resolveMethod(null);
-                        }, 2000);
-
-                        try {
-                            switch (method) {
-                                case 'ym':
-                                    if (typeof ym !== 'undefined') {
-                                        ym(counterId, 'getClientID', function(clientID) {
-                                            clearTimeout(timeout);
-                                            resolveMethod(clientID);
-                                        });
-                                    } else {
-                                        resolveMethod(null);
-                                    }
-                                    break;
-
-                                case 'yaCounter':
-                                    if (window['yaCounter' + counterId]) {
-                                        const counter = window['yaCounter' + counterId];
-                                        if (counter.getClientID) {
-                                            clearTimeout(timeout);
-                                            resolveMethod(counter.getClientID());
-                                        } else {
-                                            resolveMethod(null);
-                                        }
-                                    } else {
-                                        resolveMethod(null);
-                                    }
-                                    break;
-
-                                case 'storage':
-                                    // Пытаемся найти ID в localStorage или cookie
-                                    const storedId = localStorage.getItem('_ym_uid') || 
-                                                   getCookie('_ym_uid') || 
-                                                   getCookie('_ym_client_id');
-                                    clearTimeout(timeout);
-                                    resolveMethod(storedId);
-                                    break;
+                // Try to get client ID
+                try {
+                    ym(counterId, 'getClientID', function(clientID) {
+                        if (clientID) {
+                            console.log('Got client ID from Yandex.Metrika:', clientID);
+                            try {
+                                localStorage.setItem('_ym_client_id_backup', clientID);
+                            } catch (e) {
+                                console.warn('Could not save client ID to localStorage:', e);
                             }
-                        } catch (e) {
-                            console.error(`Error in ${method} method:`, e);
-                            clearTimeout(timeout);
-                            resolveMethod(null);
+                            resolve(clientID);
+                        } else {
+                            console.log('No client ID returned, retrying...');
+                            setTimeout(() => getFromMetrika(attempts + 1), 1000);
                         }
                     });
-                };
-
-                // Пробуем все методы последовательно
-                (async () => {
-                    let clientId = null;
-                    
-                    // Метод 1: через ym
-                    clientId = await getClientIdViaMethod('ym');
-                    
-                    // Метод 2: через yaCounter
-                    if (!clientId) {
-                        clientId = await getClientIdViaMethod('yaCounter');
-                    }
-                    
-                    // Метод 3: через storage
-                    if (!clientId) {
-                        clientId = await getClientIdViaMethod('storage');
-                    }
-
-                    if (clientId) {
-                        console.log('Successfully obtained Yandex.Metrika client ID:', clientId);
-                        // Сохраняем ID для будущего использования
-                        try {
-                            localStorage.setItem('_ym_client_id_backup', clientId);
-                        } catch (e) {
-                            console.warn('Could not save client ID to localStorage:', e);
-                        }
-                        resolve(clientId);
-                    } else {
-                        // Если все методы не сработали, пробуем еще раз
-                        setTimeout(() => retryGetClientId(attempts + 1), 1000);
-                    }
-                })();
+                } catch (e) {
+                    console.error('Error getting client ID:', e);
+                    setTimeout(() => getFromMetrika(attempts + 1), 1000);
+                }
             };
 
-            // Начинаем процесс получения ID
-            retryGetClientId();
+            getFromMetrika();
         });
     }
 
