@@ -11,6 +11,7 @@
         scrollChunkSize: 100, // pixels
         hoverThreshold: 1000, // ms
         formInteractionThreshold: 2000, // ms
+        allowedDomains: ['spb.sotovik.shop'], // Add allowed domains
         mlFeatures: {
             collectScrollMap: true,
             trackFormInteractions: true,
@@ -42,11 +43,36 @@
         }
     };
 
+    // Add trackNavigation function at the top level
+    function trackNavigation() {
+        const currentDomain = window.location.hostname;
+        if (!config.allowedDomains.includes(currentDomain)) {
+            console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
+            return;
+        }
+        
+        console.log('Navigation tracked');
+        sessionData.page_views.push({
+            timestamp: Date.now(),
+            url: window.location.href,
+            referrer: document.referrer
+        });
+    }
+
     // Initialize SDK
     function init() {
+        const currentDomain = window.location.hostname;
+        if (!config.allowedDomains.includes(currentDomain)) {
+            console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
+            return;
+        }
+        
         setupEventListeners();
         setupMLFeatures();
         waitScrollAndSend();
+        
+        // Track initial page view
+        trackNavigation();
     }
 
     // Enhanced event listeners setup
@@ -927,16 +953,6 @@
 
     function calculateFormScore() {
         return Math.min(sessionData.form_interactions.length / 3, 1);
-    }
-
-    // Add trackNavigation function
-    function trackNavigation() {
-        console.log('Navigation tracked');
-        sessionData.page_views.push({
-            timestamp: Date.now(),
-            url: window.location.href,
-            referrer: document.referrer
-        });
     }
 
     // Expose public API
