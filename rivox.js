@@ -35,6 +35,24 @@
         form_interactions: [],
         cta_clicks: [],
         modal_interactions: [],
+        utm_data: collectUtmData(),
+        traffic_source: {
+            referrer: document.referrer,
+            landing_page: window.location.href,
+            entry_point: window.location.pathname
+        },
+        user_behavior: {
+            time_to_first_interaction: null,
+            total_interactions: 0,
+            interaction_frequency: [],
+            scroll_depth_percentages: [],
+            time_between_clicks: [],
+            mouse_movement_heatmap: [],
+            viewport_size: {
+                width: window.innerWidth,
+                height: window.innerHeight
+            }
+        },
         ml_features: {
             interest_signals: [],
             behavior_patterns: [],
@@ -234,6 +252,74 @@
 
             window.addEventListener('popstate', trackNavigation);
         }
+
+        // Add enhanced mouse movement tracking
+        let mousePositions = [];
+        let lastMouseMoveTime = Date.now();
+        
+        document.addEventListener('mousemove', throttle((e) => {
+            const now = Date.now();
+            mousePositions.push({
+                x: e.clientX,
+                y: e.clientY,
+                timestamp: now,
+                timeSinceLastMove: now - lastMouseMoveTime
+            });
+            
+            // Keep only last 100 positions
+            if (mousePositions.length > 100) {
+                mousePositions = mousePositions.slice(-100);
+            }
+            
+            sessionData.user_behavior.mouse_movement_heatmap = generateHeatmapData(mousePositions);
+            lastMouseMoveTime = now;
+        }, 100));
+
+        // Track scroll depth percentage
+        let maxScrollDepth = 0;
+        window.addEventListener('scroll', throttle(() => {
+            const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+            const scrolled = window.scrollY;
+            const scrollDepthPercentage = (scrolled / scrollHeight) * 100;
+            
+            if (scrollDepthPercentage > maxScrollDepth) {
+                maxScrollDepth = scrollDepthPercentage;
+                sessionData.user_behavior.scroll_depth_percentages.push({
+                    depth: maxScrollDepth,
+                    timestamp: Date.now()
+                });
+            }
+        }, 100));
+
+        // Track time between clicks
+        let lastClickTime = Date.now();
+        document.addEventListener('click', (e) => {
+            const now = Date.now();
+            sessionData.user_behavior.time_between_clicks.push({
+                timeDelta: now - lastClickTime,
+                timestamp: now,
+                element: getElementPath(e.target)
+            });
+            lastClickTime = now;
+            
+            // Update total interactions
+            sessionData.user_behavior.total_interactions++;
+            if (!sessionData.user_behavior.time_to_first_interaction) {
+                sessionData.user_behavior.time_to_first_interaction = now - sessionData.start_time;
+            }
+        });
+
+        // Track interaction frequency
+        setInterval(() => {
+            const now = Date.now();
+            const last5Seconds = sessionData.user_behavior.time_between_clicks
+                .filter(click => now - click.timestamp < 5000).length;
+                
+            sessionData.user_behavior.interaction_frequency.push({
+                timestamp: now,
+                interactions_per_5sec: last5Seconds
+            });
+        }, 5000);
 
         console.log('Event listeners setup complete');
     }
@@ -1072,6 +1158,102 @@
 
     function calculateFormScore() {
         return Math.min(sessionData.form_interactions.length / 3, 1);
+    }
+
+    // Add UTM data collection function
+    function collectUtmData() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const utmParams = {};
+        const utmFields = [
+            'utm_source',
+            'utm_medium',
+            'utm_campaign',
+            'utm_term',
+            'utm_content',
+            'gclid',
+            'fbclid',
+            'yclid'
+        ];
+
+        utmFields.forEach(field => {
+            const value = urlParams.get(field);
+            if (value) {
+                utmParams[field] = value;
+            }
+        });
+
+        // Add additional traffic source parameters
+        utmParams.traffic_type = getTrafficType();
+        utmParams.landing_page_type = getLandingPageType();
+        utmParams.referrer_domain = getReferrerDomain();
+
+        return utmParams;
+    }
+
+    // Add traffic source analysis
+    function getTrafficType() {
+        const referrer = document.referrer;
+        if (!referrer) return 'direct';
+        
+        const searchEngines = ['google', 'yandex', 'bing'];
+        const socialNetworks = ['facebook', 'instagram', 'vk.com'];
+        
+        const referrerDomain = new URL(referrer).hostname;
+        
+        if (searchEngines.some(se => referrerDomain.includes(se))) return 'organic_search';
+        if (socialNetworks.some(sn => referrerDomain.includes(sn))) return 'social';
+        if (new URLSearchParams(window.location.search).has('utm_source')) return 'campaign';
+        
+        return 'referral';
+    }
+
+    function getLandingPageType() {
+        const path = window.location.pathname;
+        if (path === '/' || path === '/index.html') return 'homepage';
+        if (path.includes('/product/')) return 'product';
+        if (path.includes('/category/')) return 'category';
+        if (path.includes('/cart/')) return 'cart';
+        if (path.includes('/checkout/')) return 'checkout';
+        return 'other';
+    }
+
+    function getReferrerDomain() {
+        if (!document.referrer) return null;
+        try {
+            return new URL(document.referrer).hostname;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Add heatmap generation
+    function generateHeatmapData(positions) {
+        const heatmap = {};
+        const gridSize = 50; // pixels
+        
+        positions.forEach(pos => {
+            const gridX = Math.floor(pos.x / gridSize);
+            const gridY = Math.floor(pos.y / gridSize);
+            const key = `${gridX},${gridY}`;
+            
+            if (!heatmap[key]) {
+                heatmap[key] = {
+                    count: 0,
+                    avgTime: 0,
+                    lastVisit: pos.timestamp
+                };
+            }
+            
+            heatmap[key].count++;
+            heatmap[key].avgTime = (heatmap[key].avgTime * (heatmap[key].count - 1) + 
+                                   pos.timeSinceLastMove) / heatmap[key].count;
+        });
+        
+        return Object.entries(heatmap).map(([key, data]) => ({
+            position: key.split(',').map(Number),
+            intensity: data.count,
+            avgTimeSpent: data.avgTime
+        }));
     }
 
     // Expose public API
