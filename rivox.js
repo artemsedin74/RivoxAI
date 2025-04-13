@@ -316,32 +316,40 @@
     }
 
     function getElementPath(element) {
+        if (!element) return '';
+        
         const path = [];
-        while (element) {
-            let selector = element.tagName.toLowerCase();
-            if (element.id) {
-                selector += `#${element.id}`;
-            } else if (element.className) {
-                selector += `.${element.className.split(' ').join('.')}`;
+        let currentElement = element;
+        
+        while (currentElement) {
+            let selector = currentElement.tagName ? currentElement.tagName.toLowerCase() : '';
+            if (currentElement.id) {
+                selector += `#${currentElement.id}`;
+            } else if (currentElement.className && typeof currentElement.className === 'string') {
+                selector += `.${currentElement.className.split(' ').join('.')}`;
             }
             path.unshift(selector);
-            element = element.parentElement;
+            currentElement = currentElement.parentElement;
         }
         return path.join(' > ');
     }
 
     function isImportantElement(element) {
+        if (!element) return false;
+        
         // Add logic to determine important elements
         return element.tagName === 'A' || 
                element.tagName === 'BUTTON' || 
                element.tagName === 'INPUT' ||
-               element.hasAttribute('data-rivox-important');
+               (element.hasAttribute && element.hasAttribute('data-rivox-important'));
     }
 
     function isCTAElement(element) {
+        if (!element) return false;
+        
         // Add logic to identify CTA elements
-        return element.tagName === 'BUTTON' ||
-               (element.tagName === 'A' && (
+        return (element.tagName === 'BUTTON') ||
+               (element.tagName === 'A' && element.textContent && (
                    element.textContent.toLowerCase().includes('купить') ||
                    element.textContent.toLowerCase().includes('заказать') ||
                    element.textContent.toLowerCase().includes('оформить')
@@ -349,10 +357,14 @@
     }
 
     function isModalElement(element) {
+        if (!element) return false;
+        
         // Add logic to identify modal elements
-        return element.hasAttribute('data-modal') ||
-               element.classList.contains('modal') ||
-               element.classList.contains('popup');
+        return (element.hasAttribute && element.hasAttribute('data-modal')) ||
+               (element.classList && (
+                   element.classList.contains('modal') ||
+                   element.classList.contains('popup')
+               ));
     }
 
     // ML feature calculation functions
@@ -915,6 +927,16 @@
 
     function calculateFormScore() {
         return Math.min(sessionData.form_interactions.length / 3, 1);
+    }
+
+    // Add trackNavigation function
+    function trackNavigation() {
+        console.log('Navigation tracked');
+        sessionData.page_views.push({
+            timestamp: Date.now(),
+            url: window.location.href,
+            referrer: document.referrer
+        });
     }
 
     // Expose public API
