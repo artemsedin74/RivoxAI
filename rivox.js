@@ -41,31 +41,46 @@
         const crypto = window.crypto || window.msCrypto;
         const array = new Uint8Array(8);
         crypto.getRandomValues(array);
-        return 'sess-' + Array.from(array)
-          .map(b => b.toString(16).padStart(2, '0'))
-          .join('') + '-' + Date.now();
+        return 'sess-' + Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('') + '-' + Date.now();
       } catch {
         return 'sess-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
       }
     },
 
     getClientId() {
-      try {
-        const counterId = this.config.ymCounterId;
-        if (typeof ym === "function" && counterId) {
-          ym(counterId, 'getClientID', id => {
-            this.state.clientId = id;
-            try {
-              localStorage.setItem('rivox_client_id', id);
-            } catch (_) {}
-          });
-        } else {
-          this.state.clientId = localStorage.getItem('rivox_client_id') || this.generateSessionId();
-        }
-      } catch (e) {
-        this.state.clientId = this.generateSessionId();
-        this.log?.error?.(e, { context: "getClientId fallback" });
+      const counterId = this.config.ymCounterId;
+      if (!counterId || typeof ym !== "function") {
+        this.state.clientId = "";
+        return;
       }
+
+      let retries = 0;
+      const maxRetries = 20;
+
+      const tryGet = () => {
+        try {
+          ym(counterId, 'getClientID', id => {
+            if (typeof id === "string" && id.length > 10) {
+              this.state.clientId = id;
+              try {
+                localStorage.setItem("rivox_client_id", id);
+              } catch (_) {}
+              this.log?.info?.("✅ ClientID from YM", id);
+            } else if (retries < maxRetries) {
+              retries++;
+              setTimeout(tryGet, 250);
+            } else {
+              this.state.clientId = "";
+              this.log?.warn?.("⚠️ YM clientID not available after retries");
+            }
+          });
+        } catch (e) {
+          this.state.clientId = "";
+          this.log?.error?.(e, { context: "getClientId" });
+        }
+      };
+
+      tryGet();
     },
 
     sendSessionSummary() {
@@ -76,7 +91,6 @@
       const body = JSON.stringify(payload);
       const url = this.state.endpoint;
 
-      // Надежная отправка через sendBeacon (обход CORS)
       const success = navigator.sendBeacon(url, body);
       if (!success) {
         fetch(url, {
@@ -140,7 +154,9 @@
     },
 
     log: {
-      error: (msg, ctx) => console.error("[RIVOX]", msg, ctx)
+      error: (msg, ctx) => console.error("[RIVOX]", msg, ctx),
+      info: (msg, ctx) => console.info("[RIVOX]", msg, ctx),
+      warn: (msg, ctx) => console.warn("[RIVOX]", msg, ctx)
     }
   };
 
