@@ -1673,16 +1673,16 @@ function getYandexCounterId() {
     function setupMetrikaGoalsTracking() {
         // Проверяем наличие Метрики
         if (typeof ym === 'undefined') {
-            console.warn('Yandex.Metrika not found, will retry in 1 second');
-            setTimeout(setupMetrikaGoalsTracking, 1000);
+            console.warn('Yandex.Metrika not found, will retry in 500ms');
+            setTimeout(setupMetrikaGoalsTracking, 500);
             return;
         }
 
         // Получаем ID счетчика
         const counterId = getYandexCounterId();
         if (!counterId) {
-            console.warn('Yandex.Metrika counter ID not found, will retry in 1 second');
-            setTimeout(setupMetrikaGoalsTracking, 1000);
+            console.warn('Yandex.Metrika counter ID not found, will retry in 500ms');
+            setTimeout(setupMetrikaGoalsTracking, 500);
             return;
         }
 
@@ -1691,12 +1691,20 @@ function getYandexCounterId() {
         // Сохраняем оригинальную функцию
         const originalYm = window.ym;
 
+        // Проверяем, не была ли уже подменена функция
+        if (window.ym._rivox_wrapped) {
+            console.log('Yandex.Metrika goals tracking already set up');
+            return;
+        }
+
         // Переопределяем функцию ym
         window.ym = function(counterId, method, ...args) {
             // Отслеживаем цели
             if (method === 'reachGoal') {
                 const goalName = args[0];
                 const goalParams = args[1] || {};
+                
+                console.log('🎯 Intercepted goal:', goalName, goalParams);
                 
                 // Записываем данные о цели
                 const goalData = {
@@ -1731,8 +1739,6 @@ function getYandexCounterId() {
                     url: window.location.href
                 });
 
-                console.log('🎯 Goal tracked:', goalName, goalParams);
-
                 // Немедленно отправляем данные о цели
                 sendGoalData(goalData);
             }
@@ -1741,33 +1747,21 @@ function getYandexCounterId() {
             return originalYm.apply(this, arguments);
         };
 
+        // Помечаем функцию как обработанную
+        window.ym._rivox_wrapped = true;
+
         // Проверяем работу отслеживания
         console.log('✅ Yandex.Metrika goals tracking setup complete');
     }
 
-    // Функция для получения ID счетчика Метрики
-    function getYandexCounterId() {
-        // Проверяем глобальную переменную
-        if (window.ymCounterId) return window.ymCounterId;
-        
-        // Ищем счетчик в объектах окна
-        const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
-        if (counterObjects.length > 0) {
-            return parseInt(counterObjects[0].replace('yaCounter', ''));
+    // Инициализируем перехват целей как можно раньше
+    (function initMetrikaTracking() {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setupMetrikaGoalsTracking);
+        } else {
+            setupMetrikaGoalsTracking();
         }
-
-        // Ищем в коде страницы
-        const metrikaScripts = Array.from(document.scripts)
-            .filter(script => script.textContent && script.textContent.includes('ym('))
-            .map(script => script.textContent);
-
-        if (metrikaScripts.length > 0) {
-            const match = metrikaScripts[0].match(/ym\((\d+),/);
-            if (match) return parseInt(match[1]);
-        }
-
-        return null;
-    }
+    })();
 
     // Helper functions for goals tracking
     function getMaxScrollDepth() {
