@@ -734,36 +734,63 @@ function getYandexCounterId() {
         return new Promise((resolve, reject) => {
             const script = document.createElement('script');
             const callbackName = 'rivox_callback_' + Date.now();
-            
-            // Create global callback
-            window[callbackName] = function(response) {
-                delete window[callbackName];
-                document.body.removeChild(script);
-                resolve(response);
-            };
+            let retryCount = 0;
+            const maxRetries = 3;
+            const retryDelay = 1000; // 1 second
 
-            // Add error handler
-            script.onerror = () => {
-                delete window[callbackName];
-                document.body.removeChild(script);
-                reject(new Error('JSONP request failed'));
-            };
+            function attemptSend() {
+                // Create global callback
+                window[callbackName] = function(response) {
+                    cleanup();
+                    resolve(response);
+                };
 
-            // Prepare URL with data
-            const params = new URLSearchParams({
-                callback: callbackName,
-                data: JSON.stringify(data)
-            });
+                // Add error handler
+                script.onerror = () => {
+                    cleanup();
+                    if (retryCount < maxRetries) {
+                        retryCount++;
+                        console.log(`JSONP request failed, retrying (${retryCount}/${maxRetries})...`);
+                        setTimeout(attemptSend, retryDelay);
+                    } else {
+                        console.error('JSONP request failed after', maxRetries, 'retries');
+                        reject(new Error('JSONP request failed'));
+                    }
+                };
 
-            script.src = `${config.endpoint}?${params.toString()}`;
-            document.body.appendChild(script);
+                // Prepare URL with data
+                const params = new URLSearchParams({
+                    callback: callbackName,
+                    data: JSON.stringify(data)
+                });
+
+                script.src = `${config.endpoint}?${params.toString()}`;
+                document.body.appendChild(script);
+            }
+
+            function cleanup() {
+                if (window[callbackName]) {
+                    delete window[callbackName];
+                }
+                if (script.parentNode) {
+                    document.body.removeChild(script);
+                }
+            }
+
+            // Start first attempt
+            attemptSend();
 
             // Set timeout
             setTimeout(() => {
                 if (window[callbackName]) {
-                    delete window[callbackName];
-                    document.body.removeChild(script);
-                    reject(new Error('JSONP request timeout'));
+                    cleanup();
+                    if (retryCount < maxRetries) {
+                        retryCount++;
+                        console.log(`JSONP request timed out, retrying (${retryCount}/${maxRetries})...`);
+                        attemptSend();
+                    } else {
+                        reject(new Error('JSONP request timeout'));
+                    }
                 }
             }, 10000); // 10 second timeout
         });
@@ -1817,7 +1844,7 @@ function getYandexCounterId() {
             console.log('Sending goal data:', goalData);
         }
 
-        // Try to send via JSONP
+        // Try to send via JSONP with retries
         sendDataJSONP({
             type: 'goal',
             client_id: sessionData.client_id,
@@ -1826,8 +1853,63 @@ function getYandexCounterId() {
             conversion_path: sessionData.conversion_data.conversion_path
         }).catch(error => {
             console.error('Failed to send goal data:', error);
+            // Store failed request for retry
+            if (window.localStorage) {
+                try {
+                    const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+                    failedRequests.push({
+                        timestamp: Date.now(),
+                        endpoint: endpoint,
+                        data: goalData
+                    });
+                    // Keep only last 10 failed requests
+                    if (failedRequests.length > 10) {
+                        failedRequests.shift();
+                    }
+                    localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
+                    console.log('Failed request stored for retry');
+                } catch (e) {
+                    console.warn('Failed to store failed request:', e);
+                }
+            }
         });
     }
+
+    // Add retry mechanism for failed requests
+    function retryFailedRequests() {
+        if (!window.localStorage) return;
+        
+        try {
+            const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+            if (failedRequests.length === 0) return;
+            
+            console.log('Retrying', failedRequests.length, 'failed requests');
+            
+            const retryPromises = failedRequests.map(request => 
+                sendDataJSONP(request.data)
+                    .then(() => {
+                        console.log('Successfully retried request from:', new Date(request.timestamp));
+                        return true;
+                    })
+                    .catch(() => false)
+            );
+            
+            Promise.all(retryPromises).then(results => {
+                // Remove successful retries
+                const remainingRequests = failedRequests.filter((_, index) => !results[index]);
+                localStorage.setItem('rivox_failed_requests', JSON.stringify(remainingRequests));
+                
+                console.log('Retry complete.', 
+                    results.filter(r => r).length, 'succeeded,',
+                    remainingRequests.length, 'remaining');
+            });
+        } catch (e) {
+            console.warn('Error retrying failed requests:', e);
+        }
+    }
+
+    // Retry failed requests periodically
+    setInterval(retryFailedRequests, 5 * 60 * 1000); // Every 5 minutes
 
     // Expose public API
     window.RIVOX = {
