@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "4.1.0";
+  const RIVOX_VERSION = "4.1.1";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -33,6 +33,7 @@
       this.config.ymCounterId = ymCounterId;
 
       this.state.clientId = await this.getClientId();
+      this.saveUTMs(); // save UTM to localStorage immediately
       this.observeSPAChanges();
     },
 
@@ -107,23 +108,20 @@
 
     flattenFeatures(state) {
       const now = Date.now();
+      const utms = this.getAllUTMs();
       return {
         clientToken: state.clientToken,
         session_id: state.sessionId,
         client_id: state.clientId || localStorage.getItem("rivox_client_id") || "",
-        user_agent: navigator.userAgent,
-        device_type: /mobile/i.test(navigator.userAgent) ? "mobile" : "desktop",
-        browser: navigator.userAgentData?.brands?.[0]?.brand || "",
-        platform: navigator.userAgentData?.platform || navigator.platform || "",
         timestamp: new Date().toISOString(),
-        rivox_version: RIVOX_VERSION,
         url: window.location.href,
         referrer: document.referrer || "",
-        utm_source: this.getUTM("utm_source"),
-        utm_medium: this.getUTM("utm_medium"),
-        utm_campaign: this.getUTM("utm_campaign"),
-        utm_content: this.getUTM("utm_content"),
-        utm_term: this.getUTM("utm_term"),
+        user_agent: navigator.userAgent,
+        device_type: /mobile/i.test(navigator.userAgent) ? "mobile" : "desktop",
+        browser: this.detectBrowser(),
+        platform: navigator.userAgentData?.platform || navigator.platform || "",
+        rivox_version: RIVOX_VERSION,
+        ...utms,
         scroll_chunk_count: state.sessionMetrics.scroll_chunk_count || 0,
         scroll_depth_max: state.sessionMetrics.scroll_depth_max || 0,
         scroll_jerk_count: state.sessionMetrics.scroll_jerk_count || 0,
@@ -152,6 +150,36 @@
       } catch {
         return null;
       }
+    },
+
+    getAllUTMs() {
+      const keys = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
+      const obj = {};
+      for (const k of keys) {
+        obj[k] = this.getUTM(k);
+      }
+      return obj;
+    },
+
+    saveUTMs() {
+      try {
+        const url = new URL(window.location.href);
+        ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"].forEach(key => {
+          const val = url.searchParams.get(key);
+          if (val) localStorage.setItem(`rivox_${key}`, val);
+        });
+      } catch {}
+    },
+
+    detectBrowser() {
+      const ua = navigator.userAgent.toLowerCase();
+      if (ua.includes("yabrowser")) return "YaBrowser";
+      if (ua.includes("chrome")) return "Chrome";
+      if (ua.includes("safari")) return "Safari";
+      if (ua.includes("firefox")) return "Firefox";
+      if (ua.includes("edge")) return "Edge";
+      if (ua.includes("opera") || ua.includes("opr")) return "Opera";
+      return "Unknown";
     },
 
     observeSPAChanges() {
