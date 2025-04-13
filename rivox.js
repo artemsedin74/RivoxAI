@@ -33,8 +33,21 @@
       this.config.ymCounterId = ymCounterId;
 
       this.state.clientId = await this.getClientId();
-      this.saveUTMs(); // save UTM to localStorage immediately
+      this.saveUTMs();
       this.observeSPAChanges();
+    },
+
+    start() {
+      try {
+        this.trackScroll?.();
+        this.trackClicks?.();
+        this.trackProductViews?.();
+        this.trackFormModals?.();
+        this.trackTabViews?.();
+        this.observeLateButtons?.();
+      } catch (e) {
+        this.log?.error?.("⚠️ error in start()", e);
+      }
     },
 
     generateSessionId() {
