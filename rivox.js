@@ -64,6 +64,15 @@
         });
     }
 
+    // Validate and get endpoint URL
+    function getEndpointUrl() {
+        // Always return the configured endpoint
+        if (config.debug) {
+            console.log('Using endpoint:', config.endpoint);
+        }
+        return config.endpoint;
+    }
+
     // Initialize SDK
     function init() {
         const currentDomain = window.location.hostname;
@@ -72,7 +81,11 @@
             return;
         }
         
-        console.log('RIVOX SDK initialized on domain:', currentDomain);
+        if (config.debug) {
+            console.log('RIVOX SDK initialized on domain:', currentDomain);
+            console.log('Using endpoint:', config.endpoint);
+        }
+
         setupEventListeners();
         setupMLFeatures();
         waitScrollAndSend();
@@ -296,6 +309,12 @@
 
     // Send session summary
     async function sendSessionSummary() {
+        const endpoint = getEndpointUrl();
+        
+        if (config.debug) {
+            console.log('Sending data to endpoint:', endpoint);
+        }
+
         // Prepare final data
         const summary = {
             ...sessionData,
@@ -303,6 +322,7 @@
             domain: window.location.hostname,
             path: window.location.pathname,
             timestamp: new Date().toISOString(),
+            sdk_version: '4.6.3',
             ml_features: {
                 ...sessionData.ml_features,
                 scroll_heatmap: generateScrollHeatmap(),
@@ -322,7 +342,7 @@
                 const blob = new Blob([JSON.stringify(summary)], {
                     type: 'application/json'
                 });
-                const result = navigator.sendBeacon(config.endpoint, blob);
+                const result = navigator.sendBeacon(endpoint, blob);
                 
                 if (config.debug) {
                     console.log('Data sent via beacon:', result);
@@ -332,9 +352,10 @@
             }
 
             // Fallback to fetch with CORS mode
-            const response = await fetch(config.endpoint, {
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 mode: 'cors',
+                credentials: 'omit',
                 headers: {
                     'Content-Type': 'application/json'
                 },
@@ -360,6 +381,7 @@
                     const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
                     failedRequests.push({
                         timestamp: Date.now(),
+                        endpoint: endpoint,
                         data: summary
                     });
                     // Keep only last 10 failed requests to prevent storage overflow
@@ -369,7 +391,7 @@
                     localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
                     
                     if (config.debug) {
-                        console.log('Failed request stored for retry');
+                        console.log('Failed request stored for retry. Endpoint:', endpoint);
                     }
                 } catch (e) {
                     console.warn('Failed to store failed request:', e);
