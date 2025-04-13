@@ -1,4 +1,4 @@
-// rivox-v4.0.0.js — Финальный стабильный SDK для поведения и ML
+// rivox.full.js — Финальный SDK для сбора поведения и ML с логгером
 (function () {
   const RIVOX_VERSION = "4.0.0";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
@@ -152,9 +152,7 @@
         if (typeof ym === "function" && counterId) {
           ym(counterId, 'getClientID', id => {
             this.state.clientId = id;
-            try {
-              localStorage.setItem('rivox_client_id', id);
-            } catch (_) {}
+            try { localStorage.setItem('rivox_client_id', id); } catch (_) {}
           });
         } else {
           this.state.clientId = localStorage.getItem('rivox_client_id') || this.generateSessionId();
@@ -194,7 +192,6 @@
       this.trackGoals?.();
     },
 
-    log: {},
     observeSPAChanges: function () {
       let lastURL = location.href;
       const debouncedHandle = () => {
@@ -230,6 +227,65 @@
     defineGoal: function () {},
     generateStableSelector: function () {},
   };
+
+  // логгер
+  RIVOX.log = (function () {
+    let config = { debugMode: false, logEndpoint: "", batch: [], batchTimeout: null, dedupErrors: new Set(), batchInterval: 3000 };
+
+    function init(options = {}) {
+      config.debugMode = !!options.debugMode;
+      config.logEndpoint = options.logEndpoint || "";
+    }
+
+    function safe(fn) {
+      try { fn(); } catch (e) {
+        if (config.debugMode) console.warn("[RIVOX:logger error]", e);
+      }
+    }
+
+    function logToConsole(level, ...args) {
+      if (config.debugMode) console[level]?.("[RIVOX]", ...args);
+    }
+
+    function send(data) {
+      if (!config.logEndpoint) return;
+      const payload = JSON.stringify(data);
+      navigator.sendBeacon?.(config.logEndpoint, new Blob([payload], { type: 'application/json' })) ||
+        fetch(config.logEndpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true });
+    }
+
+    function batch(entry) {
+      config.batch.push(entry);
+      if (!config.batchTimeout) {
+        config.batchTimeout = setTimeout(() => {
+          const b = [...config.batch];
+          config.batch = [];
+          config.batchTimeout = null;
+          send({ type: "batch", logs: b });
+        }, config.batchInterval);
+      }
+    }
+
+    return {
+      init,
+      info(...args) {
+        safe(() => { logToConsole("info", ...args); if (!config.debugMode) batch({ level: "info", args, timestamp: Date.now() }); });
+      },
+      error(error, ctx = {}) {
+        safe(() => {
+          logToConsole("error", error, ctx);
+          const sig = error?.stack || error?.message || String(error);
+          if (!config.dedupErrors.has(sig)) {
+            config.dedupErrors.add(sig);
+            send({ level: "error", message: error?.message, stack: error?.stack, context: ctx, timestamp: Date.now() });
+          }
+        });
+      },
+      event(type, payload = {}) {
+        safe(() => { logToConsole("log", `[event] ${type}`, payload); if (!config.debugMode) batch({ level: "event", type, payload, timestamp: Date.now() }); });
+      }
+    };
+  })();
 
   window.RIVOX = RIVOX;
 })();
