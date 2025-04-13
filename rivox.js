@@ -24,7 +24,7 @@ function getYandexCounterId() {
         scrollChunkSize: 100,
         hoverThreshold: 1000,
         formInteractionThreshold: 2000,
-        allowedDomains: ['spb.sotovik.shop', 'sotovik.shop', 'www.spb.sotovik.shop', 'www.sotovik.shop'],
+        allowedDomains: ['spb.sotovik.shop'],
         mlFeatures: {
             collectScrollMap: true,
             trackFormInteractions: true,
@@ -39,7 +39,27 @@ function getYandexCounterId() {
     let sessionData = null;
 
     function isAllowedDomain(hostname) {
-        return config.allowedDomains.some(domain => hostname.includes(domain));
+        if (!hostname) return false;
+        
+        // Нормализуем домен (убираем www. если есть)
+        const normalizedHostname = hostname.replace(/^www\./, '');
+        
+        // Проверяем домен
+        const isAllowed = config.allowedDomains.some(domain => {
+            const normalizedDomain = domain.replace(/^www\./, '');
+            return normalizedHostname === normalizedDomain;
+        });
+
+        if (config.debug) {
+            console.log('Checking domain:', {
+                original: hostname,
+                normalized: normalizedHostname,
+                allowed: isAllowed,
+                allowedDomains: config.allowedDomains
+            });
+        }
+
+        return isAllowed;
     }
 
     // Add trackNavigation function at the top level
@@ -1362,30 +1382,34 @@ function getYandexCounterId() {
 
     // Add Yandex.Metrika goals tracking
     function setupMetrikaGoalsTracking() {
+        // Проверяем наличие Метрики
         if (typeof ym === 'undefined') {
-            console.error('Yandex.Metrika not found for goals tracking');
+            console.warn('Yandex.Metrika not found, will retry in 1 second');
+            setTimeout(setupMetrikaGoalsTracking, 1000);
             return;
         }
 
-        // Get counter id
-        const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
-        const counterId = counterObjects.length > 0 ? 
-            counterObjects[0].replace('yaCounter', '') : 
-            window.ymCounterId;
-
+        // Получаем ID счетчика
+        const counterId = getYandexCounterId();
         if (!counterId) {
-            console.error('Yandex.Metrika counter ID not found for goals tracking');
+            console.warn('Yandex.Metrika counter ID not found, will retry in 1 second');
+            setTimeout(setupMetrikaGoalsTracking, 1000);
             return;
         }
 
-        // Track reachGoal calls
-        const originalReachGoal = ym;
+        console.log('Setting up Yandex.Metrika goals tracking for counter:', counterId);
+
+        // Сохраняем оригинальную функцию
+        const originalYm = window.ym;
+
+        // Переопределяем функцию ym
         window.ym = function(counterId, method, ...args) {
+            // Отслеживаем цели
             if (method === 'reachGoal') {
                 const goalName = args[0];
                 const goalParams = args[1] || {};
                 
-                // Record goal data
+                // Записываем данные о цели
                 const goalData = {
                     timestamp: Date.now(),
                     name: goalName,
@@ -1394,6 +1418,7 @@ function getYandexCounterId() {
                     referrer: document.referrer,
                     user_agent: navigator.userAgent,
                     client_id: sessionData.client_id,
+                    counter_id: counterId,
                     session_duration: Date.now() - sessionData.start_time,
                     conversion_context: {
                         last_interaction: sessionData.last_activity,
@@ -1404,11 +1429,12 @@ function getYandexCounterId() {
                     }
                 };
 
+                // Сохраняем цель в сессии
                 sessionData.metrika_goals.push(goalData);
                 sessionData.conversion_data.goals_reached.push(goalData);
                 sessionData.conversion_data.last_goal_timestamp = Date.now();
 
-                // Update conversion path
+                // Обновляем путь конверсии
                 sessionData.conversion_data.conversion_path.push({
                     timestamp: Date.now(),
                     type: 'goal',
@@ -1416,43 +1442,42 @@ function getYandexCounterId() {
                     url: window.location.href
                 });
 
-                // Send goal data immediately
+                console.log('🎯 Goal tracked:', goalName, goalParams);
+
+                // Немедленно отправляем данные о цели
                 sendGoalData(goalData);
             }
-            
-            // Call original ym function
-            return originalReachGoal.apply(this, arguments);
+
+            // Вызываем оригинальную функцию
+            return originalYm.apply(this, arguments);
         };
 
-        // Track ecommerce events
-        const originalEcommerce = window.dataLayer ? window.dataLayer.push : null;
-        if (originalEcommerce) {
-            window.dataLayer.push = function(data) {
-                if (data && data.ecommerce) {
-                    const ecommerceData = {
-                        timestamp: Date.now(),
-                        type: getEcommerceEventType(data.ecommerce),
-                        data: data.ecommerce,
-                        page_url: window.location.href,
-                        client_id: sessionData.client_id
-                    };
+        // Проверяем работу отслеживания
+        console.log('✅ Yandex.Metrika goals tracking setup complete');
+    }
 
-                    sessionData.conversion_data.ecommerce_data.push(ecommerceData);
-                    
-                    // Update conversion path
-                    sessionData.conversion_data.conversion_path.push({
-                        timestamp: Date.now(),
-                        type: 'ecommerce',
-                        action: ecommerceData.type,
-                        data: {
-                            products: getEcommerceProducts(data.ecommerce),
-                            value: getEcommerceValue(data.ecommerce)
-                        }
-                    });
-                }
-                return originalEcommerce.apply(this, arguments);
-            };
+    // Функция для получения ID счетчика Метрики
+    function getYandexCounterId() {
+        // Проверяем глобальную переменную
+        if (window.ymCounterId) return window.ymCounterId;
+        
+        // Ищем счетчик в объектах окна
+        const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
+        if (counterObjects.length > 0) {
+            return parseInt(counterObjects[0].replace('yaCounter', ''));
         }
+
+        // Ищем в коде страницы
+        const metrikaScripts = Array.from(document.scripts)
+            .filter(script => script.textContent && script.textContent.includes('ym('))
+            .map(script => script.textContent);
+
+        if (metrikaScripts.length > 0) {
+            const match = metrikaScripts[0].match(/ym\((\d+),/);
+            if (match) return parseInt(match[1]);
+        }
+
+        return null;
     }
 
     // Helper functions for goals tracking
