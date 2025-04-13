@@ -1,7 +1,142 @@
-// rivox.full.js — Финальный SDK для сбора поведения и ML с логгером
 (function () {
   const RIVOX_VERSION = "4.0.0";
+
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
+
+  const RIVOX = {
+    config: {
+      debugMode: false,
+      endpoint: "",
+      ymCounterId: null,
+    },
+    state: {
+      clientToken: null,
+      sessionId: null,
+      clientId: null,
+      sessionStart: Date.now(),
+      summarySent: false,
+      trafficSource: {},
+      sessionMetrics: {},
+      pageContext: {},
+      missing_product_ids: [],
+      unknown_clicks: [],
+      goals: [],
+    },
+
+    init(clientToken, endpoint, ymCounterId) {
+      if (this._initialized) return;
+      this._initialized = true;
+
+      this.state.clientToken = clientToken;
+      this.state.endpoint = endpoint;
+      this.state.sessionId = this.generateSessionId();
+      this.state.sessionStart = Date.now();
+      this.config.ymCounterId = ymCounterId;
+
+      this.getClientId();
+      this.observeSPAChanges();
+      this.trackHoverEnhanced?.();
+      this.trackScrollPattern?.();
+      this.trackEcommerceDataLayer?.();
+      this.trackGoals?.();
+      this.trackUnknownClicks?.();
+      this.detectSuccessfulPayment?.();
+      this.autoFlush();
+    },
+
+    generateSessionId() {
+      try {
+        const crypto = window.crypto || window.msCrypto;
+        const array = new Uint8Array(8);
+        crypto.getRandomValues(array);
+        return 'sess-' + Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('') + '-' + Date.now();
+      } catch {
+        return 'sess-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
+      }
+    },
+
+    getClientId() {
+      try {
+        const counterId = this.config.ymCounterId;
+        if (typeof ym === "function" && counterId) {
+          ym(counterId, 'getClientID', id => {
+            this.state.clientId = id;
+            try { localStorage.setItem('rivox_client_id', id); } catch (_) {}
+          });
+        } else {
+          this.state.clientId = localStorage.getItem('rivox_client_id') || this.generateSessionId();
+        }
+      } catch (e) {
+        this.state.clientId = this.generateSessionId();
+      }
+    },
+
+    autoFlush() {
+      window.addEventListener("beforeunload", () => this.sendSessionSummary());
+      window.addEventListener("pagehide", () => this.sendSessionSummary());
+      setTimeout(() => this.sendSessionSummary(), 15000);
+    },
+
+    sendSessionSummary() {
+      if (this.state.summarySent) return;
+      this.state.summarySent = true;
+
+      const payload = flattenFeatures(this.state);
+      const body = JSON.stringify(payload);
+      const url = this.state.endpoint;
+
+      if (navigator.sendBeacon && navigator.sendBeacon(url, body)) {
+        return;
+      }
+
+      sendWithRetry(url, body);
+    },
+
+    reinitTrackers() {
+      this.trackHoverEnhanced?.();
+      this.trackScrollPattern?.();
+      this.trackEcommerceDataLayer?.();
+      this.trackGoals?.();
+    },
+
+    observeSPAChanges() {
+      let lastURL = location.href;
+      const debouncedHandle = () => {
+        clearTimeout(this._spaTimer);
+        this._spaTimer = setTimeout(() => {
+          if (location.href !== lastURL) {
+            lastURL = location.href;
+            this.reinitTrackers?.();
+          }
+        }, 150);
+      };
+
+      const patch = (method) => {
+        const orig = history[method];
+        history[method] = function (...args) {
+          const result = orig.apply(this, args);
+          window.dispatchEvent(new Event("spa:navigation"));
+          return result;
+        };
+      };
+
+      patch("pushState");
+      patch("replaceState");
+
+      ["popstate", "hashchange", "spa:navigation", "changestate", "routeChanged", "locationchange"]
+        .forEach(evt => window.addEventListener(evt, debouncedHandle, { passive: true }));
+    },
+
+    trackHoverEnhanced: function () {},
+    trackScrollPattern: function () {},
+    trackEcommerceDataLayer: function () {},
+    trackGoals: function () {},
+    trackUnknownClicks: function () {},
+    detectSuccessfulPayment: function () {},
+    sendGoal: function () {},
+    defineGoal: function () {},
+    generateStableSelector: function () {},
+  };
 
   function flattenFeatures(state) {
     const out = {};
@@ -13,12 +148,12 @@
     const goals = state.goals || [];
     const now = Date.now();
 
+    out.clientToken = state.clientToken || null;
+    out.session_id = state.sessionId || null;
+    out.client_id = state.clientId || null;
     out.user_agent = navigator.userAgent;
-    out.device_type = /mobile/i.test(navigator.userAgent)
-      ? "mobile"
-      : /tablet|ipad/i.test(navigator.userAgent)
-      ? "tablet"
-      : "desktop";
+    out.device_type = /mobile/i.test(navigator.userAgent) ? "mobile" :
+                      /tablet|ipad/i.test(navigator.userAgent) ? "tablet" : "desktop";
     out.referer = document.referrer || null;
 
     const searchParams = new URLSearchParams(location.search);
@@ -72,11 +207,6 @@
     out.unknown_clicks_count = (state.unknown_clicks || []).length;
     out.form_interaction = ctx.form_interaction ? 1 : 0;
 
-    out.clientToken = state.clientToken;
-    out.session_id = state.sessionId;
-    out.client_id = state.clientId;
-    out.timestamp = new Date().toISOString();
-
     return out;
   }
 
@@ -86,206 +216,13 @@
       headers: { "Content-Type": "application/json" },
       body,
       keepalive: true,
+      mode: "no-cors"
     }).catch(err => {
       if (retries > 0) {
         setTimeout(() => sendWithRetry(url, body, retries - 1), 1000);
-      } else {
-        RIVOX.log?.error?.(err, { context: "fetch retry failed" });
       }
     });
   }
-
-  const RIVOX = {
-    config: { debugMode: false, endpoint: "", ymCounterId: null },
-    state: {
-      clientToken: null,
-      sessionId: null,
-      clientId: null,
-      sessionStart: Date.now(),
-      summarySent: false,
-      trafficSource: {},
-      sessionMetrics: {},
-      pageContext: {},
-      missing_product_ids: [],
-      unknown_clicks: [],
-      goals: [],
-    },
-
-    init(clientToken, endpoint, ymCounterId) {
-      if (this._initialized) return;
-      this._initialized = true;
-
-      this.state.clientToken = clientToken;
-      this.state.endpoint = endpoint;
-      this.state.sessionId = this.generateSessionId();
-      this.state.sessionStart = Date.now();
-      this.config.ymCounterId = ymCounterId;
-
-      this.log.init({ debugMode: this.config.debugMode, logEndpoint: endpoint + "/log" });
-      this.getClientId();
-      this.observeSPAChanges();
-      this.trackHoverEnhanced();
-      this.trackScrollPattern();
-      this.trackEcommerceDataLayer();
-      this.trackGoals();
-      this.trackUnknownClicks();
-      this.detectSuccessfulPayment();
-      this.autoFlush();
-
-      this.log.info(`✅ RIVOX v${RIVOX_VERSION} Initialized`, this.state.sessionId);
-    },
-
-    generateSessionId() {
-      try {
-        const crypto = window.crypto || window.msCrypto;
-        const array = new Uint8Array(8);
-        crypto.getRandomValues(array);
-        return 'sess-' + Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('') + '-' + Date.now();
-      } catch (e) {
-        return 'sess-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
-      }
-    },
-
-    getClientId() {
-      try {
-        const counterId = this.config.ymCounterId;
-        if (typeof ym === "function" && counterId) {
-          ym(counterId, 'getClientID', id => {
-            this.state.clientId = id;
-            try { localStorage.setItem('rivox_client_id', id); } catch (_) {}
-          });
-        } else {
-          this.state.clientId = localStorage.getItem('rivox_client_id') || this.generateSessionId();
-        }
-      } catch (e) {
-        this.state.clientId = this.generateSessionId();
-        this.log?.error?.(e, { context: "getClientId fallback" });
-      }
-    },
-
-    autoFlush() {
-      window.addEventListener("beforeunload", () => this.sendSessionSummary());
-      window.addEventListener("pagehide", () => this.sendSessionSummary());
-      setTimeout(() => this.sendSessionSummary(), 15000);
-    },
-
-    sendSessionSummary() {
-      if (this.state.summarySent) return;
-      this.state.summarySent = true;
-
-      const payload = flattenFeatures(this.state);
-      const body = JSON.stringify(payload);
-      const url = this.state.endpoint;
-
-      if (navigator.sendBeacon) {
-        const success = navigator.sendBeacon(url, body);
-        if (success) return;
-      }
-
-      sendWithRetry(url, body);
-    },
-
-    reinitTrackers() {
-      this.trackHoverEnhanced?.();
-      this.trackScrollPattern?.();
-      this.trackEcommerceDataLayer?.();
-      this.trackGoals?.();
-    },
-
-    observeSPAChanges: function () {
-      let lastURL = location.href;
-      const debouncedHandle = () => {
-        clearTimeout(this._spaTimer);
-        this._spaTimer = setTimeout(() => {
-          if (location.href !== lastURL) {
-            lastURL = location.href;
-            this.reinitTrackers?.();
-          }
-        }, 150);
-      };
-      const patch = (method) => {
-        const orig = history[method];
-        history[method] = function (...args) {
-          const result = orig.apply(this, args);
-          window.dispatchEvent(new Event("spa:navigation"));
-          return result;
-        };
-      };
-      patch("pushState");
-      patch("replaceState");
-      ["popstate", "hashchange", "spa:navigation", "changestate", "routeChanged", "locationchange"]
-        .forEach(evt => window.addEventListener(evt, debouncedHandle, { passive: true }));
-    },
-
-    trackHoverEnhanced: function () {},
-    trackScrollPattern: function () {},
-    trackEcommerceDataLayer: function () {},
-    trackGoals: function () {},
-    trackUnknownClicks: function () {},
-    detectSuccessfulPayment: function () {},
-    sendGoal: function () {},
-    defineGoal: function () {},
-    generateStableSelector: function () {},
-  };
-
-  // логгер
-  RIVOX.log = (function () {
-    let config = { debugMode: false, logEndpoint: "", batch: [], batchTimeout: null, dedupErrors: new Set(), batchInterval: 3000 };
-
-    function init(options = {}) {
-      config.debugMode = !!options.debugMode;
-      config.logEndpoint = options.logEndpoint || "";
-    }
-
-    function safe(fn) {
-      try { fn(); } catch (e) {
-        if (config.debugMode) console.warn("[RIVOX:logger error]", e);
-      }
-    }
-
-    function logToConsole(level, ...args) {
-      if (config.debugMode) console[level]?.("[RIVOX]", ...args);
-    }
-
-    function send(data) {
-      if (!config.logEndpoint) return;
-      const payload = JSON.stringify(data);
-      navigator.sendBeacon?.(config.logEndpoint, new Blob([payload], { type: 'application/json' })) ||
-        fetch(config.logEndpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true });
-    }
-
-    function batch(entry) {
-      config.batch.push(entry);
-      if (!config.batchTimeout) {
-        config.batchTimeout = setTimeout(() => {
-          const b = [...config.batch];
-          config.batch = [];
-          config.batchTimeout = null;
-          send({ type: "batch", logs: b });
-        }, config.batchInterval);
-      }
-    }
-
-    return {
-      init,
-      info(...args) {
-        safe(() => { logToConsole("info", ...args); if (!config.debugMode) batch({ level: "info", args, timestamp: Date.now() }); });
-      },
-      error(error, ctx = {}) {
-        safe(() => {
-          logToConsole("error", error, ctx);
-          const sig = error?.stack || error?.message || String(error);
-          if (!config.dedupErrors.has(sig)) {
-            config.dedupErrors.add(sig);
-            send({ level: "error", message: error?.message, stack: error?.stack, context: ctx, timestamp: Date.now() });
-          }
-        });
-      },
-      event(type, payload = {}) {
-        safe(() => { logToConsole("log", `[event] ${type}`, payload); if (!config.debugMode) batch({ level: "event", type, payload, timestamp: Date.now() }); });
-      }
-    };
-  })();
 
   window.RIVOX = RIVOX;
 })();
