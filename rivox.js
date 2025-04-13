@@ -307,6 +307,37 @@
         }, 20 * 60 * 1000);
     }
 
+    // Send data using JSONP
+    function sendDataJSONP(data) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            const callbackName = 'rivox_callback_' + Date.now();
+            
+            // Create global callback
+            window[callbackName] = function(response) {
+                delete window[callbackName];
+                document.body.removeChild(script);
+                resolve(response);
+            };
+
+            // Add error handler
+            script.onerror = () => {
+                delete window[callbackName];
+                document.body.removeChild(script);
+                reject(new Error('JSONP request failed'));
+            };
+
+            // Prepare URL with data
+            const params = new URLSearchParams({
+                callback: callbackName,
+                data: JSON.stringify(data)
+            });
+
+            script.src = `${config.endpoint}?${params.toString()}`;
+            document.body.appendChild(script);
+        });
+    }
+
     // Send session summary
     async function sendSessionSummary() {
         const endpoint = getEndpointUrl();
@@ -337,7 +368,18 @@
         }
 
         try {
-            // Try sendBeacon first for better reliability during page unload
+            // Try JSONP first
+            try {
+                const response = await sendDataJSONP(summary);
+                if (config.debug) {
+                    console.log('Data sent successfully via JSONP. Response:', response);
+                }
+                return;
+            } catch (jsonpError) {
+                console.warn('JSONP request failed, falling back to beacon/fetch:', jsonpError);
+            }
+
+            // Try sendBeacon as fallback
             if (navigator.sendBeacon) {
                 const blob = new Blob([JSON.stringify(summary)], {
                     type: 'application/json'
@@ -351,10 +393,10 @@
                 return;
             }
 
-            // Fallback to fetch with CORS mode
+            // Fetch as last resort
             const response = await fetch(endpoint, {
                 method: 'POST',
-                mode: 'cors',
+                mode: 'no-cors', // Changed to no-cors
                 credentials: 'omit',
                 headers: {
                     'Content-Type': 'application/json'
@@ -363,14 +405,8 @@
                 keepalive: true
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const responseData = await response.json();
-            
             if (config.debug) {
-                console.log('Data sent successfully. Response:', responseData);
+                console.log('Data sent via fetch');
             }
         } catch (error) {
             console.error('Failed to send session data:', error);
@@ -384,7 +420,7 @@
                         endpoint: endpoint,
                         data: summary
                     });
-                    // Keep only last 10 failed requests to prevent storage overflow
+                    // Keep only last 10 failed requests
                     if (failedRequests.length > 10) {
                         failedRequests.shift();
                     }
