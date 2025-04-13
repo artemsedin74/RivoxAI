@@ -66,7 +66,6 @@
       this.log.info("🟢 RIVOX tracking start");
     },
 
-    // === ✅ TRACERS ===
     trackScroll() {
       let lastY = window.scrollY, lastTime = Date.now();
 
@@ -122,13 +121,11 @@
       observer.observe(document.body, { childList: true, subtree: true });
     },
 
-    // === STUBS — improve later if needed ===
-    trackProductViews() {}
-    trackFormModals() {}
-    trackTabViews() {}
-    trackReturnScroll() {}
+    trackProductViews() {},
+    trackFormModals() {},
+    trackTabViews() {},
+    trackReturnScroll() {},
 
-    // === UTILITIES ===
     async getClientId() {
       try {
         let id = localStorage.getItem("rivox_client_id");
