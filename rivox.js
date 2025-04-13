@@ -1,5 +1,5 @@
 (function () {
-  const RIVOX_VERSION = "4.1.1";
+  const RIVOX_VERSION = "4.3.0";
   const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 50 }), 200));
 
   const RIVOX = {
@@ -35,67 +35,148 @@
       this.state.clientId = await this.getClientId();
       this.saveUTMs();
       this.observeSPAChanges();
+      this.interceptYMGoals();
     },
 
     start() {
       try {
-        this.trackScroll?.();
-        this.trackClicks?.();
-        this.trackProductViews?.();
-        this.trackFormModals?.();
-        this.trackTabViews?.();
-        this.observeLateButtons?.();
+        this.trackScroll();
+        this.trackClicks();
+        this.trackProductViews();
+        this.trackFormModals();
+        this.trackTabViews();
+        this.trackFocus();
+        this.trackReturnScroll();
+        this.observeLateButtons();
       } catch (e) {
         this.log?.error?.("⚠️ error in start()", e);
       }
     },
 
-    generateSessionId() {
-      try {
-        const crypto = window.crypto || window.msCrypto;
-        const array = new Uint8Array(8);
-        crypto.getRandomValues(array);
-        return 'sess-' + Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('') + '-' + Date.now();
-      } catch {
-        return 'sess-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now();
-      }
+    interceptYMGoals() {
+      if (typeof ym !== "function") return;
+      const originalYM = ym;
+      window.ym = (...args) => {
+        try {
+          const [counterId, method, goalName] = args;
+          if (method === 'reachGoal' && typeof goalName === 'string') {
+            this.state.goals.push(goalName);
+            this.log?.info?.("🎯 Goal intercepted:", goalName);
+          }
+        } catch (e) {
+          this.log?.warn?.("⚠️ Failed to intercept goal", e);
+        }
+        return originalYM(...args);
+      };
     },
 
-    async getClientId() {
-      const cookieId = document.cookie.match(/_ym_uid=([^;]+)/)?.[1];
-      if (cookieId) {
-        try { localStorage.setItem("rivox_client_id", cookieId); } catch {}
-        this.log?.info?.("✅ client_id from cookie", cookieId);
-        return cookieId;
-      }
+    trackScroll() {
+      let lastScrollTop = 0, maxDepth = 0, scrollChunks = 0, idleCount = 0, jerkCount = 0;
+      let lastTime = Date.now();
 
-      const counterId = this.config.ymCounterId;
-      if (!counterId || typeof ym !== "function") return "";
+      window.addEventListener("scroll", () => {
+        const scrollTop = window.scrollY || document.documentElement.scrollTop;
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const percent = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
 
-      return await new Promise(resolve => {
-        let attempts = 0;
-        const maxAttempts = 20;
-        const interval = setInterval(() => {
-          attempts++;
-          if (typeof ym === "function") {
-            try {
-              ym(counterId, 'getClientID', id => {
-                if (typeof id === "string" && id.length > 10) {
-                  clearInterval(interval);
-                  try { localStorage.setItem("rivox_client_id", id); } catch {}
-                  this.log?.info?.("✅ client_id from ym(...)", id);
-                  resolve(id);
-                }
-              });
-            } catch {}
-          }
-          if (attempts >= maxAttempts) {
-            clearInterval(interval);
-            this.log?.warn?.("⚠️ client_id not found via ym()");
-            resolve("");
-          }
-        }, 250);
+        const delta = Math.abs(scrollTop - lastScrollTop);
+        if (delta > 30) jerkCount++;
+        else idleCount++;
+
+        scrollChunks++;
+        maxDepth = Math.max(maxDepth, percent);
+        lastScrollTop = scrollTop;
+        lastTime = Date.now();
+
+        Object.assign(this.state.sessionMetrics, {
+          scroll_chunk_count: scrollChunks,
+          scroll_depth_max: Math.floor(maxDepth),
+          scroll_jerk_count: jerkCount,
+          scroll_idle_count: idleCount
+        });
+      }, { passive: true });
+    },
+
+    trackClicks() {
+      document.addEventListener("click", e => {
+        const t = e.target.closest("a, button, input, [role='button']");
+        if (!t) return;
+        this.state.unknown_clicks.push({
+          tag: t.tagName,
+          id: t.id,
+          class: t.className,
+          name: t.name,
+          text: t.innerText?.slice(0, 50),
+          href: t.href || null
+        });
+      }, true);
+    },
+
+    trackFormModals() {
+      const observer = new MutationObserver(() => {
+        const forms = document.querySelectorAll("form, [class*='form'], [id*='form']");
+        if (forms.length > 0) {
+          this.state.pageContext.form_interaction = 1;
+        }
       });
+      observer.observe(document.body, { childList: true, subtree: true });
+    },
+
+    trackProductViews() {
+      const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            this.state.pageContext.number_of_products_viewed =
+              (this.state.pageContext.number_of_products_viewed || 0) + 1;
+          }
+        }
+      }, { threshold: 0.5 });
+
+      idle(() => {
+        document.querySelectorAll(".product, [data-product-id], .product-card").forEach(el => observer.observe(el));
+      });
+    },
+
+    trackTabViews() {
+      window.addEventListener("focus", () => {
+        this.state.pageContext.focus_time_on_product_card =
+          (this.state.pageContext.focus_time_on_product_card || 0) + 1;
+      });
+    },
+
+    trackFocus() {
+      let focusTime = 0;
+      let lastFocus = Date.now();
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          lastFocus = Date.now();
+        } else {
+          focusTime += Date.now() - lastFocus;
+          this.state.pageContext.focus_time_on_product_card = Math.floor(focusTime / 1000);
+        }
+      });
+    },
+
+    trackReturnScroll() {
+      let lastY = window.scrollY;
+      window.addEventListener("scroll", () => {
+        const current = window.scrollY;
+        if (current < lastY - 100) {
+          this.state.pageContext.scroll_return_count =
+            (this.state.pageContext.scroll_return_count || 0) + 1;
+        }
+        lastY = current;
+      }, { passive: true });
+    },
+
+    observeLateButtons() {
+      setTimeout(() => {
+        document.querySelectorAll("button").forEach(b => {
+          b.addEventListener("click", () => {
+            this.state.pageContext.has_contact_info = 1;
+          });
+        });
+      }, 3000);
     },
 
     sendSessionSummary() {
@@ -144,6 +225,7 @@
         hover_time_on_product_avg: state.sessionMetrics.hover_time_on_product_avg || 0,
         hover_time_on_product_max: state.sessionMetrics.hover_time_on_product_max || 0,
         goals_count: state.goals?.length || 0,
+        goals: state.goals.join(", ") || "",
         ecommerce_event_count: state.pageContext.ecommerce_event_count || 0,
         ecommerce_event_types: (state.pageContext.ecommerce_event_types || []).join(", "),
         ecommerce_add_to_cart_count: state.pageContext.ecommerce_add_to_cart_count || 0,
@@ -153,6 +235,10 @@
         time_on_page_sec: Math.floor((now - state.sessionStart) / 1000),
         unknown_clicks_count: state.unknown_clicks.length || 0,
         form_interaction: state.pageContext.form_interaction || 0,
+        number_of_products_viewed: state.pageContext.number_of_products_viewed || 0,
+        focus_time_on_product_card: state.pageContext.focus_time_on_product_card || 0,
+        scroll_return_count: state.pageContext.scroll_return_count || 0,
+        has_contact_info: state.pageContext.has_contact_info || 0
       };
     },
 
