@@ -278,133 +278,128 @@ function getYandexCounterId() {
 
     // Initialize SDK
     async function init() {
-        const currentDomain = window.location.hostname;
-        if (!isAllowedDomain(currentDomain)) {
-            console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
-            return;
-        }
-        
-        console.log('RIVOX SDK initializing...');
-        
-        // Load configuration
-        const userConfig = loadConfig();
-        if (!userConfig) return;
+        try {
+            const currentDomain = window.location.hostname;
+            if (!isAllowedDomain(currentDomain)) {
+                console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
+                return;
+            }
+            
+            console.log('RIVOX SDK initializing...');
+            
+            // Load configuration
+            const userConfig = loadConfig();
+            if (!userConfig) {
+                console.warn('Failed to load configuration');
+                return;
+            }
 
-        // Wait for client id before proceeding
-        const clientId = await generateClientId();
-        if (!clientId) {
-            console.error('Could not initialize RIVOX SDK: Failed to get Yandex.Metrika client ID');
-            return;
-        }
+            // Wait for client id
+            const clientId = await generateClientId();
+            if (!clientId) {
+                console.warn('Failed to get client ID');
+                return;
+            }
 
-        console.log('RIVOX SDK initialized with client ID:', clientId);
+            console.log('RIVOX SDK Configuration:', {
+                token: userConfig.token,
+                clientId: clientId
+            });
 
-        // Initialize session data
-        sessionData = {
-            client_id: clientId,
-            session_id: generateSessionId(),
-            data_token: userConfig.token,
-            start_time: Date.now(),
-            last_activity: Date.now(),
-            page_views: [],
-            scroll_chunks: [],
-            hover_events: [],
-            form_interactions: [],
-            cta_clicks: [],
-            modal_interactions: [],
-            utm_data: collectUtmData(),
-            metrika_goals: [],
-            conversion_data: {
-                goals_reached: [],
-                ecommerce_data: [],
-                last_goal_timestamp: null,
-                conversion_path: []
-            },
-            traffic_source: {
-                referrer: document.referrer,
-                landing_page: window.location.href,
-                entry_point: window.location.pathname
-            },
-            user_behavior: {
-                time_to_first_interaction: null,
-                total_interactions: 0,
-                interaction_frequency: [],
-                scroll_depth_percentages: [],
-                time_between_clicks: [],
-                mouse_movement_heatmap: [],
-                viewport_size: {
-                    width: window.innerWidth,
-                    height: window.innerHeight
+            // Initialize session data
+            sessionData = {
+                client_id: clientId,
+                session_id: generateSessionId(),
+                data_token: userConfig.token,
+                start_time: Date.now(),
+                last_activity: Date.now(),
+                page_views: [],
+                scroll_chunks: [],
+                hover_events: [],
+                form_interactions: [],
+                cta_clicks: [],
+                modal_interactions: [],
+                utm_data: collectUtmData(),
+                metrika_goals: [],
+                conversion_data: {
+                    goals_reached: [],
+                    ecommerce_data: [],
+                    last_goal_timestamp: null,
+                    conversion_path: []
+                },
+                traffic_source: {
+                    referrer: document.referrer,
+                    landing_page: window.location.href,
+                    entry_point: window.location.pathname
+                },
+                user_behavior: {
+                    time_to_first_interaction: null,
+                    total_interactions: 0,
+                    interaction_frequency: [],
+                    scroll_depth_percentages: [],
+                    time_between_clicks: [],
+                    mouse_movement_heatmap: [],
+                    viewport_size: {
+                        width: window.innerWidth,
+                        height: window.innerHeight
+                    }
+                },
+                ml_features: {
+                    interest_signals: [],
+                    behavior_patterns: [],
+                    user_segment: null,
+                    conversion_probability: null,
+                    funnel_analysis: {}
+                },
+                device_info: {
+                    user_agent: navigator.userAgent,
+                    platform: navigator.platform,
+                    vendor: navigator.vendor,
+                    language: navigator.language,
+                    connection_type: navigator.connection ? navigator.connection.effectiveType : null,
+                    is_mobile: /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+                    is_tablet: /(tablet|ipad|playbook|silk)|(android(?!.*mobile))/i.test(navigator.userAgent.toLowerCase()),
+                    screen_size: {
+                        width: window.screen.width,
+                        height: window.screen.height,
+                        colorDepth: window.screen.colorDepth,
+                        pixelRatio: window.devicePixelRatio
+                    }
+                },
+                sdk_version: '4.6.3'
+            };
+
+            // Setup event listeners and features
+            setupEventListeners();
+            setupMLFeatures();
+            setupMetrikaGoalsTracking();
+
+            // Restore session data if available
+            restoreSessionData();
+
+            // Start periodic data sending
+            setInterval(() => {
+                if (sessionData) {
+                    sendSessionSummary().catch(error => {
+                        console.warn('Failed to send periodic update:', error);
+                    });
                 }
-            },
-            ml_features: {
-                interest_signals: [],
-                behavior_patterns: [],
-                user_segment: null,
-                conversion_probability: null,
-                funnel_analysis: {}
-            },
-            // Добавляем информацию об устройстве
-            device_info: {
-                user_agent: navigator.userAgent,
-                platform: navigator.platform,
-                vendor: navigator.vendor,
-                language: navigator.language,
-                connection_type: navigator.connection ? navigator.connection.effectiveType : null,
-                is_mobile: /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
-                is_tablet: /(tablet|ipad|playbook|silk)|(android(?!.*mobile))/i.test(navigator.userAgent.toLowerCase()),
-                screen_size: {
-                    width: window.screen.width,
-                    height: window.screen.height,
-                    colorDepth: window.screen.colorDepth,
-                    pixelRatio: window.devicePixelRatio
+            }, config.sendInterval);
+
+            // Send initial data after delay
+            setTimeout(() => {
+                if (sessionData) {
+                    console.log('🚀 RIVOX initial send');
+                    sendSessionSummary().catch(error => {
+                        console.warn('Failed to send initial data:', error);
+                    });
                 }
-            }
-        };
+            }, userConfig.sendDelay);
 
-        setupEventListeners();
-        setupMLFeatures();
-        setupMetrikaGoalsTracking();
-
-        // Периодическая отправка данных
-        setInterval(() => {
-            if (typeof RIVOX.sendSessionSummary === 'function') {
-                console.log("📤 RIVOX periodic send");
-                RIVOX.sendSessionSummary();
-            }
-        }, config.sendInterval);
-
-        // Отправка при уходе со страницы
-        window.addEventListener('beforeunload', () => {
-            if (typeof RIVOX.sendSessionSummary === 'function') {
-                console.log("👋 RIVOX exit send");
-                
-                // Используем sendBeacon для надежной отправки при закрытии
-                const data = {
-                    ...sessionData,
-                    session_duration: Date.now() - sessionData.start_time,
-                    exit_type: 'page_unload'
-                };
-                
-                navigator.sendBeacon(config.endpoint, JSON.stringify(data));
-            }
-        });
-
-        // Start trackers with configured delay
-        setTimeout(() => {
-            if (typeof RIVOX.start === 'function') {
-                console.log("🟢 RIVOX tracking start");
-                RIVOX.start();
-            }
-        }, userConfig.initDelay);
-
-        // Initial send with configured delay
-        setTimeout(() => {
-            if (typeof RIVOX.sendSessionSummary === 'function') {
-                console.log("�� RIVOX initial send");
-                RIVOX.sendSessionSummary();
-            }
-        }, userConfig.sendDelay);
+            console.log('✅ RIVOX SDK initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize RIVOX SDK:', error);
+        }
     }
 
     // Enhanced event listeners setup
@@ -991,59 +986,44 @@ function getYandexCounterId() {
 
     // Send session summary
     async function sendSessionSummary() {
-        updateSessionDuration();
-
-        const summary = {
-            ...sessionData,
-            final_scroll_depth: maxScrollDepth,
-            scroll_count: sessionData.scroll_chunks.length,
-            click_count: (sessionData.all_clicks || []).length,
-            cta_click_count: sessionData.cta_clicks.length,
-            interaction_density: sessionData.user_behavior.total_interactions / 
-                (sessionData.session_duration / 1000),
-            active_ratio: sessionData.active_duration / sessionData.session_duration,
-            viewport_coverage: calculateViewportCoverage(),
-            engagement_score: calculateEngagementScore(),
-            interaction_quality: calculateInteractionQuality(),
-            session_metrics: {
-                total_duration: sessionData.session_duration,
-                active_duration: sessionData.active_duration,
-                inactive_duration: totalInactiveTime,
-                scroll_depth: maxScrollDepth,
-                unique_elements_clicked: new Set(
-                    sessionData.all_clicks.map(click => click.element)
-                ).size,
-                form_completion_rate: calculateFormCompletionRate(),
-                average_interaction_gap: calculateAverageInteractionGap()
-            }
-        };
-
-        const endpoint = getEndpointUrl();
-        
-        if (config.debug) {
-            console.log('Preparing to send session data');
-        }
-
         try {
-            // Try JSONP first
-            try {
-                if (config.debug) {
-                    console.log('Attempting JSONP request');
-                }
-                await sendDataJSONP(summary);
-                if (config.debug) {
-                    console.log('Data sent successfully via JSONP');
-                }
+            if (!sessionData) {
+                console.warn('No session data available');
                 return;
-            } catch (jsonpError) {
-                console.warn('JSONP request failed:', jsonpError);
             }
 
-            // Try sendBeacon as fallback
+            updateSessionDuration();
+
+            const summary = {
+                client_id: sessionData.client_id,
+                session_id: sessionData.session_id,
+                data_token: sessionData.data_token,
+                timestamp: new Date().toISOString(),
+                sdk_version: sessionData.sdk_version,
+                session_duration: sessionData.session_duration,
+                domain: window.location.hostname,
+                path: window.location.pathname,
+                scroll_chunks: sessionData.scroll_chunks || [],
+                hover_events: sessionData.hover_events || [],
+                form_interactions: sessionData.form_interactions || [],
+                cta_clicks: sessionData.cta_clicks || [],
+                user_behavior: sessionData.user_behavior || {},
+                device_info: sessionData.device_info || {},
+                ml_features: sessionData.ml_features || {}
+            };
+
+            const endpoint = getEndpointUrl();
+            
+            if (config.debug) {
+                console.log('Sending session data to:', endpoint);
+            }
+
+            // Пробуем отправить через sendBeacon
             if (navigator.sendBeacon) {
                 const blob = new Blob([JSON.stringify(summary)], {
                     type: 'application/json'
                 });
+                
                 if (navigator.sendBeacon(endpoint, blob)) {
                     if (config.debug) {
                         console.log('Data sent successfully via beacon');
@@ -1052,47 +1032,35 @@ function getYandexCounterId() {
                 }
             }
 
-            // Last resort - fetch with no-cors
-            if (config.debug) {
-                console.log('Attempting fetch with no-cors');
-            }
-            await fetch(endpoint, {
-                method: 'POST',
-                mode: 'no-cors',
-                credentials: 'omit',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(summary),
-                keepalive: true
-            });
-            if (config.debug) {
-                console.log('Data sent successfully via fetch');
-            }
-        } catch (error) {
-            console.error('Failed to send session data:', error);
-            
-            // Store failed request for retry
-            if (window.localStorage) {
-                try {
-                    const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
-                    failedRequests.push({
-                        timestamp: Date.now(),
-                        endpoint: endpoint,
-                        data: summary
-                    });
-                    // Keep only last 10 failed requests
-                    if (failedRequests.length > 10) {
-                        failedRequests.shift();
+            // Если sendBeacon не сработал, используем JSONP
+            try {
+                await sendDataJSONP(summary);
+                if (config.debug) {
+                    console.log('Data sent successfully via JSONP');
+                }
+            } catch (error) {
+                console.warn('JSONP request failed:', error);
+                
+                // Сохраняем для повторной отправки
+                if (window.localStorage) {
+                    try {
+                        const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+                        failedRequests.push({
+                            timestamp: Date.now(),
+                            endpoint: endpoint,
+                            data: summary
+                        });
+                        if (failedRequests.length > 10) {
+                            failedRequests.shift();
+                        }
+                        localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
+                    } catch (e) {
+                        console.warn('Failed to store failed request:', e);
                     }
-                    localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
-                    if (config.debug) {
-                        console.log('Failed request stored for retry');
-                    }
-                } catch (e) {
-                    console.warn('Failed to store failed request:', e);
                 }
             }
+        } catch (error) {
+            console.error('Error in sendSessionSummary:', error);
         }
     }
 
