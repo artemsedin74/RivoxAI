@@ -1,1268 +1,2356 @@
-// Добавляем конфигурацию в начало файла
-const config = {
-  debug: true,
-  scrollChunkSize: 100,
-  minInteractionGap: 500,
-  maxInactiveTime: 300000,
-  minScrollSpeed: 0.1,
-  maxScrollSpeed: 10,
-  viewportGridSize: 10,
-  minHoverDuration: 100,
-  maxHoverDuration: 30000,
-  interactionTimeWindow: 5000,
-  minFormDuration: 1000,
-  maxFormDuration: 300000,
-  minClickGap: 100,
-  maxClickGap: 10000,
-  debugEvents: [
-    'JSONP REQUEST',
-    'GET REQUEST',
-    'POST REQUEST',
-    'PROCESSING BATCH',
-    'TOKEN EXTRACTION',
-    'DATA PROCESSING',
-    'SHEET CREATION',
-    'ERROR'
-  ]
-};
+// RIVOX SDK v4.6.3
+// Enhanced version with ML data collection capabilities
 
-// Cache configuration
-const CACHE_CONFIG = {
-  expirationInSeconds: 21600 // 6 hours
-};
+// Define SDK version constant
+const SDK_VERSION = '4.6.3';
 
-// Batch processing configuration
-const BATCH_CONFIG = {
-  maxRows: 50,
-  processingInterval: 60 // seconds
-};
-
-// Time zone configuration
-const TIMEZONE = 'Europe/Moscow';
-
-// Allowed domains configuration
-const ALLOWED_DOMAINS = [
-  'spb.sotovik.shop',
-  'www.spb.sotovik.shop'
-];
-
-// Update CORS configuration
-const CORS_CONFIG = {
-  allowedOrigins: [
-    'https://spb.sotovik.shop',
-    'https://www.spb.sotovik.shop',
-    'http://spb.sotovik.shop',
-    'http://www.spb.sotovik.shop'
-  ],
-  allowedMethods: 'GET, POST, OPTIONS',
-  allowedHeaders: 'Content-Type, X-Requested-With, Origin',
-  maxAge: '86400',
-  credentials: 'true'
-};
-
-// Initialize debug sheet
-function getDebugSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let debugSheet = ss.getSheetByName("debug");
-  
-  if (!debugSheet) {
-    debugSheet = ss.insertSheet("debug");
-    // Add headers
-    debugSheet.getRange(1, 1, 1, 6).setValues([["Timestamp", "Event", "Client Token", "Session ID", "Path", "Details"]])
-      .setFontWeight("bold")
-      .setBackground("#f3f3f3");
-    debugSheet.setFrozenRows(1);
-    
-    // Set column widths
-    debugSheet.setColumnWidth(1, 150); // Timestamp
-    debugSheet.setColumnWidth(2, 150); // Event
-    debugSheet.setColumnWidth(3, 100); // Client Token
-    debugSheet.setColumnWidth(4, 150); // Session ID
-    debugSheet.setColumnWidth(5, 250); // Path
-    debugSheet.setColumnWidth(6, 400); // Details
-  }
-  
-  return debugSheet;
+// Utility functions for Yandex.Metrika
+function isYandexMetrikaReady() {
+    return typeof ym !== 'undefined' || typeof Ya !== 'undefined' || !!window.yaCounter;
 }
 
-// Log debug message with improved formatting
-function logDebug(event, details) {
-  if (!config.debug && !event.includes('ERROR')) return;
-  
-  try {
-    const debugSheet = getDebugSheet();
-    const now = Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+function getYandexCounterId() {
+    if (window.ymCounterId) return window.ymCounterId;
     
-    let clientToken = "N/A";
-    let sessionId = "N/A";
-    let path = "N/A";
-    let formattedDetails = "";
+    const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
+    return counterObjects.length > 0 ? counterObjects[0].replace('yaCounter', '') : null;
+}
+
+// Добавляем утилиту для красивого логирования
+const Logger = {
+    styles: {
+        error: 'color: #ff5252; font-weight: bold',
+        warn: 'color: #fb8c00; font-weight: bold',
+        info: 'color: #2196f3; font-weight: bold',
+        success: 'color: #4caf50; font-weight: bold'
+    },
     
-    if (details && typeof details === 'object') {
-      clientToken = details.client_token || details.clientToken || details.token || "N/A";
-      sessionId = details.session_id || details.sessionId || "N/A";
-      path = details.path || details.url || "N/A";
-      
-      formattedDetails = JSON.stringify(details, null, 2);
-    } else {
-      formattedDetails = String(details);
+    error: (msg, data) => {
+        console.groupCollapsed('%c❌ ' + msg, Logger.styles.error);
+        if (data) console.log(data);
+        console.trace('Stack trace:');
+        console.groupEnd();
+    },
+    
+    warn: (msg, data) => {
+        console.groupCollapsed('%c⚠️ ' + msg, Logger.styles.warn);
+        if (data) console.log(data);
+        console.groupEnd();
+    },
+    
+    info: (msg, data) => {
+        console.groupCollapsed('%cℹ️ ' + msg, Logger.styles.info);
+        if (data) console.log(data);
+        console.groupEnd();
+    },
+    
+    success: (msg, data) => {
+        console.groupCollapsed('%c✅ ' + msg, Logger.styles.success);
+        if (data) console.log(data);
+        console.groupEnd();
     }
-    
-    debugSheet.appendRow([
-      now,
-      event,
-      clientToken,
-      sessionId,
-      path,
-      formattedDetails
-    ]);
-    
-    const lastRow = debugSheet.getLastRow();
-    debugSheet.getRange(lastRow, 6).setWrap(true);
-    
-    if (event.includes('ERROR')) {
-      debugSheet.getRange(lastRow, 1, 1, 6).setBackground('#ffebee');
-    }
-    
-  } catch (e) {
-    console.error('Failed to log debug message:', e);
-  }
-}
+};
 
-// Helper function to get current queue size
-function getQueueSize() {
-  const cache = CacheService.getScriptCache();
-  const queueData = cache.get('processing_queue');
-  if (!queueData) return 0;
-  try {
-    const queue = JSON.parse(queueData);
-    return queue.length;
-  } catch (e) {
-    return 0;
-  }
-}
+// Базовая конфигурация по умолчанию
+const DEFAULT_CONFIG = {
+    debug: true,
+    initDelay: 300,
+    sendDelay: 4000,
+    maxInactiveTime: 20 * 1000,
+    retryInterval: 5 * 60 * 1000,
+    scrollChunkSize: 100,
+    maxRetries: 3,
+    retryDelay: 1000,
+    useJSONP: true
+};
 
-function getClientToken(data) {
-  // Log incoming data structure
-  Logger.log("Getting client token from data:", JSON.stringify(data));
-  
-  // For GET requests with data parameter
-  if (data && data.parameter && data.parameter.data) {
+// Глобальная конфигурация
+let config = { ...DEFAULT_CONFIG };
+
+// Загрузка конфигурации
+function loadConfig() {
+    console.group('🔧 SDK Configuration Loading');
     try {
-      const parsedData = JSON.parse(decodeURIComponent(data.parameter.data));
-      Logger.log("Parsed data from parameters:", JSON.stringify(parsedData));
-      
-      // Check SDK initialization token
-      if (parsedData.data_token) {
-        Logger.log("✓ Token found in parsed data.data_token:", parsedData.data_token);
-        return parsedData.data_token;
-      }
-      
-      // Check if token was loaded from script attribute
-      if (parsedData.token) {
-        Logger.log("✓ Token found in parsed data.token:", parsedData.token);
-        return parsedData.token;
-      }
-    } catch (e) {
-      Logger.log("⚠️ Error parsing data parameter:", e.message);
-    }
-  }
-  
-  // Direct data object (from POST or parsed GET)
-  if (data && typeof data === 'object') {
-    // Log all potential token fields
-    Logger.log("Checking token fields in data object:", {
-      token: data.token,
-      data_token: data.data_token,
-      clientToken: data.clientToken,
-      client_token: data.client_token
-    });
-    
-    // Check SDK initialization token first (highest priority)
-    if (data.data_token) {
-      Logger.log("✓ Token found in data.data_token:", data.data_token);
-      return data.data_token;
-    }
-    
-    if (data.token) {
-      Logger.log("✓ Token found in data.token:", data.token);
-      return data.token;
-    }
-    
-    // Legacy fields
-    if (data.clientToken) {
-      Logger.log("✓ Token found in data.clientToken:", data.clientToken);
-      return data.clientToken;
-    }
-    
-    if (data.client_token) {
-      Logger.log("✓ Token found in data.client_token:", data.client_token);
-      return data.client_token;
-    }
-  }
-  
-  // Parameters fallback
-  if (data && data.parameter) {
-    Logger.log("Checking parameters:", JSON.stringify(data.parameter));
-    
-    if (data.parameter.token) {
-      Logger.log("✓ Token found in parameters.token:", data.parameter.token);
-      return data.parameter.token;
-    }
-    
-    if (data.parameter.data_token) {
-      Logger.log("✓ Token found in parameters.data_token:", data.parameter.data_token);
-      return data.parameter.data_token;
-    }
-  }
-  
-  Logger.log("⚠️ No token found, using default-client");
-  return 'default-client';
-}
+        const script = document.querySelector('script[data-token]');
+        console.log('Script element:', script);
+        
+        if (!script) {
+            throw new Error('RIVOX SDK script tag with data-token not found');
+        }
 
-function isAllowedDomain(origin) {
-  if (!origin) return false;
-  try {
-    const url = new URL(origin);
-    const domain = url.hostname.toLowerCase();
-    return ALLOWED_DOMAINS.includes(domain) || domain === 'spb.sotovik.shop';
-  } catch (e) {
-    return false;
-  }
-}
+        // Получаем конфигурацию из атрибутов
+        const scriptConfig = {
+            token: script.dataset.token,
+            endpoint: script.dataset.endpoint || getEndpointUrl(),
+            initDelay: parseInt(script.dataset.initDelay),
+            sendDelay: parseInt(script.dataset.sendDelay)
+        };
 
-function getCorsHeaders(origin) {
-  // Always return headers that allow the request
-  return {
-    'Access-Control-Allow-Origin': origin || '*',
-    'Access-Control-Allow-Methods': CORS_CONFIG.allowedMethods,
-    'Access-Control-Allow-Headers': CORS_CONFIG.allowedHeaders,
-    'Access-Control-Max-Age': CORS_CONFIG.maxAge,
-    'Access-Control-Allow-Credentials': CORS_CONFIG.credentials,
-    'Cache-Control': 'no-cache, no-store, must-revalidate',
-    'Pragma': 'no-cache',
-    'Expires': '0'
-  };
-}
+        console.log('Config from script:', scriptConfig);
 
-function doPost(e) {
-  const origin = e.parameter.origin || (e.headers && (e.headers.Origin || e.headers.origin));
-  const headers = getCorsHeaders(origin);
-  
-  try {
-    // Handle OPTIONS request
-    if (e.method === 'OPTIONS') {
-      return ContentService.createTextOutput('')
-        .setMimeType(ContentService.MimeType.TEXT)
-        .setHeaders(headers);
-    }
-    
-    // Parse data
-    let data;
-    try {
-      data = JSON.parse(e.postData.contents);
-    } catch (err) {
-      throw new Error('Invalid JSON data: ' + err.message);
-    }
-    
-    // Process data
-    const result = processIncomingData(data);
-    
-    // Return response
-    const response = {
-      status: 'success',
-      message: 'Data processed successfully',
-      result: result,
-      timestamp: new Date().toISOString()
-    };
-    
-    return ContentService.createTextOutput(JSON.stringify(response))
-      .setMimeType(ContentService.MimeType.JSON)
-      .setHeaders(headers);
-      
-  } catch (error) {
-    const errorResponse = {
-      status: 'error',
-      message: error.message,
-      timestamp: new Date().toISOString()
-    };
-    
-    return ContentService.createTextOutput(JSON.stringify(errorResponse))
-      .setMimeType(ContentService.MimeType.JSON)
-      .setHeaders(headers);
-  }
-}
+        // Обновляем конфигурацию
+        config = {
+            ...DEFAULT_CONFIG,
+            ...Object.fromEntries(
+                Object.entries(scriptConfig).filter(([_, v]) => v != null)
+            )
+        };
 
-function doGet(e) {
-  try {
-    // Validate request parameters
-    if (!e.parameter.data) {
-      return createJSONPResponse(e.parameter.callback, { error: 'No data provided' });
-    }
-
-    // Parse data
-    let data;
-    try {
-      data = JSON.parse(e.parameter.data);
+        console.log('Final config:', config);
+        return true;
     } catch (error) {
-      return createJSONPResponse(e.parameter.callback, { error: 'Invalid JSON data' });
+        console.error('❌ Config loading error:', error);
+        return false;
+    } finally {
+        console.groupEnd();
     }
-
-    // Add server timestamp and source
-    data.server_timestamp = new Date().toISOString();
-    data.source_ip = e.parameter.origin || 'unknown';
-
-    // Get client sheet and save data
-    const sheet = getClientSheet(data);
-    const result = saveData(sheet, data);
-
-    return createJSONPResponse(e.parameter.callback, {
-      success: true,
-      message: 'Data saved successfully',
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Error processing request:', error);
-    return createJSONPResponse(e.parameter.callback, {
-      error: error.message || 'Internal server error'
-    });
-  }
 }
 
-function createJSONPResponse(callback, data) {
-  const jsonString = JSON.stringify(data);
-  const output = callback ? `${callback}(${jsonString});` : jsonString;
-  
-  return ContentService.createTextOutput(output)
-    .setMimeType(ContentService.MimeType.JAVASCRIPT);
-}
-
-// Get or create client sheet
-function getClientSheet(data) {
-  if (!data) {
-    throw new Error('Data parameter is required for getClientSheet');
-  }
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const token = getClientToken(data) || 'default';
-  let sheet = ss.getSheetByName(token);
-  
-  if (!sheet) {
-    // Create new sheet
-    sheet = ss.insertSheet(token);
-    
-    // Set up headers
-    const headers = getMLHeaders();
-    sheet.getRange(1, 1, 1, headers.length)
-      .setValues([headers])
-      .setFontWeight('bold')
-      .setBackground('#f3f3f3');
-      
-    // Format timestamp column
-    const timestampCol = headers.indexOf('timestamp') + 1;
-    if (timestampCol > 0) {
-      sheet.getRange(2, timestampCol, sheet.getMaxRows() - 1, 1)
-        .setNumberFormat('dd.MM.yyyy HH:mm:ss');
-    }
-  }
-  
-  return sheet;
-}
-
-function processIncomingData(data) {
-  try {
-    // Log raw data
-    logDebug("PROCESSING DATA", {
-      timestamp: new Date().toISOString(),
-      data: data
-    });
-
-    // Get client sheet
-    let sheet;
+// Добавляем валидацию домена
+function validateDomain() {
+    console.group('🔒 Domain Validation');
     try {
-      sheet = getClientSheet(data);
+        const currentDomain = window.location.hostname;
+        console.log('Current domain:', currentDomain);
+        
+        const isDomainAllowed = config.allowedDomains.includes(currentDomain);
+        console.log('Domain allowed:', isDomainAllowed);
+        
+        if (!isDomainAllowed) {
+            throw new Error(`Domain ${currentDomain} is not in allowed list`);
+        }
+        
+        return true;
+    } catch (error) {
+        Logger.error('Domain validation failed', {
+            error: error.message,
+            domain: window.location.hostname,
+            referrer: document.referrer
+        });
+        return false;
+    } finally {
+        console.groupEnd();
+    }
+}
+
+// Расширяем функцию инициализации
+async function init() {
+    console.group('🚀 SDK Initialization');
+    try {
+        console.log('RIVOX SDK initializing...');
+        
+        // Проверяем домен
+        if (!validateDomain()) {
+            throw new Error('Domain validation failed');
+        }
+        
+        // Загружаем конфигурацию
+        if (!loadConfig()) {
+            throw new Error('Failed to load configuration');
+        }
+        
+        // Инициализируем мониторы
+        initMonitors();
+        
+        // Логируем состояние окружения
+        Logger.info('Environment state', {
+            url: window.location.href,
+            userAgent: navigator.userAgent,
+            viewport: {
+                width: window.innerWidth,
+                height: window.innerHeight
+            },
+            devicePixelRatio: window.devicePixelRatio,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Инициализируем сессию
+        sessionData = {
+            start_time: Date.now(),
+            client_id: await generateClientId(),
+            session_id: generateSessionId(),
+            domain: window.location.hostname,
+            path: window.location.pathname,
+            scroll_chunks: [],
+            cta_clicks: [],
+            all_clicks: [],
+            form_interactions: [],
+            active_duration: 0,
+            last_activity: Date.now()
+        };
+        
+        Logger.info('Session initialized', sessionData);
+        
+        // Устанавливаем обработчики событий
+        setupEventListeners();
+        
+        // Запускаем отправку данных
+        setTimeout(() => {
+            waitScrollAndSend();
+        }, config.initDelay);
+        
+        Logger.success('SDK initialized successfully', {
+            config,
+            sessionData
+        });
+        
+    } catch (error) {
+        Logger.error('SDK initialization failed', {
+            error: error.message,
+            stack: error.stack,
+            config: config || 'Not loaded'
+        });
+        throw error;
+    } finally {
+        console.groupEnd();
+    }
+}
+
+// Enhanced event listeners setup
+function setupEventListeners() {
+    try {
+        if (!sessionData) {
+            console.warn('Session data not initialized');
+            return;
+        }
+
+        console.log('Setting up event listeners...');
+
+        // Инициализируем массивы для хранения данных
+        sessionData.scroll_chunks = sessionData.scroll_chunks || [];
+        sessionData.cta_clicks = sessionData.cta_clicks || [];
+        sessionData.form_interactions = sessionData.form_interactions || [];
+
+        // Добавляем обработчики с throttle
+        let scrollTimeout = null;
+        window.addEventListener('scroll', (event) => {
+            if (scrollTimeout) {
+                clearTimeout(scrollTimeout);
+            }
+            scrollTimeout = setTimeout(() => handleScroll(event), 150);
+        }, { passive: true });
+
+        // Добавляем обработчик кликов
+        document.addEventListener('click', handleClick, { passive: true });
+
+        // Добавляем обработчик отправки форм
+        document.addEventListener('submit', (event) => {
+            try {
+                if (!sessionData || !sessionData.form_interactions) return;
+                
+                const form = event.target;
+                if (!form) return;
+
+                const formData = {
+                    timestamp: Date.now(),
+                    type: 'submit',
+                    action: form.action || '',
+                    method: form.method || 'get',
+                    id: form.id || '',
+                    classes: Array.from(form.classList || []).join(' ')
+                };
+                
+                sessionData.form_interactions.push(formData);
+
+                if (config.debug) {
+                    console.log('Form submit:', formData);
+                }
+            } catch (error) {
+                console.warn('Error in form submit handler:', error);
+            }
+        }, { passive: true });
+
+        console.log('Event listeners setup complete');
+    } catch (error) {
+        console.error('Error in setupEventListeners:', error);
+    }
+}
+
+// ML features setup
+function setupMLFeatures() {
+    // Initialize ML features collection
+    setInterval(() => {
+        updateMLFeatures();
+    }, 5000); // Update every 5 seconds
+}
+
+// Update ML features
+function updateMLFeatures() {
+    // Calculate interest signals
+    sessionData.ml_features.interest_signals = calculateInterestSignals();
+    
+    // Analyze behavior patterns
+    sessionData.ml_features.behavior_patterns = analyzeBehaviorPatterns();
+    
+    // Determine user segment
+    sessionData.ml_features.user_segment = determineUserSegment();
+    
+    // Calculate conversion probability
+    sessionData.ml_features.conversion_probability = calculateConversionProbability();
+    
+    // Update funnel analysis
+    sessionData.ml_features.funnel_analysis = analyzeFunnel();
+}
+
+// Calculate session-level delta features
+function calculateDeltaFeatures() {
+    const now = Date.now();
+    const sessionDuration = now - sessionData.start_time;
+    
+    // Time to first click
+    const firstClick = sessionData.user_behavior.time_between_clicks[0];
+    const timeToFirstClick = firstClick ? firstClick.timestamp - sessionData.start_time : null;
+    
+    // Average time between events
+    const totalEvents = sessionData.hover_events.length + 
+                       sessionData.cta_clicks.length + 
+                       sessionData.form_interactions.length;
+    const avgTimeBetweenEvents = totalEvents > 1 ? 
+        sessionDuration / totalEvents : null;
+    
+    // Click burst detection
+    const clickBursts = [];
+    let currentBurst = [];
+    const BURST_WINDOW = 5000; // 5 seconds
+    
+    sessionData.user_behavior.time_between_clicks.forEach((click, index) => {
+        if (index === 0) {
+            currentBurst.push(click);
+            return;
+        }
+        
+        const timeSinceLastClick = click.timestamp - sessionData.user_behavior.time_between_clicks[index-1].timestamp;
+        if (timeSinceLastClick <= BURST_WINDOW) {
+            currentBurst.push(click);
+        } else {
+            if (currentBurst.length > 1) {
+                clickBursts.push(currentBurst);
+            }
+            currentBurst = [click];
+        }
+    });
+    
+    if (currentBurst.length > 1) {
+        clickBursts.push(currentBurst);
+    }
+    
+    return {
+        time_to_first_click: timeToFirstClick,
+        avg_time_between_events: avgTimeBetweenEvents,
+        click_burst_count: clickBursts.length,
+        click_bursts: clickBursts
+    };
+}
+
+// Calculate intent score
+function calculateIntentScore() {
+    const goalsReached = sessionData.conversion_data.goals_reached.length;
+    const almostReached = sessionData.hover_events.filter(e => 
+        e.element.includes('btn') || 
+        e.element.includes('button') || 
+        e.element.includes('cta')
+    ).length;
+    
+    const ignoredElements = sessionData.cta_clicks.filter(click => 
+        !sessionData.hover_events.some(hover => 
+            hover.element === click.element
+        )
+    ).length;
+    
+    const totalOpportunities = goalsReached + almostReached + ignoredElements;
+    const intentScore = totalOpportunities > 0 ? 
+        ((goalsReached * 1.0) + (almostReached * 0.5)) / totalOpportunities * 100 : 0;
+    
+    return {
+        goals_reached: goalsReached,
+        almost_reached: almostReached,
+        ignored: ignoredElements,
+        intent_score: intentScore
+    };
+}
+
+// Track product dwell time
+function trackProductDwellTime() {
+    const productElements = document.querySelectorAll('[data-product-id]');
+    const dwellTimes = {};
+    
+    productElements.forEach(element => {
+        const productId = element.getAttribute('data-product-id');
+        if (!dwellTimes[productId]) {
+            dwellTimes[productId] = {
+                startTime: null,
+                totalTime: 0,
+                interactions: 0
+            };
+        }
+        
+        // Track hover
+        element.addEventListener('mouseenter', () => {
+            dwellTimes[productId].startTime = Date.now();
+        });
+        
+        element.addEventListener('mouseleave', () => {
+            if (dwellTimes[productId].startTime) {
+                const dwellTime = Date.now() - dwellTimes[productId].startTime;
+                dwellTimes[productId].totalTime += dwellTime;
+                dwellTimes[productId].interactions++;
+                dwellTimes[productId].startTime = null;
+                
+                // Update session data
+                sessionData.product_dwell_times = sessionData.product_dwell_times || {};
+                sessionData.product_dwell_times[productId] = dwellTimes[productId];
+            }
+        });
+    });
+}
+
+// Track return visits
+function trackReturnVisits() {
+    const lastVisit = localStorage.getItem('rivox_last_visit');
+    const now = Date.now();
+    
+    if (lastVisit) {
+        const daysSinceLastVisit = (now - parseInt(lastVisit)) / (1000 * 60 * 60 * 24);
+        
+        if (daysSinceLastVisit <= 1) {
+            sessionData.return_visits = sessionData.return_visits || {};
+            sessionData.return_visits.last_24h = (sessionData.return_visits.last_24h || 0) + 1;
+        }
+        if (daysSinceLastVisit <= 3) {
+            sessionData.return_visits.last_3d = (sessionData.return_visits.last_3d || 0) + 1;
+        }
+        if (daysSinceLastVisit <= 7) {
+            sessionData.return_visits.last_7d = (sessionData.return_visits.last_7d || 0) + 1;
+        }
+    }
+    
+    localStorage.setItem('rivox_last_visit', now.toString());
+}
+
+// Track session reactivation
+function trackSessionReactivation() {
+    const lastActivity = sessionData.last_activity;
+    const now = Date.now();
+    const INACTIVITY_THRESHOLD = 20 * 1000; // 20 seconds
+    const REACTIVATION_WINDOW = 5 * 60 * 1000; // 5 minutes
+    
+    if (lastActivity && (now - lastActivity) > INACTIVITY_THRESHOLD) {
+        const timeSinceInactive = now - lastActivity;
+        if (timeSinceInactive <= REACTIVATION_WINDOW) {
+            sessionData.session_reactivations = sessionData.session_reactivations || [];
+            sessionData.session_reactivations.push({
+                timestamp: now,
+                inactive_duration: timeSinceInactive
+            });
+        }
+    }
+}
+
+// Track engagement decay
+function trackEngagementDecay() {
+    const SESSION_CHUNKS = 5; // Divide session into 5 chunks
+    const chunkDuration = (Date.now() - sessionData.start_time) / SESSION_CHUNKS;
+    
+    const activityByChunk = Array(SESSION_CHUNKS).fill(0);
+    const allEvents = [
+        ...sessionData.hover_events,
+        ...sessionData.cta_clicks,
+        ...sessionData.form_interactions
+    ];
+    
+    allEvents.forEach(event => {
+        const chunkIndex = Math.floor((event.timestamp - sessionData.start_time) / chunkDuration);
+        if (chunkIndex < SESSION_CHUNKS) {
+            activityByChunk[chunkIndex]++;
+        }
+    });
+    
+    // Calculate decay rate
+    const decayRate = activityByChunk.reduce((sum, count, index) => {
+        return sum + (count * (SESSION_CHUNKS - index));
+    }, 0) / (SESSION_CHUNKS * (SESSION_CHUNKS + 1) / 2);
+    
+    sessionData.engagement_decay = {
+        activity_by_chunk: activityByChunk,
+        decay_rate: decayRate
+    };
+}
+
+// Calculate behavioral similarity
+function calculateBehavioralSimilarity() {
+    // Get successful session profiles from localStorage
+    const successfulProfiles = JSON.parse(localStorage.getItem('rivox_successful_profiles') || '[]');
+    
+    if (successfulProfiles.length === 0) return null;
+    
+    // Current session features
+    const currentFeatures = {
+        scroll_depth: Math.max(...sessionData.scroll_depth_percentages.map(d => d.depth)),
+        time_on_site: Date.now() - sessionData.start_time,
+        interaction_count: sessionData.user_behavior.total_interactions,
+        dwell_time: Object.values(sessionData.product_dwell_times || {}).reduce((sum, t) => sum + t.totalTime, 0),
+        intent_score: calculateIntentScore().intent_score
+    };
+    
+    // Calculate similarity scores
+    const similarityScores = successfulProfiles.map(profile => {
+        const distance = Math.sqrt(
+            Object.keys(currentFeatures).reduce((sum, key) => {
+                const diff = (currentFeatures[key] - profile[key]) / profile[key];
+                return sum + diff * diff;
+            }, 0)
+        );
+        return 1 / (1 + distance); // Convert distance to similarity score
+    });
+    
+    const avgSimilarity = similarityScores.reduce((sum, score) => sum + score, 0) / similarityScores.length;
+    
+    return {
+        similarity_score: avgSimilarity,
+        successful_profiles_count: successfulProfiles.length
+    };
+}
+
+// Update session data structure
+function updateSessionData() {
+    // Add new ML features
+    sessionData.ml_features = {
+        ...sessionData.ml_features,
+        delta_features: calculateDeltaFeatures(),
+        intent_score: calculateIntentScore(),
+        product_dwell_times: sessionData.product_dwell_times || {},
+        return_visits: sessionData.return_visits || {},
+        session_reactivations: sessionData.session_reactivations || [],
+        engagement_decay: sessionData.engagement_decay || {},
+        behavioral_similarity: calculateBehavioralSimilarity()
+    };
+}
+
+// Enhanced waitScrollAndSend implementation
+function waitScrollAndSend() {
+    let isSent = false;
+    let hasMeaningfulInteraction = false;
+    
+    const sendData = () => {
+        if (!isSent && hasMeaningfulInteraction) {
+            isSent = true;
+            sendSessionSummary();
+        }
+    };
+    
+    const handleScroll = () => {
+        if (sessionData.scroll_chunks.length > 0) {
+            hasMeaningfulInteraction = true;
+            sendData();
+            window.removeEventListener('scroll', handleScroll);
+        }
+    };
+
+    const handleInteraction = () => {
+        hasMeaningfulInteraction = true;
+    };
+    
+    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('click', handleInteraction);
+    window.addEventListener('mousemove', handleInteraction);
+    window.addEventListener('keydown', handleInteraction);
+    
+    // Only send after meaningful interaction or longer timeout
+    setTimeout(() => {
+        if (hasMeaningfulInteraction) {
+            sendData();
+        }
+    }, 30000); // 30 seconds instead of 10
+    
+    setTimeout(() => {
+        if (hasMeaningfulInteraction) {
+            sendData();
+        }
+    }, 20 * 60 * 1000);
+}
+
+// JSONP data sending implementation with improved error handling
+function sendDataJSONP(endpoint, data, callback) {
+    console.group('📡 JSONP Request');
+    console.log('Endpoint:', endpoint);
+    console.log('Data:', data);
+    console.log('Callback name:', callback);
+    
+    try {
+        const script = document.createElement('script');
+        script.async = true;
+        
+        // Создаем URL с параметрами
+        const params = new URLSearchParams();
+        params.append('data', JSON.stringify(data));
+        params.append('callback', callback);
+        params.append('origin', window.location.origin);
+        params.append('_', Date.now()); // cache buster
+        
+        const url = `${endpoint}?${params.toString()}`;
+        console.log('Full URL:', url);
+        console.log('URL length:', url.length);
+        
+        // Добавляем обработчики для отслеживания загрузки скрипта
+        script.onload = () => {
+            console.log('✅ Script loaded successfully');
+            cleanup();
+        };
+        
+        script.onerror = () => {
+            console.error('❌ Script failed to load');
+            callback({ error: 'Failed to load JSONP script' });
+            cleanup();
+        };
+        
+        // Функция очистки
+        function cleanup() {
+            console.log('🧹 Cleaning up JSONP request');
+            if (script.parentNode) {
+                script.parentNode.removeChild(script);
+            }
+            delete window[callback];
+        }
+        
+        script.src = url;
+        document.head.appendChild(script);
+        
+        // Устанавливаем таймаут
+        setTimeout(() => {
+            if (window[callback]) {
+                console.error('⏰ JSONP request timeout');
+                callback({ error: 'JSONP request timeout' });
+                cleanup();
+            }
+        }, 3000);
+        
+    } catch (error) {
+        console.error('❌ JSONP error:', error);
+        callback({ error: `JSONP error: ${error.message}` });
+    }
+    console.groupEnd();
+}
+
+async function sendData(data) {
+    console.group('📤 Sending Data');
+    try {
+        // Проверяем размер данных
+        const dataSize = new Blob([JSON.stringify(data)]).size;
+        console.log('Data size:', (dataSize / 1024).toFixed(2) + 'KB');
+        
+        if (dataSize > 1024 * 1024) { // 1MB
+            Logger.warn('Large payload detected', { size: dataSize });
+        }
+        
+        // Проверяем обязательные поля
+        const requiredFields = ['session_id', 'client_id', 'timestamp'];
+        const missingFields = requiredFields.filter(field => !data[field]);
+        
+        if (missingFields.length > 0) {
+            throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+        }
+        
+        // Проверяем сетевое соединение
+        if (!NetworkMonitor.isOnline) {
+            NetworkMonitor.addFailedRequest(data);
+            throw new Error('No network connection');
+        }
+        
+        // Логируем состояние перед отправкой
+        Logger.info('Pre-send state', {
+            sessionDuration: Date.now() - sessionData.start_time,
+            interactionCount: getTotalInteractions(),
+            scrollDepth: getMaxScrollDepth(),
+            isSessionActive: SessionMonitor.isActive
+        });
+        
+        const response = await new Promise((resolve, reject) => {
+            sendDataJSONP(config.endpoint, data, (error, result) => {
+                if (error) reject(error);
+                else resolve(result);
+            });
+        });
+        
+        Logger.success('Data sent successfully', {
+            response,
+            timestamp: new Date().toISOString()
+        });
+        
+        return response;
+        
+    } catch (error) {
+        Logger.error('Failed to send data', {
+            error,
+            data,
+            timestamp: new Date().toISOString()
+        });
+        throw error;
+    } finally {
+        console.groupEnd();
+    }
+}
+
+// Send session summary with improved error handling
+async function sendSessionSummary() {
+    console.group('📊 Session Summary');
+    try {
+        const summary = {
+            ...sessionData,
+            session_duration: Date.now() - sessionData.start_time,
+            viewport_size: {
+                width: window.innerWidth,
+                height: window.innerHeight
+            },
+            user_behavior: {
+                total_interactions: getTotalInteractions(),
+                max_scroll_depth: getMaxScrollDepth(),
+                time_between_clicks: calculateAverageTimeBetweenInteractions(),
+                interaction_density: calculateInteractionDensity()
+            }
+        };
+        
+        console.log('Session data:', summary);
+        console.log('Session duration:', summary.session_duration);
+        console.log('Total interactions:', summary.user_behavior.total_interactions);
+        console.log('Scroll depth:', summary.user_behavior.max_scroll_depth);
+        
+        await sendData(summary);
+    } catch (error) {
+        console.error('❌ Session summary error:', error);
+    }
+    console.groupEnd();
+}
+
+// Helper function to calculate interaction density
+function calculateInteractionDensity() {
+    if (!sessionData.active_duration) return 0;
+    return sessionData.user_behavior.total_interactions / (sessionData.active_duration / 1000);
+}
+
+// Store failed request for later retry
+function storeFailedRequest(data) {
+    try {
+        const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+        failedRequests.push({
+            timestamp: Date.now(),
+            data: data
+        });
+        // Keep only last 10 failed requests
+        if (failedRequests.length > 10) {
+            failedRequests.shift();
+        }
+        localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
     } catch (e) {
-      logDebug("SHEET ERROR", {
-        error: e.message,
-        stack: e.stack
-      });
-      throw new Error(`Failed to get client sheet: ${e.message}`);
+        console.warn('Failed to store failed request:', e);
+    }
+}
+
+// Helper functions
+function throttle(fn, delay) {
+    let lastCall = 0;
+    return function(...args) {
+        const now = Date.now();
+        if (now - lastCall >= delay) {
+            lastCall = now;
+            return fn.apply(this, args);
+        }
+    };
+}
+
+function generateClientId() {
+    return new Promise((resolve) => {
+        // First try to get from backup
+        const backupId = localStorage.getItem('_ym_client_id_backup');
+        if (backupId) {
+            console.log('Using backed up Yandex.Metrika client ID:', backupId);
+            resolve(backupId);
+            return;
+        }
+
+        // Then try to get from Yandex.Metrika cookies
+        const ymUid = getCookie('_ym_uid');
+        if (ymUid) {
+            console.log('Using Yandex.Metrika cookie ID:', ymUid);
+            try {
+                localStorage.setItem('_ym_client_id_backup', ymUid);
+            } catch (e) {
+                console.warn('Could not save client ID to localStorage:', e);
+            }
+            resolve(ymUid);
+            return;
+        }
+
+        // Finally try to get directly from Metrika
+        const getFromMetrika = (attempts = 0, maxAttempts = 5) => {
+            if (attempts >= maxAttempts) {
+                console.error('Failed to get Yandex.Metrika client ID after', maxAttempts, 'attempts');
+                resolve(null);
+                return;
+            }
+
+            // Get counter id
+            let counterId = null;
+            
+            // Try different methods to get counter ID
+            if (window.ymCounterId) {
+                counterId = window.ymCounterId;
+            } else {
+                const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
+                if (counterObjects.length > 0) {
+                    counterId = counterObjects[0].replace('yaCounter', '');
+                }
+            }
+
+            if (!counterId) {
+                console.log('Counter ID not found, retrying...');
+                setTimeout(() => getFromMetrika(attempts + 1), 1000);
+                return;
+            }
+
+            // Try to get client ID
+            try {
+                ym(counterId, 'getClientID', function(clientID) {
+                    if (clientID) {
+                        console.log('Got client ID from Yandex.Metrika:', clientID);
+                        try {
+                            localStorage.setItem('_ym_client_id_backup', clientID);
+                        } catch (e) {
+                            console.warn('Could not save client ID to localStorage:', e);
+                        }
+                        resolve(clientID);
+                    } else {
+                        console.log('No client ID returned, retrying...');
+                        setTimeout(() => getFromMetrika(attempts + 1), 1000);
+                    }
+                });
+            } catch (e) {
+                console.error('Error getting client ID:', e);
+                setTimeout(() => getFromMetrika(attempts + 1), 1000);
+            }
+        };
+
+        getFromMetrika();
+    });
+}
+
+// Вспомогательная функция для работы с cookies
+function getCookie(name) {
+    const matches = document.cookie.match(new RegExp(
+        "(?:^|; )" + name.replace(/([\.$?*|{}\(\)\[\]\\\/\+^])/g, '\\$1') + "=([^;]*)"
+    ));
+    return matches ? decodeURIComponent(matches[1]) : null;
+}
+
+function generateSessionId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+function getElementPath(element) {
+    if (!element) return '';
+    
+    const path = [];
+    let currentElement = element;
+    
+    while (currentElement) {
+        let selector = currentElement.tagName ? currentElement.tagName.toLowerCase() : '';
+        if (currentElement.id) {
+            selector += `#${currentElement.id}`;
+        } else if (currentElement.className && typeof currentElement.className === 'string') {
+            selector += `.${currentElement.className.split(' ').join('.')}`;
+        }
+        path.unshift(selector);
+        currentElement = currentElement.parentElement;
+    }
+    return path.join(' > ');
+}
+
+function isImportantElement(element) {
+    if (!element) return false;
+    
+    // Add logic to determine important elements
+    return element.tagName === 'A' || 
+           element.tagName === 'BUTTON' || 
+           element.tagName === 'INPUT' ||
+           (element.hasAttribute && element.hasAttribute('data-rivox-important'));
+}
+
+function isCTAElement(element) {
+    if (!element) return false;
+    
+    // Add logic to identify CTA elements
+    return (element.tagName === 'BUTTON') ||
+           (element.tagName === 'A' && element.textContent && (
+               element.textContent.toLowerCase().includes('купить') ||
+               element.textContent.toLowerCase().includes('заказать') ||
+               element.textContent.toLowerCase().includes('оформить')
+           ));
+}
+
+function isModalElement(element) {
+    if (!element) return false;
+    
+    // Add logic to identify modal elements
+    return (element.hasAttribute && element.hasAttribute('data-modal')) ||
+           (element.classList && (
+               element.classList.contains('modal') ||
+               element.classList.contains('popup')
+           ));
+}
+
+// ML feature calculation functions
+function calculateInterestSignals() {
+    const signals = [];
+    const now = Date.now();
+    
+    // 1. Product interest based on hover and view time
+    const productElements = document.querySelectorAll('[data-product-id]');
+    productElements.forEach(element => {
+        const productId = element.getAttribute('data-product-id');
+        const hovers = sessionData.hover_events.filter(e => e.element.includes(productId));
+        const totalHoverTime = hovers.reduce((sum, hover) => sum + hover.duration, 0);
+        
+        if (totalHoverTime > 0) {
+            signals.push({
+                type: 'product_interest',
+                product_id: productId,
+                hover_time: totalHoverTime,
+                hover_count: hovers.length,
+                last_interaction: Math.max(...hovers.map(h => h.timestamp))
+            });
+        }
+    });
+
+    // 2. Category interest based on navigation
+    const categoryViews = sessionData.page_views.filter(view => 
+        view.url.includes('/category/') || view.url.includes('/catalog/')
+    );
+    if (categoryViews.length > 0) {
+        signals.push({
+            type: 'category_interest',
+            categories: categoryViews.map(view => {
+                const url = new URL(view.url);
+                return url.pathname.split('/').pop();
+            }),
+            view_count: categoryViews.length
+        });
     }
 
-    // Process the data
-    const flattened = flattenData(data);
-    
-    // Add to sheet
-    try {
-      sheet.appendRow(Object.values(flattened));
-    } catch (e) {
-      logDebug("APPEND ERROR", {
-        error: e.message,
-        data: flattened
-      });
-      throw new Error(`Failed to append data: ${e.message}`);
+    // 3. Price sensitivity based on filter interactions
+    const priceFilters = sessionData.form_interactions.filter(interaction => 
+        interaction.element.includes('price') || interaction.element.includes('стоимость')
+    );
+    if (priceFilters.length > 0) {
+        signals.push({
+            type: 'price_sensitivity',
+            filter_interactions: priceFilters.length,
+            price_ranges: priceFilters.map(f => f.value)
+        });
+    }
+
+    // 4. Brand interest based on search and navigation
+    const brandSearches = sessionData.form_interactions.filter(interaction => 
+        interaction.element.includes('search') && 
+        interaction.value && 
+        interaction.value.length > 0
+    );
+    if (brandSearches.length > 0) {
+        signals.push({
+            type: 'brand_interest',
+            search_terms: brandSearches.map(s => s.value),
+            search_count: brandSearches.length
+        });
+    }
+
+    return signals;
+}
+
+function analyzeBehaviorPatterns() {
+    const patterns = [];
+    const now = Date.now();
+    const sessionDuration = now - sessionData.start_time;
+
+    // 1. Browsing pattern
+    const scrollPattern = {
+        type: 'browsing_pattern',
+        total_scroll: sessionData.scroll_chunks.reduce((sum, chunk) => sum + chunk.delta, 0),
+        scroll_speed: sessionData.scroll_chunks.length > 0 ? 
+            sessionData.scroll_chunks.reduce((sum, chunk) => sum + chunk.delta, 0) / 
+            (sessionData.scroll_chunks[sessionData.scroll_chunks.length - 1].timestamp - 
+             sessionData.scroll_chunks[0].timestamp) : 0,
+        scroll_depth: sessionData.scroll_chunks.length > 0 ? 
+            Math.max(...sessionData.scroll_chunks.map(chunk => chunk.position)) / 
+            document.documentElement.scrollHeight : 0
+    };
+    patterns.push(scrollPattern);
+
+    // 2. Interaction pattern
+    const interactionPattern = {
+        type: 'interaction_pattern',
+        hover_frequency: sessionData.hover_events.length / (sessionDuration / 1000),
+        click_frequency: sessionData.cta_clicks.length / (sessionDuration / 1000),
+        form_interaction_count: sessionData.form_interactions.length,
+        modal_interaction_count: sessionData.modal_interactions.length
+    };
+    patterns.push(interactionPattern);
+
+    // 3. Time-based pattern
+    const timePattern = {
+        type: 'time_pattern',
+        session_duration: sessionDuration,
+        time_to_first_interaction: sessionData.hover_events.length > 0 ? 
+            sessionData.hover_events[0].timestamp - sessionData.start_time : null,
+        time_between_interactions: calculateAverageTimeBetweenInteractions(),
+        active_time_ratio: calculateActiveTimeRatio()
+    };
+    patterns.push(timePattern);
+
+    // 4. Navigation pattern
+    const navigationPattern = {
+        type: 'navigation_pattern',
+        page_count: sessionData.page_views.length,
+        unique_pages: new Set(sessionData.page_views.map(view => view.url)).size,
+        return_to_previous: calculateReturnToPreviousCount(),
+        path_complexity: calculatePathComplexity()
+    };
+    patterns.push(navigationPattern);
+
+    return patterns;
+}
+
+function determineUserSegment() {
+    const engagementScore = calculateEngagementScore();
+    const behaviorPatterns = analyzeBehaviorPatterns();
+    const interestSignals = calculateInterestSignals();
+
+    // Calculate segment scores
+    const segmentScores = {
+        'high_value': calculateHighValueScore(engagementScore, behaviorPatterns, interestSignals),
+        'price_sensitive': calculatePriceSensitiveScore(interestSignals),
+        'brand_loyal': calculateBrandLoyalScore(interestSignals),
+        'window_shopper': calculateWindowShopperScore(behaviorPatterns),
+        'researcher': calculateResearcherScore(behaviorPatterns)
+    };
+
+    // Determine primary segment
+    let primarySegment = null;
+    let maxScore = 0;
+
+    for (const [segment, score] of Object.entries(segmentScores)) {
+        if (score > maxScore) {
+            maxScore = score;
+            primarySegment = segment;
+        }
     }
 
     return {
-      status: 'success',
-      timestamp: new Date().toISOString(),
-      sheet: sheet.getName()
+        primary: primarySegment,
+        scores: segmentScores,
+        confidence: maxScore
+    };
+}
+
+function calculateConversionProbability() {
+    const features = {
+        engagement_score: calculateEngagementScore(),
+        behavior_patterns: analyzeBehaviorPatterns(),
+        interest_signals: calculateInterestSignals(),
+        user_segment: determineUserSegment()
     };
 
-  } catch (error) {
-    logDebug("PROCESSING ERROR", {
-      error: error.message,
-      stack: error.stack,
-      data: data
-    });
-    throw error;
-  }
-}
+    // Calculate base probability from engagement
+    let probability = features.engagement_score * 0.4;
 
-// Convert UTC to Moscow time
-function toMoscowTime(date) {
-  if (typeof date === 'string') {
-    date = new Date(date);
-  }
-  return Utilities.formatDate(date, TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
-}
-
-// Add data to processing queue
-function addToProcessingQueue(data) {
-  // Логируем входящие данные
-  logRawData(data, 'incoming');
-  
-  const cache = CacheService.getScriptCache();
-  const queueKey = 'processing_queue';
-  
-  let queue = [];
-  const queueData = cache.get(queueKey);
-  
-  Logger.log("Current queue data: " + queueData);
-  
-  if (queueData) {
-    try {
-      queue = JSON.parse(queueData);
-    } catch (e) {
-      Logger.log("Error parsing existing queue: " + e.message);
-      // Start fresh if queue is corrupted
-      queue = [];
+    // Adjust based on behavior patterns
+    const scrollPattern = features.behavior_patterns.find(p => p.type === 'browsing_pattern');
+    if (scrollPattern) {
+        probability += (scrollPattern.scroll_depth * 0.2);
+        probability += (scrollPattern.scroll_speed > 0 ? 0.1 : 0);
     }
-  }
-  
-  const timestamp = toMoscowTime(new Date());
-  
-  queue.push({
-    timestamp,
-    data: {
-      ...data,
-      timestamp: timestamp
+
+    // Adjust based on interest signals
+    const productInterest = features.interest_signals.filter(s => s.type === 'product_interest');
+    if (productInterest.length > 0) {
+        probability += (Math.min(productInterest.length / 5, 0.2));
+        const totalHoverTime = productInterest.reduce((sum, p) => sum + p.hover_time, 0);
+        probability += (Math.min(totalHoverTime / 30000, 0.1));
     }
-  });
-  
-  Logger.log("Queue size after adding item: " + queue.length);
-  
-  // Store updated queue
-  cache.put(queueKey, JSON.stringify(queue), CACHE_CONFIG.expirationInSeconds);
-  
-  // Process immediately if queue is getting large
-  if (queue.length >= 5) { // Process after 5 items
-    Logger.log("Queue reached 5 items, processing immediately");
-    processQueue();
-  }
-  
-  return { timestamp, queued: true, clientToken: getClientToken(data) };
-}
 
-// Check if queue should be processed
-function shouldProcessQueue() {
-  const cache = CacheService.getScriptCache();
-  const queueData = cache.get('processing_queue');
-  
-  if (!queueData) {
-    Logger.log("No queue data found");
-    return false;
-  }
-  
-  try {
-    const queue = JSON.parse(queueData);
-    const shouldProcess = queue.length >= BATCH_CONFIG.maxRows;
-    Logger.log("Queue length: " + queue.length + ", should process: " + shouldProcess);
-    return shouldProcess;
-  } catch (e) {
-    Logger.log("Error checking queue: " + e.message);
-    return false;
-  }
-}
-
-// Process queue
-function processQueue() {
-  const cache = CacheService.getScriptCache();
-  const queueData = cache.get('processing_queue');
-  
-  if (!queueData) {
-    Logger.log("No data in queue");
-    return;
-  }
-  
-  // Логируем сырые данные очереди
-  logRawData({
-    type: 'queue',
-    queue_data: queueData
-  }, 'queue');
-  
-  Logger.log("Processing queue data: " + queueData);
-  
-  let queue;
-  try {
-    queue = JSON.parse(queueData);
-  } catch (e) {
-    Logger.log("Error parsing queue data: " + e.message);
-    return;
-  }
-  
-  if (queue.length === 0) {
-    Logger.log("Queue is empty");
-    return;
-  }
-  
-  // Group by client token
-  const groupedData = {};
-  queue.forEach(item => {
-    Logger.log("Processing queue item: " + JSON.stringify(item));
-    
-    // Get token from the item data
-    const token = getClientToken(item.data);
-    Logger.log("Got token for item: " + token);
-    
-    if (!groupedData[token]) {
-      groupedData[token] = [];
+    // Adjust based on user segment
+    if (features.user_segment.primary === 'high_value') {
+        probability += 0.2;
+    } else if (features.user_segment.primary === 'price_sensitive') {
+        probability -= 0.1;
     }
-    groupedData[token].push(item);
-  });
-  
-  Logger.log("Grouped data by tokens: " + JSON.stringify(Object.keys(groupedData)));
-  
-  // Process each group
-  Object.entries(groupedData).forEach(([token, items]) => {
-    Logger.log("Processing batch for token: " + token);
-    processBatch(token, items);
-  });
-  
-  // Clear queue
-  cache.remove('processing_queue');
-}
 
-// Process batch of data
-function processBatch(clientToken, items) {
-  Logger.log("Starting batch processing for token: " + clientToken);
-  
-  // Log the processing attempt
-  logDebug("PROCESSING BATCH", {
-    clientToken: clientToken,
-    itemCount: items.length,
-    firstItem: items[0]
-  });
+    // Normalize probability
+    probability = Math.max(0, Math.min(1, probability));
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(clientToken);
-  
-  Logger.log("Looking for sheet: " + clientToken);
-  
-  if (!sheet) {
-    Logger.log("Creating new sheet for token: " + clientToken);
-    logDebug("CREATING NEW SHEET", { clientToken: clientToken });
-    
-    try {
-      sheet = ss.insertSheet(clientToken);
-      const headers = getMLHeaders();
-      const descriptions = getMLDescriptions();
-      
-      Logger.log("Setting up headers and descriptions");
-      
-      // Add headers and descriptions
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers])
-           .setFontWeight('bold')
-           .setBackground('#f3f3f3');
-           
-      sheet.getRange(2, 1, 1, headers.length).setValues([descriptions])
-           .setFontStyle('italic')
-           .setBackground('#f8f8f8');
-      
-      // Format headers
-      sheet.setFrozenRows(2);
-      sheet.setFrozenColumns(1);
-      
-      // Add filters
-      sheet.getRange(1, 1, 2, headers.length).createFilter();
-
-      // Set timestamp column format
-      const timestampColumnIndex = headers.indexOf('timestamp') + 1;
-      if (timestampColumnIndex > 0) {
-        sheet.getRange(3, timestampColumnIndex, sheet.getMaxRows() - 2, 1)
-             .setNumberFormat('dd.MM.yyyy HH:mm:ss');
-      }
-      
-      Logger.log("Sheet created and formatted successfully");
-    } catch (e) {
-      Logger.log("Error creating sheet: " + e.message);
-      logDebug("SHEET CREATION ERROR", {
-        token: clientToken,
-        error: e.message,
-        stack: e.stack
-      });
-      return;
-    }
-  }
-
-  Logger.log("Processing " + items.length + " items");
-
-  try {
-    const existingHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    
-    const processedData = items.map(item => {
-      const flatData = flattenData(item.data);
-      
-      // Convert all timestamp fields to Moscow time
-      Object.keys(flatData).forEach(key => {
-        if (key.toLowerCase().includes('timestamp') || key.toLowerCase().includes('time')) {
-          try {
-            flatData[key] = toMoscowTime(flatData[key]);
-          } catch (e) {
-            // If conversion fails, keep original value
-            Logger.log(`Failed to convert time for field ${key}:`, e.message);
-          }
+    return {
+        probability: probability,
+        factors: {
+            engagement: features.engagement_score * 0.4,
+            scroll_depth: scrollPattern ? scrollPattern.scroll_depth * 0.2 : 0,
+            product_interest: productInterest.length > 0 ? 
+                Math.min(productInterest.length / 5, 0.2) + 
+                Math.min(productInterest.reduce((sum, p) => sum + p.hover_time, 0) / 30000, 0.1) : 0,
+            user_segment: features.user_segment.primary === 'high_value' ? 0.2 : 
+                        features.user_segment.primary === 'price_sensitive' ? -0.1 : 0
         }
-      });
-      
-      if (!flatData.timestamp) {
-        flatData.timestamp = toMoscowTime(item.timestamp);
-      }
-      
-      return flatData;
-    });
-    
-    // Check for new fields
-    const newFields = new Set();
-    processedData.forEach(data => {
-      Object.keys(data).forEach(key => {
-        if (!existingHeaders.includes(key)) {
-          newFields.add(key);
+    };
+}
+
+function analyzeFunnel() {
+    const funnel = {
+        stages: {
+            awareness: calculateAwarenessStage(),
+            consideration: calculateConsiderationStage(),
+            decision: calculateDecisionStage(),
+            action: calculateActionStage()
+        },
+        drop_off_points: [],
+        conversion_rate: 0
+    };
+
+    // Calculate drop-off points
+    const stages = Object.entries(funnel.stages);
+    for (let i = 0; i < stages.length - 1; i++) {
+        const [currentStage, currentData] = stages[i];
+        const [nextStage, nextData] = stages[i + 1];
+        
+        if (currentData.visitors > 0) {
+            const dropOffRate = 1 - (nextData.visitors / currentData.visitors);
+            funnel.drop_off_points.push({
+                from: currentStage,
+                to: nextStage,
+                rate: dropOffRate,
+                visitors_lost: currentData.visitors - nextData.visitors
+            });
         }
-      });
-    });
+    }
+
+    // Calculate overall conversion rate
+    if (funnel.stages.awareness.visitors > 0) {
+        funnel.conversion_rate = funnel.stages.action.visitors / funnel.stages.awareness.visitors;
+    }
+
+    return funnel;
+}
+
+function generateScrollHeatmap() {
+    const viewportHeight = window.innerHeight;
+    const documentHeight = document.documentElement.scrollHeight;
+    const heatmap = {};
     
-    if (newFields.size > 0) {
-      const newKeys = Array.from(newFields);
-      const lastCol = sheet.getLastColumn();
-      
-      sheet.getRange(1, lastCol + 1, 1, newKeys.length).setValues([newKeys])
-           .setFontWeight('bold')
-           .setBackground('#f3f3f3');
-           
-      const newDescriptions = newKeys.map(key => FIELD_DESCRIPTIONS[key] || key);
-      sheet.getRange(2, lastCol + 1, 1, newKeys.length).setValues([newDescriptions])
-           .setFontStyle('italic')
-           .setBackground('#f8f8f8');
-      
-      // Format any new timestamp columns
-      newKeys.forEach((key, index) => {
-        if (key.toLowerCase().includes('timestamp') || key.toLowerCase().includes('time')) {
-          sheet.getRange(3, lastCol + 1 + index, sheet.getMaxRows() - 2, 1)
-               .setNumberFormat('dd.MM.yyyy HH:mm:ss');
-        }
-      });
-           
-      existingHeaders.push(...newKeys);
+    // Initialize heatmap buckets
+    const bucketSize = 100; // pixels
+    const numBuckets = Math.ceil(documentHeight / bucketSize);
+    for (let i = 0; i < numBuckets; i++) {
+        heatmap[i * bucketSize] = 0;
+    }
+
+    // Process scroll chunks
+    sessionData.scroll_chunks.forEach(chunk => {
+        const bucket = Math.floor(chunk.position / bucketSize) * bucketSize;
+        heatmap[bucket] = (heatmap[bucket] || 0) + 1;
+    });
+
+    // Normalize values
+    const maxValue = Math.max(...Object.values(heatmap));
+    if (maxValue > 0) {
+        Object.keys(heatmap).forEach(key => {
+            heatmap[key] = heatmap[key] / maxValue;
+        });
+    }
+
+    return {
+        buckets: heatmap,
+        bucket_size: bucketSize,
+        document_height: documentHeight,
+        viewport_height: viewportHeight
+    };
+}
+
+function generateUserPath() {
+    const path = [];
+    let currentTime = sessionData.start_time;
+
+    // Combine all events chronologically
+    const allEvents = [
+        ...sessionData.page_views.map(e => ({...e, type: 'page_view'})),
+        ...sessionData.scroll_chunks.map(e => ({...e, type: 'scroll'})),
+        ...sessionData.hover_events.map(e => ({...e, type: 'hover'})),
+        ...sessionData.form_interactions.map(e => ({...e, type: 'form'})),
+        ...sessionData.cta_clicks.map(e => ({...e, type: 'cta_click'})),
+        ...sessionData.modal_interactions.map(e => ({...e, type: 'modal'}))
+    ].sort((a, b) => a.timestamp - b.timestamp);
+
+    // Generate path with time intervals
+    allEvents.forEach(event => {
+        path.push({
+            type: event.type,
+            timestamp: event.timestamp,
+            time_since_last: event.timestamp - currentTime,
+            details: getEventDetails(event)
+        });
+        currentTime = event.timestamp;
+    });
+
+    return path;
+}
+
+function calculateEngagementScore() {
+    const weights = {
+        scroll_depth: 0.3,
+        time_on_site: 0.2,
+        interaction_count: 0.2,
+        page_views: 0.15,
+        form_interactions: 0.15
+    };
+
+    // Calculate individual scores
+    const scrollScore = calculateScrollScore();
+    const timeScore = calculateTimeScore();
+    const interactionScore = calculateInteractionScore();
+    const pageViewScore = calculatePageViewScore();
+    const formScore = calculateFormScore();
+
+    // Calculate weighted sum
+    const score = 
+        scrollScore * weights.scroll_depth +
+        timeScore * weights.time_on_site +
+        interactionScore * weights.interaction_count +
+        pageViewScore * weights.page_views +
+        formScore * weights.form_interactions;
+
+    return Math.min(1, Math.max(0, score));
+}
+
+// Helper functions for ML features
+function calculateAverageTimeBetweenInteractions() {
+    if (sessionData.hover_events.length < 2) return null;
+    
+    const times = [];
+    for (let i = 1; i < sessionData.hover_events.length; i++) {
+        times.push(sessionData.hover_events[i].timestamp - sessionData.hover_events[i-1].timestamp);
     }
     
-    const rows = processedData.map(data => 
-      existingHeaders.map(header => data[header] || '')
+    return times.reduce((sum, time) => sum + time, 0) / times.length;
+}
+
+function calculateActiveTimeRatio() {
+    const sessionDuration = Date.now() - sessionData.start_time;
+    if (sessionDuration === 0) return 0;
+
+    const activeTime = sessionData.hover_events.reduce((sum, event) => sum + event.duration, 0);
+    return Math.min(1, activeTime / sessionDuration);
+}
+
+function calculateReturnToPreviousCount() {
+    let count = 0;
+    const visitedUrls = new Set();
+
+    sessionData.page_views.forEach(view => {
+        if (visitedUrls.has(view.url)) {
+            count++;
+        }
+        visitedUrls.add(view.url);
+    });
+
+    return count;
+}
+
+function calculatePathComplexity() {
+    const uniqueUrls = new Set(sessionData.page_views.map(view => view.url));
+    const totalViews = sessionData.page_views.length;
+    
+    return totalViews > 0 ? uniqueUrls.size / totalViews : 0;
+}
+
+function calculateHighValueScore(engagementScore, behaviorPatterns, interestSignals) {
+    let score = engagementScore * 0.4;
+    
+    // Add points for product interest
+    const productInterest = interestSignals.filter(s => s.type === 'product_interest');
+    if (productInterest.length > 0) {
+        score += Math.min(productInterest.length / 5, 0.3);
+    }
+
+    // Add points for form interactions
+    const formPattern = behaviorPatterns.find(p => p.type === 'interaction_pattern');
+    if (formPattern && formPattern.form_interaction_count > 0) {
+        score += Math.min(formPattern.form_interaction_count / 3, 0.3);
+    }
+
+    return Math.min(1, score);
+}
+
+function calculatePriceSensitiveScore(interestSignals) {
+    const priceSignal = interestSignals.find(s => s.type === 'price_sensitivity');
+    if (!priceSignal) return 0;
+
+    return Math.min(
+        (priceSignal.filter_interactions * 0.3) + 
+        (priceSignal.price_ranges.length * 0.2),
+        1
     );
+}
+
+function calculateBrandLoyalScore(interestSignals) {
+    const brandSignal = interestSignals.find(s => s.type === 'brand_interest');
+    if (!brandSignal) return 0;
+
+    return Math.min(
+        (brandSignal.search_count * 0.4) + 
+        (brandSignal.search_terms.length * 0.3),
+        1
+    );
+}
+
+function calculateWindowShopperScore(behaviorPatterns) {
+    const scrollPattern = behaviorPatterns.find(p => p.type === 'browsing_pattern');
+    const interactionPattern = behaviorPatterns.find(p => p.type === 'interaction_pattern');
+
+    if (!scrollPattern || !interactionPattern) return 0;
+
+    return Math.min(
+        (scrollPattern.scroll_depth * 0.4) +
+        (interactionPattern.hover_frequency * 0.3) +
+        (interactionPattern.click_frequency * 0.3),
+        1
+    );
+}
+
+function calculateResearcherScore(behaviorPatterns) {
+    const navigationPattern = behaviorPatterns.find(p => p.type === 'navigation_pattern');
+    const timePattern = behaviorPatterns.find(p => p.type === 'time_pattern');
+
+    if (!navigationPattern || !timePattern) return 0;
+
+    return Math.min(
+        (navigationPattern.page_count * 0.3) +
+        (navigationPattern.unique_pages * 0.3) +
+        (timePattern.session_duration / (5 * 60 * 1000) * 0.4), // 5 minutes as reference
+        1
+    );
+}
+
+function calculateAwarenessStage() {
+    return {
+        visitors: sessionData.page_views.length,
+        avg_time: calculateAverageTimeInStage('awareness'),
+        bounce_rate: calculateBounceRate()
+    };
+}
+
+function calculateConsiderationStage() {
+    const visitors = sessionData.scroll_chunks.length > 0 ? 
+        sessionData.page_views.length : 0;
+
+    return {
+        visitors: visitors,
+        avg_time: calculateAverageTimeInStage('consideration'),
+        product_views: sessionData.hover_events.filter(e => 
+            e.element.includes('product') || e.element.includes('товар')
+        ).length
+    };
+}
+
+function calculateDecisionStage() {
+    const visitors = sessionData.form_interactions.length > 0 ? 
+        sessionData.page_views.length : 0;
+
+    return {
+        visitors: visitors,
+        avg_time: calculateAverageTimeInStage('decision'),
+        form_starts: sessionData.form_interactions.filter(i => 
+            i.type === 'focus'
+        ).length
+    };
+}
+
+function calculateActionStage() {
+    const visitors = sessionData.cta_clicks.length > 0 ? 
+        sessionData.page_views.length : 0;
+
+    return {
+        visitors: visitors,
+        avg_time: calculateAverageTimeInStage('action'),
+        conversions: sessionData.cta_clicks.length
+    };
+}
+
+function calculateAverageTimeInStage(stage) {
+    // Implementation depends on how you define stages in time
+    return 0;
+}
+
+function calculateBounceRate() {
+    if (sessionData.page_views.length === 0) return 0;
     
-    if (rows.length > 0) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, existingHeaders.length)
-           .setValues(rows);
+    const singlePageVisits = sessionData.page_views.filter(view => 
+        view.timestamp - sessionData.start_time < 10000 // 10 seconds
+    ).length;
+    
+    return singlePageVisits / sessionData.page_views.length;
+}
+
+function getEventDetails(event) {
+    switch (event.type) {
+        case 'page_view':
+            return { url: event.url };
+        case 'scroll':
+            return { 
+                position: event.position,
+                delta: event.delta
+            };
+        case 'hover':
+            return { 
+                element: event.element,
+                duration: event.duration
+            };
+        case 'form':
+            return { 
+                element: event.element,
+                type: event.type,
+                value: event.value
+            };
+        case 'cta_click':
+            return { 
+                element: event.element,
+                text: event.text
+            };
+        case 'modal':
+            return { 
+                element: event.element,
+                type: event.type
+            };
+        default:
+            return {};
     }
-    
-    Logger.log(`✅ Added ${rows.length} rows to ${clientToken} sheet at ${toMoscowTime(new Date())}`);
-    
-  } catch (e) {
-    Logger.log("Error processing batch: " + e.message);
-    logDebug("BATCH PROCESSING ERROR", {
-      token: clientToken,
-      error: e.message,
-      stack: e.stack
-    });
-  }
 }
 
-// Set up time-based trigger for queue processing
-function createQueueTrigger() {
-  // Delete existing triggers
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(trigger => {
-    Logger.log("Removing existing trigger: " + trigger.getHandlerFunction());
-    ScriptApp.deleteTrigger(trigger);
-  });
-  
-  // Create new trigger to run every minute
-  const trigger = ScriptApp.newTrigger('processQueue')
-    .timeBased()
-    .everyMinutes(1)
-    .create();
-    
-  Logger.log("Created new trigger: " + trigger.getUniqueId());
-  
-  // Also process any existing queue items immediately
-  processQueue();
+function calculateScrollScore() {
+    const scrollPattern = analyzeBehaviorPatterns().find(p => p.type === 'browsing_pattern');
+    if (!scrollPattern) return 0;
+
+    return (scrollPattern.scroll_depth * 0.6) + 
+           (Math.min(scrollPattern.scroll_speed / 1000, 1) * 0.4);
 }
 
-// Get ML-friendly headers
-function getMLHeaders() {
-  return [
-    // Session identification
-    'session_id',
-    'client_id',
-    'client_token',
-    'timestamp',
-    'sdk_version',
-    
-    // Traffic source
-    'source',
-    'medium',
-    'campaign',
-    'term',
-    'content',
-    'referrer',
-    'landing_page',
-    'entry_point',
-    
-    // Page info
-    'domain',
-    'path',
-    'page_url',
-    
-    // Device info
-    'device_type',
-    'platform',
-    'user_agent',
-    'viewport_width',
-    'viewport_height',
-    
-    // Session metrics
-    'session_duration',
-    'time_to_first_interaction',
-    'total_interactions',
-    'interaction_frequency',
-    
-    // Scroll behavior
-    'scroll_depth_max',
-    'scroll_count',
-    'scroll_speed_avg',
-    'scroll_path',
-    
-    // Click behavior
-    'click_count',
-    'click_elements',
-    'click_timing',
-    
-    // Form interactions
-    'form_focus_count',
-    'form_input_count',
-    'form_submit_count',
-    'form_error_count',
-    
-    // Hover behavior
-    'hover_count',
-    'hover_duration_total',
-    'hover_duration_avg',
-    'hover_elements',
-    
-    // Conversion data
-    'conversion_g',        // goals (цели)
-    'conversion_v',        // value (значение)
-    'conversion_p',        // path (путь конверсии)
-    'interest_score',      // скор интереса
-    'engagement_score',    // скор вовлеченности
-    'conversion_probability', // вероятность конверсии
-    'user_segment'         // сегмент пользователя
-  ];
+function calculateTimeScore() {
+    const sessionDuration = Date.now() - sessionData.start_time;
+    return Math.min(sessionDuration / (5 * 60 * 1000), 1); // 5 minutes as reference
 }
 
-// Get ML-friendly descriptions
-function getMLDescriptions() {
-  return getMLHeaders().map(header => FIELD_DESCRIPTIONS[header] || header);
+function calculateInteractionScore() {
+    const interactionPattern = analyzeBehaviorPatterns().find(p => p.type === 'interaction_pattern');
+    if (!interactionPattern) return 0;
+
+    return (Math.min(interactionPattern.hover_frequency * 10, 1) * 0.4) +
+           (Math.min(interactionPattern.click_frequency * 10, 1) * 0.3) +
+           (Math.min(interactionPattern.form_interaction_count / 3, 1) * 0.3);
 }
 
-// Добавляем функцию для безопасного парсинга JSON
-function safeJSONParse(str, defaultValue = null) {
-  try {
-    return JSON.parse(str);
-  } catch (e) {
-    console.error('JSON parse error:', e);
-    return defaultValue;
-  }
+function calculatePageViewScore() {
+    return Math.min(sessionData.page_views.length / 5, 1);
 }
 
-// Функция для получения листа с сырыми данными
-function getRawDataSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let rawSheet = ss.getSheetByName("raw_data");
-  
-  if (!rawSheet) {
-    rawSheet = ss.insertSheet("raw_data");
-    // Добавляем заголовки
-    rawSheet.getRange(1, 1, 1, 5).setValues([["Timestamp", "Type", "Client ID", "Raw Data", "Source"]])
-      .setFontWeight("bold")
-      .setBackground("#f3f3f3");
-    
-    // Форматируем
-    rawSheet.setFrozenRows(1);
-    rawSheet.setColumnWidth(1, 180); // Timestamp
-    rawSheet.setColumnWidth(2, 150); // Type
-    rawSheet.setColumnWidth(3, 200); // Client ID
-    rawSheet.setColumnWidth(4, 1000); // Raw Data
-    rawSheet.setColumnWidth(5, 150); // Source
-  }
-  
-  return rawSheet;
+function calculateFormScore() {
+    return Math.min(sessionData.form_interactions.length / 3, 1);
 }
 
-// Функция для логирования сырых данных
-function logRawData(data, source = 'sdk') {
-  try {
-    const rawSheet = getRawDataSheet();
-    const timestamp = toMoscowTime(new Date());
-    
-    // Определяем тип данных
-    let dataType = 'unknown';
-    if (data.name && data.name.includes('oneclick')) {
-      dataType = 'oneclick_goal';
-    } else if (data.type === 'goal') {
-      dataType = 'metrika_goal';
-    } else if (data.session_id) {
-      dataType = 'session_data';
-    }
-
-    // Подготавливаем данные для записи
-    const rowData = [
-      timestamp,
-      dataType,
-      data.client_id || data.clientId || 'unknown',
-      JSON.stringify(data, null, 2),
-      source
+// Add UTM data collection function
+function collectUtmData() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const utmParams = {};
+    const utmFields = [
+        'utm_source',
+        'utm_medium',
+        'utm_campaign',
+        'utm_term',
+        'utm_content',
+        'gclid',
+        'fbclid',
+        'yclid'
     ];
 
-    // Добавляем строку
-    rawSheet.appendRow(rowData);
+    utmFields.forEach(field => {
+        const value = urlParams.get(field);
+        if (value) {
+            utmParams[field] = value;
+        }
+    });
+
+    // Add additional traffic source parameters
+    utmParams.traffic_type = getTrafficType();
+    utmParams.landing_page_type = getLandingPageType();
+    utmParams.referrer_domain = getReferrerDomain();
+
+    return utmParams;
+}
+
+// Add traffic source analysis
+function getTrafficType() {
+    const referrer = document.referrer;
+    if (!referrer) return 'direct';
     
-    // Форматируем ячейку с JSON
-    const lastRow = rawSheet.getLastRow();
-    rawSheet.getRange(lastRow, 4).setWrap(true);
-
-  } catch (e) {
-    console.error('Error logging raw data:', e);
-  }
-}
-
-// Функция для парсинга User-Agent
-function parseUserAgent(userAgent) {
-  if (!userAgent) return { device_type: 'unknown', platform: 'unknown', browser: 'unknown' };
-  
-  const ua = userAgent.toLowerCase();
-  let result = {
-    device_type: 'desktop',
-    platform: 'unknown',
-    browser: 'unknown'
-  };
-  
-  // Определяем тип устройства
-  if (/(tablet|ipad|playbook|silk)|(android(?!.*mobile))/i.test(ua)) {
-    result.device_type = 'tablet';
-  } else if (/(mobile|iphone|ipod|android|windows phone)/i.test(ua)) {
-    result.device_type = 'mobile';
-  }
-  
-  // Определяем платформу
-  if (/windows/i.test(ua)) {
-    result.platform = 'windows';
-  } else if (/macintosh|mac os x/i.test(ua)) {
-    result.platform = 'mac';
-  } else if (/android/i.test(ua)) {
-    result.platform = 'android';
-  } else if (/(iphone|ipad|ipod)/i.test(ua)) {
-    result.platform = 'ios';
-  } else if (/linux/i.test(ua)) {
-    result.platform = 'linux';
-  }
-  
-  // Определяем браузер
-  if (/YaBrowser/i.test(ua)) {
-    result.browser = 'yandex';
-  } else if (/chrome/i.test(ua)) {
-    result.browser = 'chrome';
-  } else if (/firefox/i.test(ua)) {
-    result.browser = 'firefox';
-  } else if (/safari/i.test(ua)) {
-    result.browser = 'safari';
-  } else if (/opera|opr/i.test(ua)) {
-    result.browser = 'opera';
-  } else if (/edge/i.test(ua)) {
-    result.browser = 'edge';
-  } else if (/msie|trident/i.test(ua)) {
-    result.browser = 'ie';
-  }
-  
-  return result;
-}
-
-// Функция для расчета глубины прокрутки
-function calculateScrollDepth(scrollChunks) {
-  if (!scrollChunks || scrollChunks.length === 0) return 0;
-  
-  // Находим максимальную позицию прокрутки
-  const maxScroll = Math.max(...scrollChunks.map(chunk => chunk.position));
-  const documentHeight = scrollChunks[0].document_height || 0;
-  
-  // Если есть высота документа, считаем процент
-  if (documentHeight > 0) {
-    return Math.min(Math.round((maxScroll / documentHeight) * 100), 100);
-  }
-  
-  return 0;
-}
-
-// Функция для форматирования времени просмотра
-function formatViewDuration(milliseconds) {
-  if (!milliseconds) return '0s';
-  
-  const seconds = Math.floor(milliseconds / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return `${minutes}m ${remainingSeconds}s`;
-}
-
-// Функция для определения типа устройства
-function detectDeviceType(data) {
-  // Проверяем device_info
-  if (data.device_info) {
-    if (data.device_info.is_tablet) return 'tablet';
-    if (data.device_info.is_mobile) return 'mobile';
-    return 'desktop';
-  }
-  
-  // Проверяем UTM метки
-  if (data.utm_data?.utm_content?.includes('dvc|')) {
-    const match = data.utm_data.utm_content.match(/dvc\|(.*?)(\||$)/);
-    if (match) return match[1];
-  }
-  
-  // Проверяем размер viewport
-  if (data.user_behavior?.viewport_size) {
-    const width = data.user_behavior.viewport_size.width;
-    if (width <= 767) return 'mobile';
-    if (width <= 1024) return 'tablet';
-    return 'desktop';
-  }
-  
-  return 'unknown';
-}
-
-// Функция для определения платформы
-function detectPlatform(data) {
-  if (!data.device_info) return 'unknown';
-  
-  const ua = (data.device_info.user_agent || '').toLowerCase();
-  const platform = (data.device_info.platform || '').toLowerCase();
-  
-  if (/windows/.test(ua) || /win32/.test(platform) || /win64/.test(platform)) return 'windows';
-  if (/macintosh|mac os x/.test(ua) || /mac/.test(platform)) return 'mac';
-  if (/android/.test(ua)) return 'android';
-  if (/iphone|ipad|ipod/.test(ua) || /ios/.test(platform)) return 'ios';
-  if (/linux/.test(ua) || /linux/.test(platform)) return 'linux';
-  
-  return platform || 'unknown';
-}
-
-// Функция для определения браузера
-function detectBrowser(data) {
-  if (!data.device_info?.user_agent) return 'unknown';
-  
-  const ua = data.device_info.user_agent.toLowerCase();
-  
-  if (/yabrowser/.test(ua)) return 'yandex';
-  if (/opr|opera/.test(ua)) return 'opera';
-  if (/edg/.test(ua)) return 'edge';
-  if (/firefox/.test(ua)) return 'firefox';
-  if (/chrome/.test(ua)) return 'chrome';
-  if (/safari/.test(ua)) return 'safari';
-  if (/msie|trident/.test(ua)) return 'ie';
-  
-  return 'unknown';
-}
-
-// Модифицируем функцию flattenData
-function flattenData(data) {
-  // Логируем сырые данные
-  logRawData(data);
-  
-  const result = {};
-  
-  try {
-    // Basic fields
-    result.session_id = data.session_id || data.client_id || 'unknown';
-    result.client_id = data.client_id || 'unknown';
-    result.client_token = data.data_token || data.clientToken || 'unknown';
-    result.timestamp = data.timestamp ? toMoscowTime(data.timestamp) : toMoscowTime(new Date());
-    result.sdk_version = data.sdk_version || 'unknown';
-
-    // Device detection
-    result.device_type = detectDeviceType(data);
-    result.platform = detectPlatform(data);
-    result.browser = detectBrowser(data);
-
-    // Traffic source
-    if (data.traffic_source) {
-      result.referrer = data.traffic_source.referrer || '';
-      result.landing_page = data.traffic_source.landing_page || '';
-      result.entry_point = data.traffic_source.entry_point || '';
-      result.domain = data.domain || '';
-      result.path = data.path || '';
-      result.page_url = data.traffic_source.landing_page || data.page_url || '';
-    }
-
-    // Session metrics
-    result.session_duration = data.session_duration || 0;
-    result.time_to_first_interaction = data.user_behavior?.time_to_first_interaction || null;
-    result.total_interactions = data.user_behavior?.total_interactions || 0;
-    result.interaction_frequency = data.user_behavior?.interaction_frequency?.length || 0;
-
-    // Scroll behavior
-    if (data.scroll_chunks && data.scroll_chunks.length > 0) {
-      result.scroll_depth_max = Math.max(...data.scroll_chunks.map(chunk => 
-        (chunk.position / chunk.document_height) * 100
-      ));
-      result.scroll_count = data.scroll_chunks.length;
-      result.scroll_speed_avg = data.scroll_chunks.reduce((sum, chunk) => sum + chunk.delta, 0) / 
-        (data.scroll_chunks[data.scroll_chunks.length - 1].timestamp - data.scroll_chunks[0].timestamp);
-      result.scroll_path = JSON.stringify(data.scroll_chunks.map(chunk => ({
-        position: chunk.position,
-        timestamp: chunk.timestamp
-      })));
-    }
-
-    // Click behavior
-    if (data.cta_clicks) {
-      result.click_count = data.cta_clicks.length;
-      result.click_elements = JSON.stringify(data.cta_clicks);
-      result.click_timing = JSON.stringify(data.user_behavior?.time_between_clicks || []);
-    }
-
-    // Form interactions
-    if (data.form_interactions) {
-      result.form_focus_count = data.form_interactions.filter(i => i.type === 'focus').length;
-      result.form_input_count = data.form_interactions.filter(i => i.type === 'input').length;
-      result.form_submit_count = data.form_interactions.filter(i => i.type === 'submit').length;
-      result.form_error_count = data.form_interactions.filter(i => i.type === 'error').length;
-    }
-
-    // ML features
-    if (data.ml_features) {
-      result.interest_score = calculateInterestScore(data);
-      result.engagement_score = calculateEngagementScore(data);
-      result.conversion_probability = data.ml_features.conversion_probability?.probability || 0;
-      result.user_segment = data.ml_features.user_segment?.primary || 'unknown';
-    }
-
-    // Variable duration and hover
-    result.var_durat = data.session_duration || 0;
-    result.hover_durat = data.hover_events?.reduce((sum, e) => sum + (e.duration || 0), 0) || 0;
-
-    return result;
-
-  } catch (error) {
-    console.error('Error in flattenData:', error);
-    logRawData({
-      error: error.message,
-      stack: error.stack,
-      original_data: data
-    }, 'error');
+    const searchEngines = ['google', 'yandex', 'bing'];
+    const socialNetworks = ['facebook', 'instagram', 'vk.com'];
     
-    return {
-      session_id: data.session_id || 'error',
-      client_id: data.client_id || 'error',
-      timestamp: toMoscowTime(new Date()),
-      error: error.message
-    };
-  }
+    const referrerDomain = new URL(referrer).hostname;
+    
+    if (searchEngines.some(se => referrerDomain.includes(se))) return 'organic_search';
+    if (socialNetworks.some(sn => referrerDomain.includes(sn))) return 'social';
+    if (new URLSearchParams(window.location.search).has('utm_source')) return 'campaign';
+    
+    return 'referral';
 }
 
-// Улучшаем функцию расчета скора интереса
-function calculateInterestScore(data) {
-  try {
-    let score = 0;
+function getLandingPageType() {
+    const path = window.location.pathname;
+    if (path === '/' || path === '/index.html') return 'homepage';
+    if (path.includes('/product/')) return 'product';
+    if (path.includes('/category/')) return 'category';
+    if (path.includes('/cart/')) return 'cart';
+    if (path.includes('/checkout/')) return 'checkout';
+    return 'other';
+}
+
+function getReferrerDomain() {
+    if (!document.referrer) return null;
+    try {
+        return new URL(document.referrer).hostname;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Add heatmap generation
+function generateHeatmapData(positions) {
+    const heatmap = {};
+    const gridSize = 50; // pixels
+    
+    positions.forEach(pos => {
+        const gridX = Math.floor(pos.x / gridSize);
+        const gridY = Math.floor(pos.y / gridSize);
+        const key = `${gridX},${gridY}`;
+        
+        if (!heatmap[key]) {
+            heatmap[key] = {
+                count: 0,
+                avgTime: 0,
+                lastVisit: pos.timestamp
+            };
+        }
+        
+        heatmap[key].count++;
+        heatmap[key].avgTime = (heatmap[key].avgTime * (heatmap[key].count - 1) + 
+                               pos.timeSinceLastMove) / heatmap[key].count;
+    });
+    
+    return Object.entries(heatmap).map(([key, data]) => ({
+        position: key.split(',').map(Number),
+        intensity: data.count,
+        avgTimeSpent: data.avgTime
+    }));
+}
+
+// Add Yandex.Metrika goals tracking
+function setupMetrikaGoalsTracking() {
+    // Проверяем наличие Метрики
+    if (typeof ym === 'undefined') {
+        console.warn('Yandex.Metrika not found, will retry in 500ms');
+        setTimeout(setupMetrikaGoalsTracking, 500);
+        return;
+    }
+
+    // Получаем ID счетчика
+    const counterId = getYandexCounterId();
+    if (!counterId) {
+        console.warn('Yandex.Metrika counter ID not found, will retry in 500ms');
+        setTimeout(setupMetrikaGoalsTracking, 500);
+        return;
+    }
+
+    console.log('Setting up Yandex.Metrika goals tracking for counter:', counterId);
+
+    // Сохраняем оригинальную функцию
+    const originalYm = window.ym;
+
+    // Проверяем, не была ли уже подменена функция
+    if (window.ym._rivox_wrapped) {
+        console.log('Yandex.Metrika goals tracking already set up');
+        return;
+    }
+
+    // Переопределяем функцию ym
+    window.ym = function(counterId, method, ...args) {
+        // Отслеживаем цели
+        if (method === 'reachGoal') {
+            const goalName = args[0];
+            const goalParams = args[1] || {};
+            
+            console.log('🎯 Intercepted goal:', goalName, goalParams);
+            
+            // Записываем данные о цели
+            const goalData = {
+                timestamp: Date.now(),
+                name: goalName,
+                parameters: goalParams,
+                page_url: window.location.href,
+                referrer: document.referrer,
+                user_agent: navigator.userAgent,
+                client_id: sessionData.client_id,
+                counter_id: counterId,
+                session_duration: Date.now() - sessionData.start_time,
+                conversion_context: {
+                    last_interaction: sessionData.last_activity,
+                    scroll_depth: getMaxScrollDepth(),
+                    interaction_count: getTotalInteractions(),
+                    form_interactions: sessionData.form_interactions.length,
+                    time_to_convert: Date.now() - sessionData.start_time
+                }
+            };
+
+            // Сохраняем цель в сессии
+            sessionData.metrika_goals.push(goalData);
+            sessionData.conversion_data.goals_reached.push(goalData);
+            sessionData.conversion_data.last_goal_timestamp = Date.now();
+
+            // Обновляем путь конверсии
+            sessionData.conversion_data.conversion_path.push({
+                timestamp: Date.now(),
+                type: 'goal',
+                name: goalName,
+                url: window.location.href
+            });
+
+            // Немедленно отправляем данные о цели
+            sendGoalData(goalData);
+        }
+
+        // Вызываем оригинальную функцию
+        return originalYm.apply(this, arguments);
+    };
+
+    // Помечаем функцию как обработанную
+    window.ym._rivox_wrapped = true;
+
+    // Проверяем работу отслеживания
+    console.log('✅ Yandex.Metrika goals tracking setup complete');
+}
+
+// Инициализируем перехват целей как можно раньше
+(function initMetrikaTracking() {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupMetrikaGoalsTracking);
+    } else {
+        setupMetrikaGoalsTracking();
+    }
+})();
+
+// Helper functions for goals tracking
+function getMaxScrollDepth() {
+    if (!sessionData.scroll_chunks.length) return 0;
+    return Math.max(...sessionData.scroll_chunks.map(chunk => 
+        (chunk.position / (document.documentElement.scrollHeight - window.innerHeight)) * 100
+    ));
+}
+
+function getTotalInteractions() {
+    return sessionData.hover_events.length + 
+           sessionData.cta_clicks.length + 
+           sessionData.form_interactions.length + 
+           sessionData.modal_interactions.length;
+}
+
+function getEcommerceEventType(ecommerce) {
+    if (ecommerce.purchase) return 'purchase';
+    if (ecommerce.add) return 'add_to_cart';
+    if (ecommerce.remove) return 'remove_from_cart';
+    if (ecommerce.detail) return 'view_product';
+    if (ecommerce.impressions) return 'view_product_list';
+    return 'other';
+}
+
+function getEcommerceProducts(ecommerce) {
+    const products = [];
+    if (ecommerce.purchase) products.push(...(ecommerce.purchase.products || []));
+    if (ecommerce.add) products.push(...(ecommerce.add.products || []));
+    if (ecommerce.remove) products.push(...(ecommerce.remove.products || []));
+    if (ecommerce.detail) products.push(...(ecommerce.detail.products || []));
+    if (ecommerce.impressions) products.push(...ecommerce.impressions);
+    return products.map(p => ({
+        id: p.id,
+        name: p.name,
+        price: p.price,
+        quantity: p.quantity
+    }));
+}
+
+function getEcommerceValue(ecommerce) {
+    if (ecommerce.purchase && ecommerce.purchase.actionField) {
+        return ecommerce.purchase.actionField.revenue;
+    }
+    return null;
+}
+
+// Send goal data immediately
+function sendGoalData(goalData) {
+    const endpoint = getEndpointUrl();
+    
+    if (config.debug) {
+        console.log('Sending goal data:', goalData);
+    }
+
+    // Try to send via JSONP with retries
+    sendDataJSONP(endpoint, goalData, (error, response) => {
+        if (error) {
+            console.error('Failed to send goal data:', error);
+            // Store failed request for retry
+            if (window.localStorage) {
+                try {
+                    const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+                    failedRequests.push({
+                        timestamp: Date.now(),
+                        endpoint: endpoint,
+                        data: goalData
+                    });
+                    // Keep only last 10 failed requests
+                    if (failedRequests.length > 10) {
+                        failedRequests.shift();
+                    }
+                    localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
+                    console.log('Failed request stored for retry');
+                } catch (e) {
+                    console.warn('Failed to store failed request:', e);
+                }
+            }
+        } else {
+            if (config.debug) {
+                console.log('Goal data sent successfully:', response);
+            }
+        }
+    });
+}
+
+// Обновляем функцию для повторной отправки
+function retryFailedRequests() {
+    if (!window.localStorage) return;
+
+    try {
+        const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+        if (failedRequests.length === 0) return;
+
+        const currentTime = Date.now();
+        const validRequests = failedRequests.filter(request => 
+            currentTime - request.timestamp < 24 * 60 * 60 * 1000 // Только за последние 24 часа
+        );
+
+        if (validRequests.length === 0) {
+            localStorage.removeItem('rivox_failed_requests');
+            return;
+        }
+
+        // Отправляем запросы по одному
+        validRequests.forEach(async (request) => {
+            try {
+                await sendDataViaImage(request.data);
+            } catch (error) {
+                console.warn('Failed to retry request:', error);
+            }
+        });
+
+        localStorage.removeItem('rivox_failed_requests');
+    } catch (error) {
+        console.warn('Error processing failed requests:', error);
+    }
+}
+
+// Retry failed requests periodically
+setInterval(retryFailedRequests, 5 * 60 * 1000); // Every 5 minutes
+
+// Добавляем периодическое сохранение данных
+function backupSessionData() {
+    if (sessionData) {
+        try {
+            localStorage.setItem('rivox_session_backup', JSON.stringify({
+                timestamp: Date.now(),
+                data: sessionData
+            }));
+        } catch (e) {
+            console.warn('Failed to backup session data:', e);
+        }
+    }
+}
+
+// Восстановление данных при перезагрузке
+function restoreSessionData() {
+    try {
+        const backup = localStorage.getItem('rivox_session_backup');
+        if (backup) {
+            const { timestamp, data } = JSON.parse(backup);
+            // Проверяем, что бэкап не старше 30 минут
+            if (Date.now() - timestamp < 30 * 60 * 1000) {
+                sessionData = data;
+                console.log('Restored session data from backup');
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to restore session data:', e);
+    }
+}
+
+// Сохраняем каждые 10 секунд
+setInterval(backupSessionData, 10000);
+
+// Добавляем расчет качества взаимодействия
+function calculateInteractionQuality() {
+    if (!sessionData) return 0;
+
     const weights = {
-      scroll: 0.3,    // 30% вес для скролла
-      interact: 0.3,  // 30% вес для интеракций
-      form: 0.2,      // 20% вес для форм
-      time: 0.2       // 20% вес для времени
+        clickAccuracy: 0.3,  // Точность кликов
+        scrollSmooth: 0.2,   // Плавность скролла
+        dwellTime: 0.3,      // Время на контенте
+        formAccuracy: 0.2    // Точность заполнения форм
     };
 
-    // 1. Скор скролла (0-0.3)
-    if (data.scroll_chunks && data.scroll_chunks.length > 0) {
-      const maxScroll = Math.max(...data.scroll_chunks.map(chunk => 
-        (chunk.position / (chunk.document_height || 1)) * 100
-      ));
-      score += (Math.min(maxScroll, 100) / 100) * weights.scroll;
+    let quality = 0;
+
+    // 1. Оценка точности кликов
+    if (sessionData.all_clicks && sessionData.all_clicks.length > 0) {
+        const missedClicks = sessionData.all_clicks.filter(click => !click.is_interactive).length;
+        const clickAccuracy = 1 - (missedClicks / sessionData.all_clicks.length);
+        quality += clickAccuracy * weights.clickAccuracy;
     }
 
-    // 2. Скор интеракций (0-0.3)
-    const totalInteractions = (data.user_behavior?.total_interactions || 0);
-    if (totalInteractions > 0) {
-      score += Math.min(totalInteractions / 10, 1) * weights.interact;
+    // 2. Оценка плавности скролла
+    if (sessionData.scroll_chunks && sessionData.scroll_chunks.length > 1) {
+        const smoothScrolls = sessionData.scroll_chunks.filter(chunk => 
+            chunk.delta <= config.scrollChunkSize * 2
+        ).length;
+        const scrollSmoothness = smoothScrolls / sessionData.scroll_chunks.length;
+        quality += scrollSmoothness * weights.scrollSmooth;
     }
 
-    // 3. Скор форм (0-0.2)
-    const formInteractions = (data.form_interactions || []).length;
-    if (formInteractions > 0) {
-      score += Math.min(formInteractions / 3, 1) * weights.form;
+    // 3. Оценка времени на контенте
+    if (sessionData.session_duration > 0) {
+        const dwellTimeScore = Math.min(
+            sessionData.active_duration / sessionData.session_duration,
+            1
+        );
+        quality += dwellTimeScore * weights.dwellTime;
     }
 
-    // 4. Временной скор (0-0.2)
-    const sessionDuration = data.session_duration || 0;
-    if (sessionDuration > 0) {
-      // Нормализуем к 5 минутам
-      const timeScore = Math.min(sessionDuration / (5 * 60 * 1000), 1);
-      score += timeScore * weights.time;
+    // 4. Оценка точности заполнения форм
+    if (sessionData.form_interactions && sessionData.form_interactions.length > 0) {
+        const formErrors = sessionData.form_interactions.filter(i => i.type === 'error').length;
+        const formAccuracy = 1 - (formErrors / sessionData.form_interactions.length);
+        quality += formAccuracy * weights.formAccuracy;
     }
 
-    // Округляем до 4 знаков после запятой для избежания ошибок с плавающей точкой
-    return Math.round(score * 10000) / 10000;
-
-  } catch (e) {
-    console.error('Error calculating interest score:', e);
-    return 0;
-  }
+    return Math.round(quality * 100) / 100;
 }
 
-// Улучшаем функцию расчета скора вовлеченности
-function calculateEngagementScore(data) {
-  try {
-    let score = 0;
+// Вспомогательные функции для метрик
+function calculateFormCompletionRate() {
+    if (!sessionData.form_interactions || sessionData.form_interactions.length === 0) {
+        return 0;
+    }
+
+    const formStarts = sessionData.form_interactions.filter(i => i.type === 'focus').length;
+    const formSubmits = sessionData.form_interactions.filter(i => i.type === 'submit').length;
+
+    return formStarts > 0 ? formSubmits / formStarts : 0;
+}
+
+function calculateAverageInteractionGap() {
+    if (!sessionData.user_behavior.time_between_clicks || 
+        sessionData.user_behavior.time_between_clicks.length < 2) {
+        return 0;
+    }
+
+    const gaps = sessionData.user_behavior.time_between_clicks
+        .map(click => click.timeDelta)
+        .filter(delta => delta > 0 && delta < 60000); // Игнорируем паузы больше минуты
+
+    return gaps.length > 0 ? 
+        gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 
+        0;
+}
+
+// Expose public API
+window.RIVOX = {
+    init: init,
+    sendSessionSummary,
+    config
+};
+
+// Initialize when Metrika is ready
+(function waitForYaMetrika(attempts = 0, maxAttempts = 20) {
+    if (attempts >= maxAttempts) {
+        console.error('Failed to detect Yandex.Metrika after', maxAttempts, 'attempts');
+        return;
+    }
+
+    if (typeof ym === 'undefined' && typeof Ya === 'undefined' && !window.yaCounter) {
+        setTimeout(() => waitForYaMetrika(attempts + 1), 500);
+        return;
+    }
+
+    // Initialize SDK only after Metrika is detected
+    init().catch(error => {
+        console.error('Failed to initialize RIVOX SDK:', error);
+    });
+})();
+
+// Обновляем функцию для отслеживания скролла
+function handleScroll(event) {
+    console.group('📜 Scroll Event');
+    try {
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        const documentHeight = Math.max(
+            document.documentElement.scrollHeight,
+            document.documentElement.offsetHeight,
+            document.documentElement.clientHeight
+        );
+        
+        console.log('Scroll metrics:', {
+            scrollTop,
+            documentHeight,
+            viewportHeight: window.innerHeight,
+            scrollPercent: Math.round((scrollTop / (documentHeight - window.innerHeight)) * 100)
+        });
+        
+        const scrollData = {
+            timestamp: Date.now(),
+            position: scrollTop,
+            document_height: documentHeight,
+            viewport_height: window.innerHeight,
+            delta: scrollTop - (lastScrollPosition || 0)
+        };
+        
+        console.log('Processed scroll data:', scrollData);
+        sessionData.scroll_chunks.push(scrollData);
+        
+        lastScrollPosition = scrollTop;
+    } catch (error) {
+        console.error('❌ Scroll handler error:', error);
+    }
+    console.groupEnd();
+}
+
+// Обновляем функцию для отслеживания кликов
+function handleClick(event) {
+    console.group('🖱️ Click Event');
+    try {
+        const target = event.target;
+        console.log('Click target:', target);
+        console.log('Click path:', getElementPath(target));
+        console.log('Is CTA:', isCTAElement(target));
+        console.log('Is interactive:', isInteractiveElement(target));
+        
+        // Анализ контекста клика
+        const clickContext = {
+            inViewport: isInViewport(target),
+            timeSinceLastClick: lastClickTime ? Date.now() - lastClickTime : null,
+            closestLink: target.closest('a')?.href,
+            closestButton: target.closest('button')?.textContent,
+            closestForm: target.closest('form')?.id,
+            targetSize: {
+                width: target.offsetWidth,
+                height: target.offsetHeight
+            }
+        };
+        
+        console.log('Click context:', clickContext);
+        
+        const clickData = {
+            timestamp: Date.now(),
+            type: target.tagName.toLowerCase(),
+            text: target.textContent?.trim().substring(0, 50),
+            is_cta: isCTAElement(target),
+            is_interactive: isInteractiveElement(target),
+            href: target.href || target.closest('a')?.href || '',
+            path: getElementPath(target),
+            position: {
+                x: event.clientX,
+                y: event.clientY,
+                relative_x: Math.round((event.clientX / window.innerWidth) * 100),
+                relative_y: Math.round((event.clientY / window.innerHeight) * 100)
+            },
+            context: clickContext
+        };
+        
+        console.log('Processed click data:', clickData);
+        sessionData.cta_clicks.push(clickData);
+        
+        // Обновляем активность сессии
+        SessionMonitor.updateActivity();
+        lastClickTime = Date.now();
+        
+    } catch (error) {
+        Logger.error('Click handler error:', error);
+    }
+    console.groupEnd();
+}
+
+// Добавляем функцию проверки видимости элемента
+function isInViewport(element) {
+    const rect = element.getBoundingClientRect();
+    return (
+        rect.top >= 0 &&
+        rect.left >= 0 &&
+        rect.bottom <= window.innerHeight &&
+        rect.right <= window.innerWidth
+    );
+}
+
+// Инициализация мониторов при запуске SDK
+function initMonitors() {
+    if (!config) {
+        Logger.error('Cannot initialize monitors: config not defined');
+        return;
+    }
+
+    try {
+        NetworkMonitor.init();
+        
+        // Проверка неактивности каждые 5 секунд
+        const inactivityInterval = setInterval(() => {
+            if (!config) {
+                Logger.warn('Config lost, clearing inactivity check interval');
+                clearInterval(inactivityInterval);
+                return;
+            }
+            SessionMonitor.checkInactivity();
+        }, 5000);
+        
+        Logger.info('Monitors initialized', {
+            config: {
+                maxInactiveTime: config.maxInactiveTime,
+                retryInterval: config.retryInterval
+            }
+        });
+    } catch (error) {
+        Logger.error('Failed to initialize monitors', error);
+    }
+}
+
+// Добавляем расчет качества взаимодействия
+function calculateInteractionQuality() {
+    if (!sessionData) return 0;
+
     const weights = {
-      duration: 0.25,    // 25% вес для длительности сессии
-      density: 0.25,     // 25% вес для плотности взаимодействий
-      forms: 0.25,       // 25% вес для работы с формами
-      scroll: 0.25       // 25% вес для глубины скролла
+        clickAccuracy: 0.3,  // Точность кликов
+        scrollSmooth: 0.2,   // Плавность скролла
+        dwellTime: 0.3,      // Время на контенте
+        formAccuracy: 0.2    // Точность заполнения форм
     };
 
-    // 1. Скор длительности сессии (0-0.25)
-    const sessionDuration = data.session_duration || 0;
-    if (sessionDuration > 0) {
-      score += Math.min(sessionDuration / (5 * 60 * 1000), 1) * weights.duration;
+    let quality = 0;
+
+    // 1. Оценка точности кликов
+    if (sessionData.all_clicks && sessionData.all_clicks.length > 0) {
+        const missedClicks = sessionData.all_clicks.filter(click => !click.is_interactive).length;
+        const clickAccuracy = 1 - (missedClicks / sessionData.all_clicks.length);
+        quality += clickAccuracy * weights.clickAccuracy;
     }
 
-    // 2. Скор плотности взаимодействий (0-0.25)
-    if (sessionDuration > 0 && data.user_behavior?.total_interactions > 0) {
-      const density = (data.user_behavior.total_interactions / (sessionDuration / 1000)) * 60; // действий в минуту
-      score += Math.min(density / 5, 1) * weights.density;
+    // 2. Оценка плавности скролла
+    if (sessionData.scroll_chunks && sessionData.scroll_chunks.length > 1) {
+        const smoothScrolls = sessionData.scroll_chunks.filter(chunk => 
+            chunk.delta <= config.scrollChunkSize * 2
+        ).length;
+        const scrollSmoothness = smoothScrolls / sessionData.scroll_chunks.length;
+        quality += scrollSmoothness * weights.scrollSmooth;
     }
 
-    // 3. Скор форм (0-0.25)
-    const formInteractions = (data.form_interactions || []).length;
-    if (formInteractions > 0) {
-      score += Math.min(formInteractions / 3, 1) * weights.forms;
+    // 3. Оценка времени на контенте
+    if (sessionData.session_duration > 0) {
+        const dwellTimeScore = Math.min(
+            sessionData.active_duration / sessionData.session_duration,
+            1
+        );
+        quality += dwellTimeScore * weights.dwellTime;
     }
 
-    // 4. Скор скролла (0-0.25)
-    if (data.scroll_chunks && data.scroll_chunks.length > 0) {
-      const maxScroll = Math.max(...data.scroll_chunks.map(chunk => 
-        (chunk.position / (chunk.document_height || 1)) * 100
-      ));
-      score += (Math.min(maxScroll, 100) / 100) * weights.scroll;
+    // 4. Оценка точности заполнения форм
+    if (sessionData.form_interactions && sessionData.form_interactions.length > 0) {
+        const formErrors = sessionData.form_interactions.filter(i => i.type === 'error').length;
+        const formAccuracy = 1 - (formErrors / sessionData.form_interactions.length);
+        quality += formAccuracy * weights.formAccuracy;
     }
 
-    // Округляем до 4 знаков после запятой
-    return Math.round(score * 10000) / 10000;
-
-  } catch (e) {
-    console.error('Error calculating engagement score:', e);
-    return 0;
-  }
+    return Math.round(quality * 100) / 100;
 }
 
-// Константа с описаниями полей
-const FIELD_DESCRIPTIONS = {
-  // Базовые данные сессии
-  'session_id': 'ID сессии',
-  'client_id': 'ID клиента в Метрике',
-  'clientToken': 'Токен клиента',
-  'timestamp': 'Время события',
-  
-  // UTM-метки
-  'utm_source': 'Источник трафика',
-  'utm_medium': 'Тип трафика',
-  'utm_campaign': 'Название кампании',
-  'utm_term': 'Ключевое слово',
-  'utm_content': 'Содержание UTM',
-  
-  // Данные о трафике
-  'referrer': 'Реферер',
-  'page_url': 'Адрес страницы',
-  'domain': 'Домен',
-  'path': 'Путь страницы',
-  
-  // Скролл
-  'scroll_depth_max': 'Глубина прокрутки',
-  'scroll_chunk_count': 'Число прокруток',
-  'scroll_speed': 'Скорость прокрутки',
-  
-  // Клики
-  'click_count': 'Всего кликов',
-  'click_cta': 'Клики по кнопкам',
-  'click_buy': 'Клики "Купить"',
-  'click_cart': 'Клики по корзине',
-  
-  // Формы
-  'form_interaction': 'Работа с формами',
-  'form_submitted': 'Отправки форм',
-  'form_errors': 'Ошибки в формах',
-  
-  // E-commerce
-  'added_to_cart': 'В корзину',
-  'purchase_value': 'Сумма заказа',
-  'ecommerce_event_types': 'Типы событий',
-  
-  // Время
-  'focus_time_on_product_card': 'Время на карточке',
-  'hover_time_on_cta_max': 'Время на кнопках',
-  'hover_time_on_product_avg': 'Среднее на товаре',
-  
-  // Цели
-  'goals_count': 'Число целей',
-  'goal_name': 'Название цели',
-  'visited_cart': 'Был в корзине',
-  'submitted_order': 'Оформил заказ',
-  
-  // Устройство
-  'device_type': 'Тип устройства',
-  'platform': 'Платформа',
-  'user_agent': 'Браузер',
-  'viewport_width': 'Ширина экрана',
-  'viewport_height': 'Высота экрана',
-  
-  // ML-фичи
-  'user_behavior_viewport_size_width': 'Ширина экрана',
-  'user_behavior_viewport_size_height': 'Высота экрана',
-  'user_behavior_total_interactions': 'Всего действий',
-  'user_behavior_time_to_first_interaction': 'Время до 1-го действия',
-  'ml_features_interest_signals': 'Сигналы интереса',
-  'ml_features_behavior_patterns': 'Паттерны поведения',
-  'ml_features_user_segment': 'Сегмент пользователя',
-  'ml_features_conversion_probability': 'Вероятность конверсии',
-  'sdk_version': 'Версия SDK'
-}; 
+// Вспомогательные функции для метрик
+function calculateFormCompletionRate() {
+    if (!sessionData.form_interactions || sessionData.form_interactions.length === 0) {
+        return 0;
+    }
+
+    const formStarts = sessionData.form_interactions.filter(i => i.type === 'focus').length;
+    const formSubmits = sessionData.form_interactions.filter(i => i.type === 'submit').length;
+
+    return formStarts > 0 ? formSubmits / formStarts : 0;
+}
+
+function calculateAverageInteractionGap() {
+    if (!sessionData.user_behavior.time_between_clicks || 
+        sessionData.user_behavior.time_between_clicks.length < 2) {
+        return 0;
+    }
+
+    const gaps = sessionData.user_behavior.time_between_clicks
+        .map(click => click.timeDelta)
+        .filter(delta => delta > 0 && delta < 60000); // Игнорируем паузы больше минуты
+
+    return gaps.length > 0 ? 
+        gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 
+        0;
+}
+
+// Инициализация мониторов при запуске SDK
+(function initMonitors() {
+    NetworkMonitor.init();
+    
+    // Проверка неактивности каждые 5 секунд
+    setInterval(() => {
+        SessionMonitor.checkInactivity();
+    }, 5000);
+    
+    Logger.info('Monitors initialized', {
+        config: {
+            maxInactiveTime: config.maxInactiveTime,
+            retryInterval: config.retryInterval
+        }
+    });
+})();
+
+(function(window) {
+    'use strict';
+
+    // Configuration
+    const config = {
+        debug: true, // Enable debug mode
+        sendInterval: 60000,
+        version: SDK_VERSION,
+        endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
+        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
+        initDelay: 300,
+        sendDelay: 4000,
+        maxRetries: 3,
+        retryDelay: 1000,
+        useJSONP: true,
+        maxInactiveTime: 20 * 1000, // 20 seconds
+        retryInterval: 5 * 60 * 1000 // 5 minutes
+    };
+
+    // Initialize empty session data structure
+    let sessionData = {
+        sdk_version: SDK_VERSION,
+        user_behavior: {
+            viewport_size: {
+                width: window.innerWidth,
+                height: window.innerHeight
+            },
+            total_interactions: 0,
+            time_between_clicks: [],
+            last_click_time: null
+        },
+        scroll_chunks: [],
+        hover_events: [],
+        form_interactions: [],
+        cta_clicks: [],
+        all_clicks: []
+    };
+
+    // Добавляем трекинг видимости и фокуса
+    let isPageVisible = true;
+    let isWindowFocused = true;
+    let lastActiveTime = Date.now();
+    let totalInactiveTime = 0;
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            isPageVisible = false;
+            lastActiveTime = Date.now();
+        } else {
+            isPageVisible = true;
+            if (lastActiveTime) {
+                totalInactiveTime += Date.now() - lastActiveTime;
+            }
+        }
+        updateSessionDuration();
+    });
+
+    window.addEventListener('focus', () => {
+        isWindowFocused = true;
+        if (lastActiveTime) {
+            totalInactiveTime += Date.now() - lastActiveTime;
+        }
+        updateSessionDuration();
+    });
+
+    window.addEventListener('blur', () => {
+        isWindowFocused = false;
+        lastActiveTime = Date.now();
+        updateSessionDuration();
+    });
+
+    function updateSessionDuration() {
+        if (sessionData) {
+            const rawDuration = Date.now() - sessionData.start_time;
+            sessionData.session_duration = rawDuration - totalInactiveTime;
+            sessionData.active_duration = isPageVisible && isWindowFocused ? 
+                sessionData.session_duration : 
+                sessionData.session_duration - (Date.now() - lastActiveTime);
+        }
+    }
+
+    // Улучшаем отслеживание скроллов
+    let lastScrollPosition = 0;
+    let maxScrollDepth = 0;
+    let scrollStartTime = null;
+    let isScrolling = false;
+
+    window.addEventListener('scroll', throttle(handleScroll, 50));
+
+    // Сброс флага скроллинга после остановки
+    let scrollTimeout;
+    window.addEventListener('scroll', () => {
+        clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => {
+            isScrolling = false;
+        }, 150);
+    });
+
+    // Улучшаем отслеживание кликов
+    function setupClickTracking() {
+        $(document).on('click', function(e) {
+            if (!sessionData || !sessionData.user_behavior) {
+                console.warn('Session data not initialized, reinitializing...');
+                sessionData = {
+                    user_behavior: {
+                        viewport_size: {
+                            width: window.innerWidth,
+                            height: window.innerHeight
+                        },
+                        total_interactions: 0,
+                        time_between_clicks: [],
+                        last_click_time: null
+                    },
+                    scroll_chunks: [],
+                    hover_events: [],
+                    form_interactions: [],
+                    cta_clicks: [],
+                    all_clicks: []
+                };
+            }
+
+            const target = e.target;
+            const clickData = {
+                timestamp: Date.now(),
+                element: getElementPath(target),
+                text: target.textContent?.trim(),
+                tag: target.tagName.toLowerCase(),
+                classes: Array.from(target.classList).join(' '),
+                position: {
+                    x: e.clientX,
+                    y: e.clientY,
+                    scrollY: window.scrollY
+                },
+                is_interactive: isInteractiveElement(target)
+            };
+
+            // Сохраняем все клики
+            sessionData.all_clicks.push(clickData);
+
+            // Если это CTA, добавляем в специальный массив
+            if (isCTAElement(target)) {
+                sessionData.cta_clicks.push(clickData);
+            }
+
+            // Обновляем время между кликами
+            const currentTime = Date.now();
+            if (sessionData.user_behavior.last_click_time) {
+                sessionData.user_behavior.time_between_clicks.push({
+                    timeDelta: currentTime - sessionData.user_behavior.last_click_time,
+                    timestamp: currentTime
+                });
+            }
+            sessionData.user_behavior.last_click_time = currentTime;
+
+            // Обновляем общее количество взаимодействий
+            sessionData.user_behavior.total_interactions++;
+
+            if (config.debug) {
+                console.log('Click tracked:', clickData);
+                console.log('Session data updated:', sessionData);
+            }
+        });
+    }
+
+    // Проверка интерактивности элемента
+    function isInteractiveElement(element) {
+        const interactiveTags = ['a', 'button', 'input', 'select', 'textarea'];
+        const interactiveRoles = ['button', 'link', 'menuitem', 'tab', 'checkbox', 'radio'];
+        
+        return interactiveTags.includes(element.tagName.toLowerCase()) ||
+               element.hasAttribute('onclick') ||
+               element.hasAttribute('href') ||
+               interactiveRoles.includes(element.getAttribute('role')) ||
+               element.hasAttribute('tabindex') ||
+               window.getComputedStyle(element).cursor === 'pointer';
+    }
+
+    function isAllowedDomain(hostname) {
+        if (!hostname) return false;
+        
+        // Убираем www. если есть
+        const normalizedHostname = hostname.replace(/^www\./, '');
+        
+        // Проверяем наличие домена в списке разрешенных
+        return config.allowedDomains.some(domain => {
+            const normalizedDomain = domain.replace(/^www\./, '');
+            return normalizedHostname === normalizedDomain;
+        });
+    }
+
+    // Add trackNavigation function at the top level
+    function trackNavigation() {
+        const currentDomain = window.location.hostname;
+        if (!isAllowedDomain(currentDomain)) {
+            console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
+            return;
+        }
+        
+        console.log('Navigation tracked');
+        sessionData.page_views.push({
+            timestamp: Date.now(),
+            url: window.location.href,
+            referrer: document.referrer
+        });
+    }
+
+    // Validate and get endpoint URL
+    function getEndpointUrl() {
+        const script = document.querySelector('script[data-rivox-endpoint]');
+        let endpoint = script ? script.getAttribute('data-rivox-endpoint') : 
+            'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec';
+
+        // Ensure endpoint ends with /exec
+        if (!endpoint.endsWith('/exec')) {
+            endpoint = endpoint.replace(/\/?$/, '/exec');
+        }
+
+        // Remove any existing query parameters
+        endpoint = endpoint.split('?')[0];
+
+        console.log('RIVOX: Using endpoint:', endpoint);
+        return endpoint;
+    }
+
+})(window);
