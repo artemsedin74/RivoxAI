@@ -23,7 +23,7 @@ function getYandexCounterId() {
     const config = {
         debug: false,
         sendInterval: 60000,
-        // Используем прямой URL к Google Apps Script
+        version: SDK_VERSION,
         endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzupBK1ZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlY1XhxmqupKBHsXSIKtnW/exec',
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
@@ -33,7 +33,9 @@ function getYandexCounterId() {
     };
 
     // Глобальная переменная для хранения данных сессии
-    let sessionData = null;
+    let sessionData = {
+        sdk_version: SDK_VERSION
+    };
 
     // Добавляем трекинг видимости и фокуса
     let isPageVisible = true;
