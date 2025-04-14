@@ -379,6 +379,16 @@ let Logger = {
         };
     }
 
+    function waitForMetrika(callback) {
+        if (typeof ym !== 'undefined' && typeof ym.a !== 'undefined') {
+            Logger.info('Metrika is ready');
+            callback();
+        } else {
+            Logger.info('Waiting for Metrika...');
+            setTimeout(() => waitForMetrika(callback), 100);
+        }
+    }
+
     // Initialize SDK
     async function init() {
         const currentDomain = window.location.hostname;
@@ -392,6 +402,19 @@ let Logger = {
         // Load configuration
         const userConfig = loadConfig();
         if (!userConfig) return;
+
+        // Wait for Metrika to be ready
+        try {
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Metrika timeout')), 5000);
+                waitForMetrika(() => {
+                    clearTimeout(timeout);
+                    resolve();
+                });
+            });
+        } catch (error) {
+            Logger.warn('Failed to wait for Metrika:', error);
+        }
 
         // Try to restore previous session
         const savedSession = loadSessionFromStorage();
@@ -455,8 +478,7 @@ let Logger = {
 
         setupMetrikaTracking();
 
-        // Log successful initialization
-        Logger.info('✅ RIVOX SDK initialized successfully.');
+        Logger.info('✅ RIVOX SDK initialization completed');
     }
 
     // Enhanced event listeners setup
@@ -720,6 +742,9 @@ let Logger = {
             return;
         }
 
+        Logger.info('Preparing to send session data...');
+        Logger.info('Goals data to send:', sessionData.metrika_goals);
+
         // Update ML features before sending
         updateMLFeatures();
 
@@ -769,7 +794,10 @@ let Logger = {
             ml_features: sessionData.ml_features
         };
 
-        Logger.debug('Preparing to send session data', summary);
+        Logger.info('Sending data to server:', {
+            goals_count: summary.metrika_goals.length,
+            goals: summary.metrika_goals
+        });
 
         let retryCount = 0;
         const maxRetries = 3;
@@ -794,6 +822,7 @@ let Logger = {
 
                     const result = await response.json();
                     Logger.info('✅ POST request successful');
+                    Logger.info('Server response:', result);
                     return result;
                 } catch (error) {
                     Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
@@ -1261,6 +1290,8 @@ let Logger = {
     // Yandex.Metrika goal tracking
     function setupMetrikaTracking(attempts = 0, maxAttempts = 5) {
         const counterId = getYandexCounterId();
+        Logger.info('Setting up Metrika tracking for counter:', counterId);
+        
         if (!counterId) {
             if (attempts < maxAttempts) {
                 Logger.info(`Counter ID not found, retrying in 1s (attempt ${attempts + 1}/${maxAttempts})`);
@@ -1271,8 +1302,6 @@ let Logger = {
             return;
         }
 
-        Logger.info(`Setting up Metrika tracking for counter ${counterId}`);
-        
         // Check if counter object exists
         if (!window[`yaCounter${counterId}`]) {
             Logger.warn(`Counter object yaCounter${counterId} not found`);
@@ -1285,6 +1314,8 @@ let Logger = {
 
         // Store original reachGoal function
         const originalReachGoal = window[`yaCounter${counterId}`].reachGoal;
+        Logger.info('Original reachGoal function:', originalReachGoal);
+        
         if (!originalReachGoal) {
             Logger.warn('reachGoal function not found on counter object');
             if (attempts < maxAttempts) {
@@ -1323,7 +1354,8 @@ let Logger = {
                     timestamp: Date.now()
                 });
 
-                Logger.debug('Goal reached:', goalData);
+                Logger.info('Goal data added to session:', goalData);
+                Logger.info('Current goals array:', sessionData.metrika_goals);
 
                 // Send data after important goals
                 if (isImportantGoal(goalName)) {
@@ -1336,27 +1368,7 @@ let Logger = {
             return result;
         };
 
-        // Also track ecommerce events if available
-        if (window.dataLayer) {
-            const originalPush = window.dataLayer.push;
-            window.dataLayer.push = function(data) {
-                const result = originalPush.apply(this, arguments);
-
-                // Track ecommerce events
-                if (data && data.ecommerce && sessionData) {
-                    sessionData.conversion_data.ecommerce_data.push({
-                        data: data.ecommerce,
-                        timestamp: Date.now()
-                    });
-
-                    Logger.debug('Ecommerce event:', data.ecommerce);
-                }
-
-                return result;
-            };
-        }
-
-        Logger.info('✅ Metrika tracking initialized for counter:', counterId);
+        Logger.info('✅ Metrika tracking setup completed');
     }
 
     // Important goals that should trigger immediate data send
