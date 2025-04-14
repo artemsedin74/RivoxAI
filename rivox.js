@@ -27,9 +27,10 @@ function getYandexCounterId() {
         endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzupBK1ZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlY1XhxmqupKBHsXSIKtnW/exec',
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
-        sendDelay: 1000,
+        sendDelay: 4000,
         maxRetries: 3,
-        retryDelay: 1000
+        retryDelay: 1000,
+        debug: true // Enable debug mode temporarily
     };
 
     // Глобальная переменная для хранения данных сессии
@@ -211,22 +212,29 @@ function getYandexCounterId() {
         }
 
         // Get optional delays
-        const initDelay = parseInt(script.dataset.initDelay) || config.initDelay;
-        const sendDelay = parseInt(script.dataset.sendDelay) || config.sendDelay;
+        const initDelay = parseInt(script.dataset.initDelay);
+        const sendDelay = parseInt(script.dataset.sendDelay);
+
+        // Use script attributes if valid, otherwise use config defaults
+        const finalConfig = {
+            token,
+            initDelay: !isNaN(initDelay) ? initDelay : config.initDelay,
+            sendDelay: !isNaN(sendDelay) ? sendDelay : config.sendDelay
+        };
 
         if (config.debug) {
             console.log('RIVOX SDK Configuration:', {
-                token,
-                initDelay,
-                sendDelay
+                token: finalConfig.token,
+                initDelay: finalConfig.initDelay,
+                sendDelay: finalConfig.sendDelay,
+                source: {
+                    initDelay: !isNaN(initDelay) ? 'script' : 'default',
+                    sendDelay: !isNaN(sendDelay) ? 'script' : 'default'
+                }
             });
         }
 
-        return {
-            token,
-            initDelay,
-            sendDelay
-        };
+        return finalConfig;
     }
 
     // Initialize SDK
@@ -251,7 +259,9 @@ function getYandexCounterId() {
 
             // Ждем загрузки DOM
             if (document.readyState !== 'complete') {
+                if (config.debug) console.log('Waiting for DOM to complete...');
                 await new Promise(resolve => window.addEventListener('load', resolve, { once: true }));
+                if (config.debug) console.log('DOM loaded');
             }
 
             // Получаем client ID
@@ -285,12 +295,23 @@ function getYandexCounterId() {
                 sdk_version: SDK_VERSION
             };
 
-            // Устанавливаем обработчики событий
-            setupEventListeners();
+            if (config.debug) {
+                console.log(`Setting up event listeners with initDelay: ${userConfig.initDelay}ms`);
+            }
+
+            // Устанавливаем обработчики событий с задержкой
+            setTimeout(() => {
+                setupEventListeners();
+                if (config.debug) console.log('Event listeners setup complete');
+            }, userConfig.initDelay);
 
             console.log('RIVOX SDK initialized successfully');
 
-            // Отправляем начальные данные
+            // Отправляем начальные данные с задержкой
+            if (config.debug) {
+                console.log(`Scheduling initial data send with delay: ${userConfig.sendDelay}ms`);
+            }
+
             setTimeout(() => {
                 if (sessionData) {
                     console.log('🚀 RIVOX initial send');
@@ -300,8 +321,11 @@ function getYandexCounterId() {
                 }
             }, userConfig.sendDelay);
 
+            return true;
+
         } catch (error) {
             console.error('Failed to initialize RIVOX SDK:', error);
+            return false;
         }
     }
 
