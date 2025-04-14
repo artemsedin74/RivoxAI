@@ -21,7 +21,7 @@ function getYandexCounterId() {
 
     // Configuration
     const config = {
-        debug: false,
+        debug: true, // Enable debug mode
         sendInterval: 60000,
         version: SDK_VERSION,
         endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzupBK1ZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlY1XhxmqupKBHsXSIKtnW/exec',
@@ -29,13 +29,26 @@ function getYandexCounterId() {
         initDelay: 300,
         sendDelay: 4000,
         maxRetries: 3,
-        retryDelay: 1000,
-        debug: true // Enable debug mode temporarily
+        retryDelay: 1000
     };
 
-    // Глобальная переменная для хранения данных сессии
+    // Initialize empty session data structure
     let sessionData = {
-        sdk_version: SDK_VERSION
+        sdk_version: SDK_VERSION,
+        user_behavior: {
+            viewport_size: {
+                width: window.innerWidth,
+                height: window.innerHeight
+            },
+            total_interactions: 0,
+            time_between_clicks: [],
+            last_click_time: null
+        },
+        scroll_chunks: [],
+        hover_events: [],
+        form_interactions: [],
+        cta_clicks: [],
+        all_clicks: []
     };
 
     // Добавляем трекинг видимости и фокуса
@@ -99,49 +112,70 @@ function getYandexCounterId() {
     });
 
     // Улучшаем отслеживание кликов
-    document.addEventListener('click', (e) => {
-        if (!sessionData || !sessionData.user_behavior) {
-            console.warn('Session data not properly initialized');
-            return;
-        }
+    function setupClickTracking() {
+        $(document).on('click', function(e) {
+            if (!sessionData || !sessionData.user_behavior) {
+                console.warn('Session data not initialized, reinitializing...');
+                sessionData = {
+                    user_behavior: {
+                        viewport_size: {
+                            width: window.innerWidth,
+                            height: window.innerHeight
+                        },
+                        total_interactions: 0,
+                        time_between_clicks: [],
+                        last_click_time: null
+                    },
+                    scroll_chunks: [],
+                    hover_events: [],
+                    form_interactions: [],
+                    cta_clicks: [],
+                    all_clicks: []
+                };
+            }
 
-        const target = e.target;
-        const clickData = {
-            timestamp: Date.now(),
-            element: getElementPath(target),
-            text: target.textContent?.trim(),
-            tag: target.tagName.toLowerCase(),
-            classes: Array.from(target.classList).join(' '),
-            position: {
-                x: e.clientX,
-                y: e.clientY,
-                scrollY: window.scrollY
-            },
-            is_interactive: isInteractiveElement(target)
-        };
+            const target = e.target;
+            const clickData = {
+                timestamp: Date.now(),
+                element: getElementPath(target),
+                text: target.textContent?.trim(),
+                tag: target.tagName.toLowerCase(),
+                classes: Array.from(target.classList).join(' '),
+                position: {
+                    x: e.clientX,
+                    y: e.clientY,
+                    scrollY: window.scrollY
+                },
+                is_interactive: isInteractiveElement(target)
+            };
 
-        // Сохраняем все клики
-        sessionData.all_clicks = sessionData.all_clicks || [];
-        sessionData.all_clicks.push(clickData);
+            // Сохраняем все клики
+            sessionData.all_clicks.push(clickData);
 
-        // Если это CTA, добавляем в специальный массив
-        if (isCTAElement(target)) {
-            sessionData.cta_clicks.push(clickData);
-        }
+            // Если это CTA, добавляем в специальный массив
+            if (isCTAElement(target)) {
+                sessionData.cta_clicks.push(clickData);
+            }
 
-        // Обновляем время между кликами
-        const currentTime = Date.now();
-        if (sessionData.user_behavior.last_click_time) {
-            sessionData.user_behavior.time_between_clicks.push({
-                timeDelta: currentTime - sessionData.user_behavior.last_click_time,
-                timestamp: currentTime
-            });
-        }
-        sessionData.user_behavior.last_click_time = currentTime;
+            // Обновляем время между кликами
+            const currentTime = Date.now();
+            if (sessionData.user_behavior.last_click_time) {
+                sessionData.user_behavior.time_between_clicks.push({
+                    timeDelta: currentTime - sessionData.user_behavior.last_click_time,
+                    timestamp: currentTime
+                });
+            }
+            sessionData.user_behavior.last_click_time = currentTime;
 
-        // Обновляем общее количество взаимодействий
-        sessionData.user_behavior.total_interactions = (sessionData.user_behavior.total_interactions || 0) + 1;
-    });
+            // Обновляем общее количество взаимодействий
+            sessionData.user_behavior.total_interactions++;
+
+            if (config.debug) {
+                console.log('Click tracked:', clickData);
+                console.log('Session data updated:', sessionData);
+            }
+        });
+    }
 
     // Проверка интерактивности элемента
     function isInteractiveElement(element) {
@@ -187,9 +221,8 @@ function getYandexCounterId() {
 
     // Validate and get endpoint URL
     function getEndpointUrl() {
-        // Always return the configured endpoint
         if (config.debug) {
-            console.log('Using endpoint:', config.endpoint);
+            console.log('Getting endpoint URL from config:', config.endpoint);
         }
         return config.endpoint;
     }
@@ -238,14 +271,6 @@ function getYandexCounterId() {
     // Initialize SDK
     async function init() {
         try {
-            const currentDomain = window.location.hostname;
-            
-            // Проверяем домен перед инициализацией
-            if (!isAllowedDomain(currentDomain)) {
-                console.warn(`Domain ${currentDomain} not in allowed list:`, config.allowedDomains);
-                return;
-            }
-
             console.log('RIVOX SDK initializing...');
             
             // Загружаем конфигурацию
@@ -257,9 +282,9 @@ function getYandexCounterId() {
 
             // Ждем загрузки DOM
             if (document.readyState !== 'complete') {
-                if (config.debug) console.log('Waiting for DOM to complete...');
+                console.log('Waiting for DOM to complete...');
                 await new Promise(resolve => window.addEventListener('load', resolve, { once: true }));
-                if (config.debug) console.log('DOM loaded');
+                console.log('DOM loaded');
             }
 
             // Получаем client ID
@@ -269,49 +294,33 @@ function getYandexCounterId() {
                 return;
             }
 
-            // Инициализируем данные сессии
+            // Обновляем данные сессии
             sessionData = {
+                ...sessionData,
                 client_id: clientId,
                 session_id: generateSessionId(),
                 data_token: userConfig.token,
                 start_time: Date.now(),
                 last_activity: Date.now(),
-                scroll_chunks: [],
-                hover_events: [],
-                form_interactions: [],
-                cta_clicks: [],
-                user_behavior: {
-                    viewport_size: {
-                        width: window.innerWidth,
-                        height: window.innerHeight
-                    },
-                    total_interactions: 0,
-                    time_between_clicks: [], // Initialize the array
-                    last_click_time: null
-                },
                 device_info: {
                     user_agent: navigator.userAgent,
                     platform: navigator.platform
-                },
-                sdk_version: SDK_VERSION
+                }
             };
 
-            if (config.debug) {
-                console.log(`Setting up event listeners with initDelay: ${userConfig.initDelay}ms`);
-            }
+            console.log(`Setting up event listeners with initDelay: ${userConfig.initDelay}ms`);
 
             // Устанавливаем обработчики событий с задержкой
             setTimeout(() => {
+                setupClickTracking();
                 setupEventListeners();
-                if (config.debug) console.log('Event listeners setup complete');
+                console.log('Event listeners setup complete');
             }, userConfig.initDelay);
 
             console.log('RIVOX SDK initialized successfully');
 
             // Отправляем начальные данные с задержкой
-            if (config.debug) {
-                console.log(`Scheduling initial data send with delay: ${userConfig.sendDelay}ms`);
-            }
+            console.log(`Scheduling initial data send with delay: ${userConfig.sendDelay}ms`);
 
             setTimeout(() => {
                 if (sessionData) {
