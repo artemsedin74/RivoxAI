@@ -582,6 +582,7 @@ function getYandexCounterId() {
 
         const summary = {
             ...sessionData,
+            client_id: sessionData.client_id,
             client_token: config.token,
             timestamp: Date.now(),
             session_duration: getSessionDuration(),
