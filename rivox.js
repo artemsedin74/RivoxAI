@@ -2132,6 +2132,8 @@ function calculateAverageInteractionGap() {
 (function(window) {
     'use strict';
 
+    console.log('RIVOX SDK starting initialization...');
+
     // Configuration
     const config = {
         debug: true, // Enable debug mode
@@ -2147,6 +2149,8 @@ function calculateAverageInteractionGap() {
         maxInactiveTime: 20 * 1000, // 20 seconds
         retryInterval: 5 * 60 * 1000 // 5 minutes
     };
+
+    console.log('Configuration loaded:', config);
 
     // Initialize empty session data structure
     let sessionData = {
@@ -2167,190 +2171,50 @@ function calculateAverageInteractionGap() {
         all_clicks: []
     };
 
-    // Добавляем трекинг видимости и фокуса
-    let isPageVisible = true;
-    let isWindowFocused = true;
-    let lastActiveTime = Date.now();
-    let totalInactiveTime = 0;
+    console.log('Session data initialized:', sessionData);
 
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-            isPageVisible = false;
-            lastActiveTime = Date.now();
-        } else {
-            isPageVisible = true;
-            if (lastActiveTime) {
-                totalInactiveTime += Date.now() - lastActiveTime;
+    // ... rest of the code ...
+
+    // Initialize SDK
+    function initializeSDK() {
+        console.log('Initializing RIVOX SDK...');
+        try {
+            // Load configuration
+            if (!loadConfig()) {
+                console.error('Failed to load configuration');
+                return;
             }
+
+            // Initialize session
+            initSession();
+            console.log('Session initialized');
+
+            // Setup event listeners
+            setupEventListeners();
+            console.log('Event listeners set up');
+
+            // Initialize monitors
+            initMonitors();
+            console.log('Monitors initialized');
+
+            console.log('RIVOX SDK initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize RIVOX SDK:', error);
         }
-        updateSessionDuration();
+    }
+
+    // Start SDK after DOM is loaded
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('DOM loaded, starting SDK initialization...');
+        setTimeout(initializeSDK, config.initDelay);
     });
 
-    window.addEventListener('focus', () => {
-        isWindowFocused = true;
-        if (lastActiveTime) {
-            totalInactiveTime += Date.now() - lastActiveTime;
-        }
-        updateSessionDuration();
-    });
+    // Export to window
+    window.rivox = {
+        init: initializeSDK,
+        config,
+        sessionData
+    };
 
-    window.addEventListener('blur', () => {
-        isWindowFocused = false;
-        lastActiveTime = Date.now();
-        updateSessionDuration();
-    });
-
-    function updateSessionDuration() {
-        if (sessionData) {
-            const rawDuration = Date.now() - sessionData.start_time;
-            sessionData.session_duration = rawDuration - totalInactiveTime;
-            sessionData.active_duration = isPageVisible && isWindowFocused ? 
-                sessionData.session_duration : 
-                sessionData.session_duration - (Date.now() - lastActiveTime);
-        }
-    }
-
-    // Улучшаем отслеживание скроллов
-    let lastScrollPosition = 0;
-    let maxScrollDepth = 0;
-    let scrollStartTime = null;
-    let isScrolling = false;
-
-    window.addEventListener('scroll', throttle(handleScroll, 50));
-
-    // Сброс флага скроллинга после остановки
-    let scrollTimeout;
-    window.addEventListener('scroll', () => {
-        clearTimeout(scrollTimeout);
-        scrollTimeout = setTimeout(() => {
-            isScrolling = false;
-        }, 150);
-    });
-
-    // Улучшаем отслеживание кликов
-    function setupClickTracking() {
-        $(document).on('click', function(e) {
-            if (!sessionData || !sessionData.user_behavior) {
-                console.warn('Session data not initialized, reinitializing...');
-                sessionData = {
-                    user_behavior: {
-                        viewport_size: {
-                            width: window.innerWidth,
-                            height: window.innerHeight
-                        },
-                        total_interactions: 0,
-                        time_between_clicks: [],
-                        last_click_time: null
-                    },
-                    scroll_chunks: [],
-                    hover_events: [],
-                    form_interactions: [],
-                    cta_clicks: [],
-                    all_clicks: []
-                };
-            }
-
-            const target = e.target;
-            const clickData = {
-                timestamp: Date.now(),
-                element: getElementPath(target),
-                text: target.textContent?.trim(),
-                tag: target.tagName.toLowerCase(),
-                classes: Array.from(target.classList).join(' '),
-                position: {
-                    x: e.clientX,
-                    y: e.clientY,
-                    scrollY: window.scrollY
-                },
-                is_interactive: isInteractiveElement(target)
-            };
-
-            // Сохраняем все клики
-            sessionData.all_clicks.push(clickData);
-
-            // Если это CTA, добавляем в специальный массив
-            if (isCTAElement(target)) {
-                sessionData.cta_clicks.push(clickData);
-            }
-
-            // Обновляем время между кликами
-            const currentTime = Date.now();
-            if (sessionData.user_behavior.last_click_time) {
-                sessionData.user_behavior.time_between_clicks.push({
-                    timeDelta: currentTime - sessionData.user_behavior.last_click_time,
-                    timestamp: currentTime
-                });
-            }
-            sessionData.user_behavior.last_click_time = currentTime;
-
-            // Обновляем общее количество взаимодействий
-            sessionData.user_behavior.total_interactions++;
-
-            if (config.debug) {
-                console.log('Click tracked:', clickData);
-                console.log('Session data updated:', sessionData);
-            }
-        });
-    }
-
-    // Проверка интерактивности элемента
-    function isInteractiveElement(element) {
-        const interactiveTags = ['a', 'button', 'input', 'select', 'textarea'];
-        const interactiveRoles = ['button', 'link', 'menuitem', 'tab', 'checkbox', 'radio'];
-        
-        return interactiveTags.includes(element.tagName.toLowerCase()) ||
-               element.hasAttribute('onclick') ||
-               element.hasAttribute('href') ||
-               interactiveRoles.includes(element.getAttribute('role')) ||
-               element.hasAttribute('tabindex') ||
-               window.getComputedStyle(element).cursor === 'pointer';
-    }
-
-    function isAllowedDomain(hostname) {
-        if (!hostname) return false;
-        
-        // Убираем www. если есть
-        const normalizedHostname = hostname.replace(/^www\./, '');
-        
-        // Проверяем наличие домена в списке разрешенных
-        return config.allowedDomains.some(domain => {
-            const normalizedDomain = domain.replace(/^www\./, '');
-            return normalizedHostname === normalizedDomain;
-        });
-    }
-
-    // Add trackNavigation function at the top level
-    function trackNavigation() {
-        const currentDomain = window.location.hostname;
-        if (!isAllowedDomain(currentDomain)) {
-            console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
-            return;
-        }
-        
-        console.log('Navigation tracked');
-        sessionData.page_views.push({
-            timestamp: Date.now(),
-            url: window.location.href,
-            referrer: document.referrer
-        });
-    }
-
-    // Validate and get endpoint URL
-    function getEndpointUrl() {
-        const script = document.querySelector('script[data-rivox-endpoint]');
-        let endpoint = script ? script.getAttribute('data-rivox-endpoint') : 
-            'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec';
-
-        // Ensure endpoint ends with /exec
-        if (!endpoint.endsWith('/exec')) {
-            endpoint = endpoint.replace(/\/?$/, '/exec');
-        }
-
-        // Remove any existing query parameters
-        endpoint = endpoint.split('?')[0];
-
-        console.log('RIVOX: Using endpoint:', endpoint);
-        return endpoint;
-    }
-
+    console.log('RIVOX SDK loaded and ready');
 })(window);
