@@ -679,51 +679,83 @@ function getYandexCounterId() {
                 script.async = true;
                 
                 // Get the deployment URL from the script tag
-                        // Handle script load error
-                        script.onerror = function() {
-                            cleanup();
-                            reject(new Error('Failed to load JSONP script'));
-                        };
-
-                        // Prepare data
-                        const params = new URLSearchParams({
-                            callback: callbackName,
-                            type: 'session_data',
-                            client_id: summary.client_id || '',
-                            session_id: summary.session_id || '',
-                            client_token: summary.data_token || 'default-client',
-                            timestamp: new Date().toISOString()
-                        });
-
-                        // Add data as a separate parameter to avoid URL length issues
-                        params.append('data', JSON.stringify(summary));
-
-                        // Set script source
-                        script.src = `${getEndpointUrl()}?${params.toString()}`;
-                        
-                        // Add script to document
-                        document.head.appendChild(script);
-
-                        // Set timeout
-                        setTimeout(() => {
-                            cleanup();
-                            reject(new Error('Request timeout'));
-                        }, 10000);
-
-                    } catch (error) {
-                        reject(error);
+                const sdkScript = document.querySelector('script[data-token]');
+                if (!sdkScript) {
+                    throw new Error('RIVOX SDK script tag not found');
+                }
+                
+                // Extract the base URL from the script src
+                const scriptSrc = sdkScript.src;
+                const baseUrl = scriptSrc.substring(0, scriptSrc.lastIndexOf('/'));
+                const endpoint = baseUrl + '/exec'; // Apps Script endpoint
+                
+                // Create URL with parameters
+                const params = new URLSearchParams();
+                params.append('callback', callbackName);
+                params.append('data', JSON.stringify(data));
+                params.append('origin', window.location.origin);
+                params.append('_', Date.now()); // Cache buster
+                
+                // Set script source
+                script.src = `${endpoint}?${params.toString()}`;
+                
+                if (config.debug) {
+                    console.log('JSONP Request URL:', script.src);
+                }
+                
+                // Setup callback
+                window[callbackName] = function(response) {
+                    cleanup();
+                    if (response && response.status === 'success') {
+                        resolve(response);
+                    } else {
+                        reject(new Error('Server returned error: ' + JSON.stringify(response)));
                     }
-                });
+                };
+                
+                // Cleanup function
+                function cleanup() {
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    delete window[callbackName];
+                }
+                
+                // Handle errors
+                script.onerror = function() {
+                    cleanup();
+                    reject(new Error('Failed to load JSONP script'));
+                };
+                
+                // Add script to page
+                document.head.appendChild(script);
+                
+                // Set timeout
+                setTimeout(() => {
+                    cleanup();
+                    reject(new Error('JSONP request timeout'));
+                }, 10000);
+                
+            } catch (error) {
+                reject(error);
             }
+        });
+    }
 
-            // Try sending with retries and exponential backoff
+    // Update sendSessionSummary function
+    async function sendSessionSummary() {
+        try {
+            const summary = {
+                ...sessionData,
+                timestamp: new Date().toISOString(),
+                sdk_version: SDK_VERSION
+            };
+
             let attempts = 0;
             const maxAttempts = 3;
-            const baseDelay = 1000; // 1 second
+            const baseDelay = 1000;
 
             while (attempts < maxAttempts) {
                 try {
-                    await attemptSend();
+                    await sendDataJSONP(summary);
                     if (config.debug) {
                         console.log(`✓ Session data sent successfully (attempt ${attempts + 1})`);
                     }
@@ -742,7 +774,8 @@ function getYandexCounterId() {
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
-
+            
+            return false;
         } catch (error) {
             console.error('Error in sendSessionSummary:', error);
             return false;
