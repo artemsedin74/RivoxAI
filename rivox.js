@@ -743,13 +743,22 @@ let Logger = {
         }
 
         Logger.info('Preparing to send session data...');
-        Logger.info('Session data to send:', {
+        
+        // Добавляем подробное логирование данных сессии
+        Logger.info('Current session data:', {
             client_id: sessionData.client_id,
             session_id: sessionData.session_id,
             goals_count: sessionData.metrika_goals?.length || 0,
             goals: sessionData.metrika_goals || [],
             conversion_data: sessionData.conversion_data || {}
         });
+
+        // Проверяем и логируем состояние целей
+        if (sessionData.metrika_goals && sessionData.metrika_goals.length > 0) {
+            Logger.info('Goals found in session data:', sessionData.metrika_goals);
+        } else {
+            Logger.warn('No goals found in session data');
+        }
 
         // Update ML features before sending
         updateMLFeatures();
@@ -790,8 +799,8 @@ let Logger = {
             utm_data: sessionData.utm_data,
 
             // Metrika Goals and Conversion Data
-            metrika_goals: sessionData.metrika_goals,
-            conversion_data: sessionData.conversion_data,
+            metrika_goals: sessionData.metrika_goals || [],
+            conversion_data: sessionData.conversion_data || {},
             
             // User Behavior
             user_behavior: sessionData.user_behavior,
@@ -800,7 +809,8 @@ let Logger = {
             ml_features: sessionData.ml_features
         };
 
-        Logger.info('Sending data to server:', {
+        // Проверяем и логируем данные перед отправкой
+        Logger.info('Data to be sent:', {
             goals_count: summary.metrika_goals.length,
             goals: summary.metrika_goals,
             conversion_data: summary.conversion_data
