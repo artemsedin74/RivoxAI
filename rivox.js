@@ -63,7 +63,7 @@ let Logger = {
         endpoint: 'https://functions.yandexcloud.net/d4enh3kioa70v319cqre',
         debug: true,
         sessionTimeout: 30 * 60 * 1000, // 30 минут
-        scrollChunkSize: 100,
+        scrollChunkSize: 50, // уменьшаем с 100 до 50 пикселей
         minInteractionGap: 500,
         maxInactiveTime: 300000,
         minScrollSpeed: 0.1,
