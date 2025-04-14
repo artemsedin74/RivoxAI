@@ -222,20 +222,19 @@ function getYandexCounterId() {
 
     // Validate and get endpoint URL
     function getEndpointUrl() {
-        const scriptTag = document.querySelector('script[data-rivox-token]');
-        let endpoint = scriptTag?.getAttribute('data-endpoint') || config.endpoint;
-        
-        // Ensure endpoint ends with /exec for Apps Script
+        const script = document.querySelector('script[data-rivox-endpoint]');
+        let endpoint = script ? script.getAttribute('data-rivox-endpoint') : 
+            'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec';
+
+        // Ensure endpoint ends with /exec
         if (!endpoint.endsWith('/exec')) {
             endpoint = endpoint.replace(/\/?$/, '/exec');
         }
-        
+
         // Remove any existing query parameters
         endpoint = endpoint.split('?')[0];
-        
-        // Log the endpoint being used
-        console.log('RIVOX Endpoint:', endpoint);
-        
+
+        console.log('RIVOX: Using endpoint:', endpoint);
         return endpoint;
     }
 
@@ -766,7 +765,8 @@ function getYandexCounterId() {
             console.log(`RIVOX: Sending JSONP request to ${endpoint}`);
             console.log('RIVOX: Request details:', { 
                 timestamp: new Date().toISOString(),
-                dataSize: JSON.stringify(data).length
+                dataSize: JSON.stringify(data).length,
+                callback: callbackName
             });
 
             let timeoutId = setTimeout(() => {
