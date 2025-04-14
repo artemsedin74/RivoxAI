@@ -378,6 +378,9 @@ let Logger = {
         const userConfig = loadConfig();
         if (!userConfig) return;
 
+        // Try to restore previous session
+        const savedSession = loadSessionFromStorage();
+        
         // Wait for client id before proceeding
         const clientId = await generateClientId();
         if (!clientId) {
@@ -387,59 +390,26 @@ let Logger = {
 
         Logger.info('RIVOX SDK initialized with client ID:', clientId);
 
-        // Initialize session data
-        sessionData = {
-            client_id: clientId,
-            client_token: config.token,
-            session_id: generateSessionId(),
-            start_time: Date.now(),
-            last_activity: Date.now(),
-            page_views: [{
+        // Initialize or restore session data
+        sessionData = savedSession || createSessionData(clientId);
+        
+        if (!savedSession) {
+            // This is a new session
+            isSessionActive = true;
+            setupEventListeners();
+            saveSessionToStorage();
+        } else {
+            // Update existing session
+            sessionData.page_history.push({
                 timestamp: Date.now(),
                 url: window.location.href,
-                referrer: document.referrer
-            }],
-            scroll_chunks: [],
-            hover_events: [],
-            form_interactions: [],
-            cta_clicks: [],
-            modal_interactions: [],
-            utm_data: extractUTMData(),
-            metrika_goals: [],
-            conversion_data: {
-                goals_reached: [],
-                ecommerce_data: [],
-                last_goal_timestamp: null,
-                conversion_path: []
-            },
-            traffic_source: {
                 referrer: document.referrer,
-                landing_page: window.location.href,
-                entry_point: window.location.pathname
-            },
-            user_behavior: {
-                time_to_first_interaction: null,
-                total_interactions: 0,
-                interaction_frequency: [],
-                scroll_depth_percentages: [],
-                time_between_clicks: [],
-                mouse_movement_heatmap: [],
-                viewport_size: {
-                    width: window.innerWidth,
-                    height: window.innerHeight
-                }
-            },
-            ml_features: {
-                interest_signals: [],
-                behavior_patterns: [],
-                user_segment: null,
-                conversion_probability: null,
-                funnel_analysis: {}
-            }
-        };
-
-        isSessionActive = true;
-        setupEventListeners();
+                time_spent: 0
+            });
+            isSessionActive = true;
+            setupEventListeners();
+            saveSessionToStorage();
+        }
 
         // Start activity tracking
         document.addEventListener('mousemove', updateActivity);
@@ -464,7 +434,7 @@ let Logger = {
             if (inactiveTime > config.sessionTimeout) {
                 Logger.info("⏹️ Session timeout due to inactivity");
                 isSessionActive = false;
-                sendSessionSummary();
+                sendDataGuaranteed('session_timeout');
             }
         }, 60000); // Check every minute
 
@@ -1116,24 +1086,28 @@ let Logger = {
     function shouldSendData() {
         if (!sessionData) return false;
         
-        // Send if we have enough events
         const totalEvents = 
             sessionData.scroll_chunks.length + 
             sessionData.hover_events.length + 
             sessionData.cta_clicks.length;
             
-        const shouldSend = totalEvents >= 5;
+        // Send if:
+        // 1. We have many events
+        if (totalEvents >= 5) return true;
         
-        if (shouldSend) {
-            Logger.debug('Events accumulated:', {
-                scrolls: sessionData.scroll_chunks.length,
-                hovers: sessionData.hover_events.length,
-                clicks: sessionData.cta_clicks.length,
-                total: totalEvents
-            });
-        }
+        // 2. User spent significant time
+        const timeOnSite = Date.now() - sessionData.start_time;
+        if (timeOnSite >= 60000) return true; // 1 minute
         
-        return shouldSend;
+        // 3. Deep scroll
+        const maxScroll = sessionData.user_behavior.scroll_depth_percentages ? 
+            Math.max(...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0;
+        if (maxScroll > 70) return true;
+        
+        // 4. Multiple page views
+        if (sessionData.page_history.length > 1) return true;
+        
+        return false;
     }
 
     // Yandex.Metrika goal tracking
@@ -1223,4 +1197,166 @@ let Logger = {
         ];
         return importantGoals.some(g => goalName.toLowerCase().includes(g));
     }
+
+    // Add reliable data collection and transmission
+    function saveSessionToStorage() {
+        try {
+            localStorage.setItem('rivox_current_session', JSON.stringify(sessionData));
+            Logger.debug('Session data saved to localStorage');
+        } catch (e) {
+            Logger.warn('Failed to save session to localStorage:', e);
+        }
+    }
+
+    function loadSessionFromStorage() {
+        try {
+            const saved = localStorage.getItem('rivox_current_session');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                // Only restore if session is recent (last 30 minutes)
+                if (Date.now() - parsed.last_activity < config.sessionTimeout) {
+                    Logger.info('Restoring previous session');
+                    return parsed;
+                }
+            }
+        } catch (e) {
+            Logger.warn('Failed to load session from localStorage:', e);
+        }
+        return null;
+    }
+
+    // Enhanced session data structure
+    function createSessionData(clientId) {
+        return {
+            client_id: clientId,
+            client_token: config.token,
+            session_id: generateSessionId(),
+            start_time: Date.now(),
+            last_activity: Date.now(),
+            page_history: [{
+                timestamp: Date.now(),
+                url: window.location.href,
+                referrer: document.referrer,
+                time_spent: 0
+            }],
+            scroll_chunks: [],
+            hover_events: [],
+            form_interactions: [],
+            cta_clicks: [],
+            modal_interactions: [],
+            utm_data: extractUTMData(),
+            metrika_goals: [],
+            conversion_data: {
+                goals_reached: [],
+                ecommerce_data: [],
+                last_goal_timestamp: null,
+                conversion_path: []
+            },
+            traffic_source: {
+                referrer: document.referrer,
+                landing_page: window.location.href,
+                entry_point: window.location.pathname
+            },
+            user_behavior: {
+                time_to_first_interaction: null,
+                total_interactions: 0,
+                interaction_frequency: [],
+                scroll_depth_percentages: [],
+                time_between_clicks: [],
+                mouse_movement_heatmap: [],
+                viewport_size: {
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                }
+            },
+            ml_features: {
+                interest_signals: [],
+                behavior_patterns: [],
+                user_segment: null,
+                conversion_probability: null,
+                funnel_analysis: {}
+            }
+        };
+    }
+
+    // Update page history on navigation
+    function updatePageHistory() {
+        if (!sessionData || !sessionData.page_history) return;
+        
+        const currentPage = sessionData.page_history[sessionData.page_history.length - 1];
+        if (currentPage) {
+            currentPage.time_spent = Date.now() - currentPage.timestamp;
+        }
+        
+        sessionData.page_history.push({
+            timestamp: Date.now(),
+            url: window.location.href,
+            referrer: document.referrer,
+            time_spent: 0
+        });
+        
+        saveSessionToStorage();
+    }
+
+    // Guaranteed data sending on important events
+    function sendDataGuaranteed(reason = 'manual') {
+        return new Promise((resolve, reject) => {
+            if (!sessionData) {
+                resolve();
+                return;
+            }
+
+            // Update time spent on current page
+            const currentPage = sessionData.page_history[sessionData.page_history.length - 1];
+            if (currentPage) {
+                currentPage.time_spent = Date.now() - currentPage.timestamp;
+            }
+
+            // Prepare complete session summary
+            const summary = {
+                ...sessionData,
+                send_reason: reason,
+                timestamp: new Date().toISOString(),
+                sdk_version: SDK_VERSION,
+                total_session_duration: Date.now() - sessionData.start_time
+            };
+
+            // Try to send data
+            sendDataWithFallback(summary)
+                .then(() => {
+                    Logger.info(`Data sent successfully (${reason})`);
+                    // Clear localStorage after successful send
+                    localStorage.removeItem('rivox_current_session');
+                    resolve();
+                })
+                .catch(error => {
+                    Logger.error(`Failed to send data (${reason}):`, error);
+                    // Save to localStorage as backup
+                    saveSessionToStorage();
+                    reject(error);
+                });
+        });
+    }
+
+    // Add beforeunload handler
+    window.addEventListener('beforeunload', () => {
+        sendDataGuaranteed('page_close');
+    });
+
+    // Add history change handler
+    window.addEventListener('popstate', updatePageHistory);
+    if (window.history.pushState) {
+        const originalPushState = window.history.pushState.bind(window.history);
+        window.history.pushState = function() {
+            originalPushState.apply(this, arguments);
+            updatePageHistory();
+        };
+    }
+
+    // Expose additional methods for debugging
+    window.RIVOX = {
+        ...window.RIVOX,
+        sendDataGuaranteed,
+        getSessionData: () => sessionData
+    };
 })(window); 
