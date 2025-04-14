@@ -559,7 +559,8 @@ function getYandexCounterId() {
 
             const params = new URLSearchParams({
                 callback: callbackName,
-                data: JSON.stringify(data)
+                data: JSON.stringify(data),
+                token: config.token
             });
 
             script.src = `${config.endpoint}?${params.toString()}`;
