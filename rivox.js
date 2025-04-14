@@ -771,44 +771,57 @@ function getYandexCounterId() {
                 const params = new URLSearchParams();
                 params.append('data', JSON.stringify(preparedData));
                 params.append('callback', callbackName);
-                params.append('test', '0');
+                params.append('origin', window.location.origin);
 
                 // Construct URL
                 const url = `${endpoint}?${params.toString()}`;
 
-                // Log full request details
-                console.log('JSONP Request Details:', {
-                    fullUrl: url,
-                    dataSize: JSON.stringify(preparedData).length,
-                    callbackName: callbackName
-                });
+                console.log('Sending JSONP request to:', url);
 
                 // Create script element
                 const script = document.createElement('script');
                 script.type = 'text/javascript';
-                script.src = url;
+                
+                // Add load event listener
+                script.onload = () => {
+                    console.log('JSONP script loaded successfully');
+                };
+
+                // Handle script load error with details
+                script.onerror = (error) => {
+                    console.error('JSONP Load Error:', {
+                        error: error,
+                        url: url,
+                        time: Date.now() - timestamp,
+                        scriptElement: script
+                    });
+                    cleanup();
+                    reject(new Error('Script load failed'));
+                };
 
                 // Setup cleanup function
                 const cleanup = () => {
-                    if (script.parentNode) script.parentNode.removeChild(script);
+                    if (script.parentNode) {
+                        script.parentNode.removeChild(script);
+                    }
                     delete window[callbackName];
                     clearTimeout(timeoutId);
                 };
 
-                // Setup timeout
+                // Setup timeout (5 seconds)
                 const timeoutId = setTimeout(() => {
-                    cleanup();
                     console.error('JSONP Request Timeout:', {
                         url: url,
                         time: Date.now() - timestamp
                     });
+                    cleanup();
                     reject(new Error('Request timeout'));
                 }, 5000);
 
                 // Setup success callback
                 window[callbackName] = (response) => {
+                    console.log('JSONP Response received:', response);
                     cleanup();
-                    console.log('JSONP Response:', response);
                     if (response && response.status === 'success') {
                         resolve(response);
                     } else {
@@ -816,18 +829,8 @@ function getYandexCounterId() {
                     }
                 };
 
-                // Handle script load error
-                script.onerror = (error) => {
-                    cleanup();
-                    console.error('JSONP Load Error:', {
-                        error: error,
-                        url: url,
-                        time: Date.now() - timestamp
-                    });
-                    reject(new Error('Script load failed'));
-                };
-
-                // Add script to document
+                // Set src and append script (do this last)
+                script.src = url;
                 document.head.appendChild(script);
 
             } catch (error) {
