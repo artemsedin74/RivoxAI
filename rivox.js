@@ -26,31 +26,163 @@ function getYandexCounterId() {
     const config = {
         endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
         debug: true,
-        sessionTimeout: 30 * 60 * 1000,
+        sessionTimeout: 30 * 60 * 1000, // 30 minutes
         scrollChunkSize: 100,
-        hoverThreshold: 1000,
-        formInteractionThreshold: 2000,
-        allowedDomains: ['spb.sotovik.shop'],
-        initDelay: 300,    // Default delay before starting trackers (ms)
-        sendDelay: 4000    // Default delay before final send (ms)
+        minInteractionGap: 500,
+        maxInactiveTime: 300000,
+        minScrollSpeed: 0.1,
+        maxScrollSpeed: 10,
+        viewportGridSize: 10,
+        minHoverDuration: 100,
+        maxHoverDuration: 30000,
+        interactionTimeWindow: 5000,
+        minFormDuration: 1000,
+        maxFormDuration: 300000,
+        minClickGap: 100,
+        maxClickGap: 10000,
+        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
+        initDelay: 300,
+        sendDelay: 60000 // Send data every minute
     };
 
     // Session data
     let sessionData = null;
     let isSessionActive = false;
     let lastActivityTime = Date.now();
+    let queuedData = [];
+    let sendTimer = null;
 
     // Update last activity time
     function updateActivity() {
-        lastActivityTime = Date.now();
-        if (sessionData) {
-            sessionData.last_activity = lastActivityTime;
+        const now = Date.now();
+        const timeSinceLastActivity = now - lastActivityTime;
+        
+        // If session was inactive and now active again
+        if (timeSinceLastActivity > config.maxInactiveTime) {
+            console.log('Session reactivated after inactivity');
+            startNewSession();
+            return;
         }
+
+        lastActivityTime = now;
+        if (sessionData) {
+            sessionData.last_activity = now;
+        }
+    }
+
+    // Start new session
+    function startNewSession() {
+        if (sessionData) {
+            // Send current session data before starting new
+            sendSessionSummary();
+        }
+
+        sessionData = {
+            client_id: generateClientId(),
+            session_id: generateSessionId(),
+            start_time: Date.now(),
+            last_activity: Date.now(),
+            page_views: [{
+                timestamp: Date.now(),
+                url: window.location.href,
+                referrer: document.referrer
+            }],
+            scroll_chunks: [],
+            hover_events: [],
+            form_interactions: [],
+            cta_clicks: [],
+            modal_interactions: [],
+            utm_data: extractUTMData(),
+            metrika_goals: [],
+            conversion_data: {
+                goals_reached: [],
+                ecommerce_data: [],
+                last_goal_timestamp: null,
+                conversion_path: []
+            },
+            traffic_source: {
+                referrer: document.referrer,
+                landing_page: window.location.href,
+                entry_point: window.location.pathname
+            },
+            user_behavior: {
+                time_to_first_interaction: null,
+                total_interactions: 0,
+                interaction_frequency: [],
+                scroll_depth_percentages: [],
+                time_between_clicks: [],
+                mouse_movement_heatmap: [],
+                viewport_size: {
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                }
+            },
+            ml_features: {
+                interest_signals: [],
+                behavior_patterns: [],
+                user_segment: null,
+                conversion_probability: null,
+                funnel_analysis: {}
+            }
+        };
+
+        isSessionActive = true;
+        console.log('New session started:', sessionData.session_id);
+    }
+
+    // Extract UTM data
+    function extractUTMData() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const utmFields = ['source', 'medium', 'campaign', 'term', 'content'];
+        const utmData = {
+            traffic_type: 'direct',
+            landing_page_type: 'unknown',
+            referrer_domain: document.referrer ? new URL(document.referrer).hostname : ''
+        };
+
+        utmFields.forEach(field => {
+            const value = urlParams.get(`utm_${field}`);
+            if (value) {
+                utmData[field] = value;
+                if (field === 'medium') {
+                    utmData.traffic_type = value;
+                }
+            }
+        });
+
+        return utmData;
+    }
+
+    // Queue data for sending
+    function queueData(data) {
+        queuedData.push({
+            timestamp: new Date().toISOString(),
+            data: data
+        });
+
+        // If queue is getting large, send immediately
+        if (queuedData.length >= 5) {
+            sendQueuedData();
+        }
+    }
+
+    // Send queued data
+    function sendQueuedData() {
+        if (queuedData.length === 0) return;
+
+        const dataToSend = queuedData;
+        queuedData = [];
+
+        sendDataJSONP(dataToSend).catch(error => {
+            console.error('Failed to send queued data:', error);
+            // Return failed items to queue
+            queuedData = [...dataToSend, ...queuedData];
+        });
     }
 
     // Get current session duration
     function getSessionDuration() {
-        return lastActivityTime - sessionData.start_time;
+        return sessionData ? (lastActivityTime - sessionData.start_time) : 0;
     }
 
     function isAllowedDomain(hostname) {
@@ -158,11 +290,37 @@ function getYandexCounterId() {
             form_interactions: [],
             cta_clicks: [],
             modal_interactions: [],
+            utm_data: extractUTMData(),
+            metrika_goals: [],
+            conversion_data: {
+                goals_reached: [],
+                ecommerce_data: [],
+                last_goal_timestamp: null,
+                conversion_path: []
+            },
+            traffic_source: {
+                referrer: document.referrer,
+                landing_page: window.location.href,
+                entry_point: window.location.pathname
+            },
             user_behavior: {
-                total_interactions: 0,
                 time_to_first_interaction: null,
+                total_interactions: 0,
+                interaction_frequency: [],
+                scroll_depth_percentages: [],
                 time_between_clicks: [],
-                scroll_depth_percentages: []
+                mouse_movement_heatmap: [],
+                viewport_size: {
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                }
+            },
+            ml_features: {
+                interest_signals: [],
+                behavior_patterns: [],
+                user_segment: null,
+                conversion_probability: null,
+                funnel_analysis: {}
             }
         };
 
@@ -184,12 +342,7 @@ function getYandexCounterId() {
         }, userConfig.initDelay);
 
         // Set up periodic data sending
-        setInterval(() => {
-            if (isSessionActive && getSessionDuration() > config.sendDelay) {
-                console.log("📤 RIVOX periodic send");
-                sendSessionSummary();
-            }
-        }, config.sendDelay);
+        startPeriodicSending();
 
         // Set up session timeout check
         setInterval(() => {
@@ -387,15 +540,10 @@ function getYandexCounterId() {
         });
     }
 
-    // Send session summary
+    // Modify sendSessionSummary to use queueing
     async function sendSessionSummary() {
-        const endpoint = getEndpointUrl();
-        
-        if (config.debug) {
-            console.log('Preparing to send session data');
-        }
+        if (!sessionData) return;
 
-        // Update session duration
         const summary = {
             ...sessionData,
             session_duration: getSessionDuration(),
@@ -405,56 +553,21 @@ function getYandexCounterId() {
             sdk_version: SDK_VERSION
         };
 
-        console.log('Session duration:', summary.session_duration + 'ms');
+        // Add to queue instead of sending immediately
+        queueData(summary);
+    }
 
-        try {
-            // Try JSONP first
-            try {
-                if (config.debug) {
-                    console.log('Attempting JSONP request');
-                }
-                await sendDataJSONP(summary);
-                if (config.debug) {
-                    console.log('Data sent successfully via JSONP');
-                }
-                return;
-            } catch (jsonpError) {
-                console.warn('JSONP request failed:', jsonpError);
-            }
-
-            // Try sendBeacon as fallback
-            if (navigator.sendBeacon) {
-                const blob = new Blob([JSON.stringify(summary)], {
-                    type: 'application/json'
-                });
-                if (navigator.sendBeacon(endpoint, blob)) {
-                    if (config.debug) {
-                        console.log('Data sent successfully via beacon');
-                    }
-                    return;
-                }
-            }
-
-            // Last resort - fetch with no-cors
-            if (config.debug) {
-                console.log('Attempting fetch with no-cors');
-            }
-            await fetch(endpoint, {
-                method: 'POST',
-                mode: 'no-cors',
-                credentials: 'omit',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(summary),
-                keepalive: true
-            });
-            if (config.debug) {
-                console.log('Data sent successfully via fetch');
-            }
-        } catch (error) {
-            console.error('Failed to send session data:', error);
+    // Start periodic sending
+    function startPeriodicSending() {
+        if (sendTimer) {
+            clearInterval(sendTimer);
         }
+
+        sendTimer = setInterval(() => {
+            if (isSessionActive) {
+                sendQueuedData();
+            }
+        }, config.sendDelay);
     }
 
     // Helper functions
