@@ -561,15 +561,47 @@ let Logger = {
         // Click tracking
         document.addEventListener('click', (e) => {
             updateActivity();
-            const target = e.target;
+            
+            // Найдем ближайший важный элемент
+            let target = e.target;
+            let closestCTA = null;
+            
+            // Поищем ближайший CTA элемент вверх по DOM
+            while (target && target !== document) {
+                if (isCTAElement(target)) {
+                    closestCTA = target;
+                    break;
+                }
+                target = target.parentElement;
+            }
+
+            // Используем найденный CTA или исходный элемент
+            const clickTarget = closestCTA || e.target;
+            
+            // Получаем точные координаты относительно страницы
+            const rect = clickTarget.getBoundingClientRect();
+            const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
+            const scrollY = window.pageYOffset || document.documentElement.scrollTop;
+
             const clickData = {
                 timestamp: Date.now(),
-                element: getElementPath(target),
+                element: getElementPath(clickTarget),
+                element_text: (clickTarget.textContent || clickTarget.value || '').trim(),
                 position: {
-                    x: e.clientX,
-                    y: e.clientY
+                    x: Math.round(e.clientX + scrollX), // абсолютная позиция
+                    y: Math.round(e.clientY + scrollY),
+                    relative: {
+                        x: Math.round(e.clientX), // относительно viewport
+                        y: Math.round(e.clientY)
+                    },
+                    element: { // позиция элемента
+                        top: Math.round(rect.top + scrollY),
+                        left: Math.round(rect.left + scrollX),
+                        width: Math.round(rect.width),
+                        height: Math.round(rect.height)
+                    }
                 },
-                is_cta: isCTAElement(target)
+                is_cta: isCTAElement(clickTarget)
             };
 
             Logger.debug('🖱️ Click event captured:', clickData);
@@ -600,10 +632,10 @@ let Logger = {
                 });
             }
 
-            // Send data after each click on important elements
-            if (isImportantElement(target) || shouldSendData()) {
-                Logger.info('Sending data after click');
-                sendSessionSummary().catch(Logger.error);
+            // Проверяем условия отправки вместо немедленной отправки
+            if (shouldSendData()) {
+                Logger.info('Accumulated enough events, sending data');
+                sendDataGuaranteed('events_threshold').catch(Logger.error);
             }
         });
 
@@ -672,6 +704,9 @@ let Logger = {
             Logger.warn('No session data to send or session not active');
             return;
         }
+
+        // Update ML features before sending
+        updateMLFeatures();
 
         // Prepare data for sending
         const summary = {
@@ -938,11 +973,46 @@ let Logger = {
 
     function isCTAElement(element) {
         if (!element) return false;
+
+        // CTA теги
+        const ctaTags = ['A', 'BUTTON', 'INPUT[type="submit"]', 'INPUT[type="button"]'];
         
-        return element.tagName === 'A' || 
-               element.tagName === 'BUTTON' || 
-               element.tagName === 'INPUT' ||
-               (element.hasAttribute && element.hasAttribute('data-rivox-cta'));
+        // CTA классы
+        const ctaClasses = [
+            'btn', 'button', 'cta', 'buy', 'add-to-cart', 'checkout',
+            'order', 'submit', 'callback', 'contact', 'phone'
+        ];
+
+        // CTA текст
+        const ctaTexts = [
+            'купить', 'заказать', 'добавить', 'корзин', 'оформить',
+            'позвонить', 'заказать звонок', 'отправить', 'оставить заявку'
+        ];
+
+        // Проверка по тегу
+        const isCtaTag = ctaTags.some(tag => {
+            const [tagName, type] = tag.split('[type="');
+            if (type) {
+                return element.tagName === tagName && element.type === type.slice(0, -1);
+            }
+            return element.tagName === tag;
+        });
+
+        // Проверка по классам
+        const hasCtaClass = element.className && typeof element.className === 'string' && 
+            ctaClasses.some(cls => element.className.toLowerCase().includes(cls));
+
+        // Проверка по тексту
+        const elementText = (element.textContent || element.value || '').toLowerCase();
+        const hasCtaText = ctaTexts.some(text => elementText.includes(text));
+
+        // Проверка по data-атрибутам
+        const hasCtaAttr = element.hasAttribute('data-rivox-cta') || 
+                          element.hasAttribute('data-cta') ||
+                          element.hasAttribute('data-buy') ||
+                          element.hasAttribute('data-product-buy');
+
+        return isCtaTag || hasCtaClass || hasCtaText || hasCtaAttr;
     }
 
     // Expose public API
