@@ -150,7 +150,6 @@ function getYandexCounterId() {
         sessionData = {
             client_id: clientId,
             session_id: generateSessionId(),
-            data_token: userConfig.token,
             start_time: Date.now(),
             last_activity: Date.now(),
             page_views: [],
@@ -734,63 +733,36 @@ function getYandexCounterId() {
         return new Promise((resolve, reject) => {
             const script = document.createElement('script');
             const callbackName = 'rivox_callback_' + Date.now();
-            let retryCount = 0;
-            const maxRetries = 3;
-            const retryDelay = 1000; // 1 second
+            
+            // Create global callback
+            window[callbackName] = function(response) {
+                delete window[callbackName];
+                document.body.removeChild(script);
+                resolve(response);
+            };
 
-            function attemptSend() {
-                // Create global callback
-                window[callbackName] = function(response) {
-                    cleanup();
-                    resolve(response);
-                };
+            // Add error handler
+            script.onerror = () => {
+                delete window[callbackName];
+                document.body.removeChild(script);
+                reject(new Error('JSONP request failed'));
+            };
 
-                // Add error handler
-                script.onerror = () => {
-                    cleanup();
-                    if (retryCount < maxRetries) {
-                        retryCount++;
-                        console.log(`JSONP request failed, retrying (${retryCount}/${maxRetries})...`);
-                        setTimeout(attemptSend, retryDelay);
-                    } else {
-                        console.error('JSONP request failed after', maxRetries, 'retries');
-                        reject(new Error('JSONP request failed'));
-                    }
-                };
+            // Prepare URL with data
+            const params = new URLSearchParams({
+                callback: callbackName,
+                data: JSON.stringify(data)
+            });
 
-                // Prepare URL with data
-                const params = new URLSearchParams({
-                    callback: callbackName,
-                    data: JSON.stringify(data)
-                });
-
-                script.src = `${config.endpoint}?${params.toString()}`;
-                document.body.appendChild(script);
-            }
-
-            function cleanup() {
-                if (window[callbackName]) {
-                    delete window[callbackName];
-                }
-                if (script.parentNode) {
-                    document.body.removeChild(script);
-                }
-            }
-
-            // Start first attempt
-            attemptSend();
+            script.src = `${config.endpoint}?${params.toString()}`;
+            document.body.appendChild(script);
 
             // Set timeout
             setTimeout(() => {
                 if (window[callbackName]) {
-                    cleanup();
-                    if (retryCount < maxRetries) {
-                        retryCount++;
-                        console.log(`JSONP request timed out, retrying (${retryCount}/${maxRetries})...`);
-                        attemptSend();
-                    } else {
-                        reject(new Error('JSONP request timeout'));
-                    }
+                    delete window[callbackName];
+                    document.body.removeChild(script);
+                    reject(new Error('JSONP request timeout'));
                 }
             }, 10000); // 10 second timeout
         });
@@ -1700,16 +1672,16 @@ function getYandexCounterId() {
     function setupMetrikaGoalsTracking() {
         // Проверяем наличие Метрики
         if (typeof ym === 'undefined') {
-            console.warn('Yandex.Metrika not found, will retry in 500ms');
-            setTimeout(setupMetrikaGoalsTracking, 500);
+            console.warn('Yandex.Metrika not found, will retry in 1 second');
+            setTimeout(setupMetrikaGoalsTracking, 1000);
             return;
         }
 
         // Получаем ID счетчика
         const counterId = getYandexCounterId();
         if (!counterId) {
-            console.warn('Yandex.Metrika counter ID not found, will retry in 500ms');
-            setTimeout(setupMetrikaGoalsTracking, 500);
+            console.warn('Yandex.Metrika counter ID not found, will retry in 1 second');
+            setTimeout(setupMetrikaGoalsTracking, 1000);
             return;
         }
 
@@ -1718,20 +1690,12 @@ function getYandexCounterId() {
         // Сохраняем оригинальную функцию
         const originalYm = window.ym;
 
-        // Проверяем, не была ли уже подменена функция
-        if (window.ym._rivox_wrapped) {
-            console.log('Yandex.Metrika goals tracking already set up');
-            return;
-        }
-
         // Переопределяем функцию ym
         window.ym = function(counterId, method, ...args) {
             // Отслеживаем цели
             if (method === 'reachGoal') {
                 const goalName = args[0];
                 const goalParams = args[1] || {};
-                
-                console.log('🎯 Intercepted goal:', goalName, goalParams);
                 
                 // Записываем данные о цели
                 const goalData = {
@@ -1766,6 +1730,8 @@ function getYandexCounterId() {
                     url: window.location.href
                 });
 
+                console.log('🎯 Goal tracked:', goalName, goalParams);
+
                 // Немедленно отправляем данные о цели
                 sendGoalData(goalData);
             }
@@ -1774,21 +1740,33 @@ function getYandexCounterId() {
             return originalYm.apply(this, arguments);
         };
 
-        // Помечаем функцию как обработанную
-        window.ym._rivox_wrapped = true;
-
         // Проверяем работу отслеживания
         console.log('✅ Yandex.Metrika goals tracking setup complete');
     }
 
-    // Инициализируем перехват целей как можно раньше
-    (function initMetrikaTracking() {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', setupMetrikaGoalsTracking);
-        } else {
-            setupMetrikaGoalsTracking();
+    // Функция для получения ID счетчика Метрики
+    function getYandexCounterId() {
+        // Проверяем глобальную переменную
+        if (window.ymCounterId) return window.ymCounterId;
+        
+        // Ищем счетчик в объектах окна
+        const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
+        if (counterObjects.length > 0) {
+            return parseInt(counterObjects[0].replace('yaCounter', ''));
         }
-    })();
+
+        // Ищем в коде страницы
+        const metrikaScripts = Array.from(document.scripts)
+            .filter(script => script.textContent && script.textContent.includes('ym('))
+            .map(script => script.textContent);
+
+        if (metrikaScripts.length > 0) {
+            const match = metrikaScripts[0].match(/ym\((\d+),/);
+            if (match) return parseInt(match[1]);
+        }
+
+        return null;
+    }
 
     // Helper functions for goals tracking
     function getMaxScrollDepth() {
@@ -1844,7 +1822,7 @@ function getYandexCounterId() {
             console.log('Sending goal data:', goalData);
         }
 
-        // Try to send via JSONP with retries
+        // Try to send via JSONP
         sendDataJSONP({
             type: 'goal',
             client_id: sessionData.client_id,
@@ -1853,63 +1831,8 @@ function getYandexCounterId() {
             conversion_path: sessionData.conversion_data.conversion_path
         }).catch(error => {
             console.error('Failed to send goal data:', error);
-            // Store failed request for retry
-            if (window.localStorage) {
-                try {
-                    const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
-                    failedRequests.push({
-                        timestamp: Date.now(),
-                        endpoint: endpoint,
-                        data: goalData
-                    });
-                    // Keep only last 10 failed requests
-                    if (failedRequests.length > 10) {
-                        failedRequests.shift();
-                    }
-                    localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
-                    console.log('Failed request stored for retry');
-                } catch (e) {
-                    console.warn('Failed to store failed request:', e);
-                }
-            }
         });
     }
-
-    // Add retry mechanism for failed requests
-    function retryFailedRequests() {
-        if (!window.localStorage) return;
-        
-        try {
-            const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
-            if (failedRequests.length === 0) return;
-            
-            console.log('Retrying', failedRequests.length, 'failed requests');
-            
-            const retryPromises = failedRequests.map(request => 
-                sendDataJSONP(request.data)
-                    .then(() => {
-                        console.log('Successfully retried request from:', new Date(request.timestamp));
-                        return true;
-                    })
-                    .catch(() => false)
-            );
-            
-            Promise.all(retryPromises).then(results => {
-                // Remove successful retries
-                const remainingRequests = failedRequests.filter((_, index) => !results[index]);
-                localStorage.setItem('rivox_failed_requests', JSON.stringify(remainingRequests));
-                
-                console.log('Retry complete.', 
-                    results.filter(r => r).length, 'succeeded,',
-                    remainingRequests.length, 'remaining');
-            });
-        } catch (e) {
-            console.warn('Error retrying failed requests:', e);
-        }
-    }
-
-    // Retry failed requests periodically
-    setInterval(retryFailedRequests, 5 * 60 * 1000); // Every 5 minutes
 
     // Expose public API
     window.RIVOX = {
