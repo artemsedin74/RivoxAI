@@ -221,8 +221,25 @@ function getYandexCounterId() {
 
     // Validate and get endpoint URL
     function getEndpointUrl() {
-        // Use the correct deployment URL
-        return 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec';
+        const baseUrl = 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec';
+        
+        // Log the endpoint URL
+        console.log('Apps Script URL:', baseUrl);
+        
+        // Test the endpoint with a simple request
+        fetch(`${baseUrl}?test=1`)
+            .then(response => {
+                console.log('Apps Script test response:', {
+                    status: response.status,
+                    ok: response.ok,
+                    headers: Object.fromEntries(response.headers)
+                });
+            })
+            .catch(error => {
+                console.error('Apps Script test failed:', error);
+            });
+        
+        return baseUrl;
     }
 
     // Load configuration from script data attributes
@@ -740,18 +757,13 @@ function getYandexCounterId() {
     function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
             try {
-                // Log endpoint
-                console.log('JSONP Endpoint:', endpoint);
-
                 // Generate callback name
                 const timestamp = Date.now();
                 const callbackName = `rivoxCallback${timestamp}`;
 
-                // Prepare data
+                // Prepare minimal data
                 const preparedData = {
                     ...data,
-                    client_domain: window.location.hostname,
-                    client_url: window.location.href,
                     timestamp: new Date().toISOString()
                 };
 
@@ -759,20 +771,16 @@ function getYandexCounterId() {
                 const params = new URLSearchParams();
                 params.append('data', JSON.stringify(preparedData));
                 params.append('callback', callbackName);
+                params.append('test', '0');
 
-                // Construct full URL
+                // Construct URL
                 const url = `${endpoint}?${params.toString()}`;
 
-                // Log detailed request info
-                console.log('JSONP Debug Info:', {
+                // Log full request details
+                console.log('JSONP Request Details:', {
                     fullUrl: url,
-                    endpoint: endpoint,
-                    callback: callbackName,
-                    params: {
-                        data: JSON.stringify(preparedData).substring(0, 100) + '...',
-                        callback: callbackName
-                    },
-                    headers: document.cookie ? 'Cookies present' : 'No cookies'
+                    dataSize: JSON.stringify(preparedData).length,
+                    callbackName: callbackName
                 });
 
                 // Create script element
@@ -790,6 +798,10 @@ function getYandexCounterId() {
                 // Setup timeout
                 const timeoutId = setTimeout(() => {
                     cleanup();
+                    console.error('JSONP Request Timeout:', {
+                        url: url,
+                        time: Date.now() - timestamp
+                    });
                     reject(new Error('Request timeout'));
                 }, 5000);
 
@@ -806,8 +818,12 @@ function getYandexCounterId() {
 
                 // Handle script load error
                 script.onerror = (error) => {
-                    console.error('Script load error:', error);
                     cleanup();
+                    console.error('JSONP Load Error:', {
+                        error: error,
+                        url: url,
+                        time: Date.now() - timestamp
+                    });
                     reject(new Error('Script load failed'));
                 };
 
