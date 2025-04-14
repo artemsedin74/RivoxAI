@@ -510,7 +510,7 @@ function getYandexCounterId() {
                 is_cta: isCTAElement(target)
             };
 
-            console.log('Click event captured:', clickData);
+            console.log('🖱️ Click event captured:', clickData);
             
             sessionData.cta_clicks.push(clickData);
             sessionData.user_behavior.total_interactions++;
@@ -537,6 +537,12 @@ function getYandexCounterId() {
                     delta: 0
                 });
             }
+
+            // Send data immediately after click
+            if (sessionData.cta_clicks.length % 3 === 0) { // Send after every 3 clicks
+                console.log('🔄 Sending data after click...');
+                sendSessionSummary();
+            }
         });
 
         console.log('Event listeners setup complete');
@@ -549,35 +555,34 @@ function getYandexCounterId() {
             const callbackName = 'rivox_callback_' + Date.now();
             
             window[callbackName] = function(response) {
+                console.log('📥 JSONP response received:', response);
                 delete window[callbackName];
                 document.body.removeChild(script);
                 resolve(response);
             };
 
-            script.onerror = () => {
+            script.onerror = (error) => {
+                console.error('❌ JSONP script error:', error);
                 delete window[callbackName];
                 document.body.removeChild(script);
                 reject(new Error('JSONP request failed'));
             };
 
-            // Add data_token to the data object
-            const dataToSend = {
-                ...data,
-                data_token: config.token
-            };
-
             const params = new URLSearchParams({
                 callback: callbackName,
-                data: JSON.stringify(dataToSend),
+                data: JSON.stringify(data),
                 token: config.token
             });
 
-            script.src = `${config.endpoint}?${params.toString()}`;
+            const url = `${config.endpoint}?${params.toString()}`;
+            console.log('📤 JSONP request URL:', url);
+            script.src = url;
             document.body.appendChild(script);
 
             // Set timeout
             setTimeout(() => {
                 if (window[callbackName]) {
+                    console.error('⏱️ JSONP request timeout');
                     delete window[callbackName];
                     document.body.removeChild(script);
                     reject(new Error('JSONP request timeout'));
@@ -586,15 +591,18 @@ function getYandexCounterId() {
         });
     }
 
-    // Modify sendSessionSummary to use queueing
+    // Modify sendSessionSummary to add logging
     async function sendSessionSummary() {
-        if (!sessionData || !isSessionActive) return;
+        if (!sessionData || !isSessionActive) {
+            console.log('No session data to send or session not active');
+            return;
+        }
 
         const summary = {
             ...sessionData,
             client_id: sessionData.client_id,
-            client_token: config.token,
-            timestamp: Date.now(),
+            data_token: config.token,  // Explicitly set data_token
+            timestamp: new Date().toISOString(),
             session_duration: getSessionDuration(),
             page_views: sessionData.page_views.length,
             scroll_chunks: sessionData.scroll_chunks.length,
@@ -606,17 +614,13 @@ function getYandexCounterId() {
             sdk_version: SDK_VERSION
         };
 
-        // Check for duplicates
-        if (isDuplicate(summary)) {
-            Logger.log('Skipping duplicate data send');
-            return;
-        }
+        console.log('Preparing to send session data:', summary);
 
         try {
-            await sendDataWithFallback(summary);
-            Logger.success('Session data sent successfully');
+            const response = await sendDataWithFallback(summary);
+            console.log('Session data sent successfully:', response);
         } catch (error) {
-            Logger.warn('Adding failed request to retry queue');
+            console.error('Failed to send session data:', error);
             addToFailedQueue(summary);
         }
     }
@@ -886,33 +890,45 @@ function getYandexCounterId() {
         }
     }
 
+    // Modify sendDataWithFallback to add logging
     async function sendDataWithFallback(data) {
         // Add client timestamp if not present
         if (!data.timestamp) {
             data.timestamp = new Date().toISOString();
         }
 
+        // Ensure data_token is present
+        data.data_token = config.token;
+
+        console.log('🔄 Attempting to send data:', {
+            token: config.token,
+            endpoint: config.endpoint,
+            dataSize: JSON.stringify(data).length,
+            timestamp: data.timestamp
+        });
+
         try {
-            Logger.log('Attempting JSONP request...');
-            await sendDataJSONP(data);
-            Logger.success('Data sent via JSONP');
-            return;
+            console.log('📡 Trying JSONP request...');
+            const response = await sendDataJSONP(data);
+            console.log('✅ JSONP request successful:', response);
+            return response;
         } catch (error) {
-            Logger.warn('JSONP failed, trying beacon API...', error);
+            console.warn('⚠️ JSONP failed, trying beacon API...', error);
             
             if (navigator.sendBeacon) {
                 try {
                     const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
                     const success = navigator.sendBeacon(config.endpoint, blob);
                     if (success) {
-                        Logger.success('Data sent via beacon API');
-                        return;
+                        console.log('✅ Data sent via beacon API');
+                        return { success: true, method: 'beacon' };
                     }
                 } catch (error) {
-                    Logger.warn('Beacon API failed', error);
+                    console.error('❌ Beacon API failed:', error);
                 }
             }
             
+            console.error('❌ All send methods failed');
             throw new Error('All send methods failed');
         }
     }
