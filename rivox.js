@@ -10,11 +10,38 @@ function isYandexMetrikaReady() {
     return typeof ym !== 'undefined' || typeof Ya !== 'undefined' || !!window.yaCounter;
 }
 
+// Updated function to be more robust
 function getYandexCounterId() {
+    // 1. Check explicitly set variable
     if (window.ymCounterId) return window.ymCounterId;
     
-    const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
-    return counterObjects.length > 0 ? counterObjects[0].replace('yaCounter', '') : null;
+    // 2. Look for yaCounter object and extract ID
+    for (const key in window) {
+        if (key.startsWith('yaCounter')) {
+            const counterId = key.replace('yaCounter', '');
+            if (counterId && !isNaN(Number(counterId))) {
+                Logger.debug('Found counter ID via yaCounter object:', counterId);
+                return counterId;
+            }
+        }
+    }
+    
+    // 3. Look for ym object and its counters
+    if (typeof ym !== 'undefined') {
+        try {
+            // Try common internal properties
+            const counters = ym.a || ym.counters || ym.__counters || []; 
+            if (counters.length > 0 && counters[0] && counters[0].id) {
+                 Logger.debug('Found counter ID via ym internal property:', counters[0].id);
+                 return counters[0].id;
+            }
+        } catch (e) {
+            Logger.warn('Error checking ym internal properties:', e);
+        }
+    }
+
+    Logger.warn('Yandex.Metrika counter ID not found after checking multiple sources.');
+    return null; // Return null if not found
 }
 
 // Define a placeholder Logger globally first
