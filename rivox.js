@@ -454,6 +454,12 @@ function getYandexCounterId() {
                 );
                 console.log('Max scroll depth:', maxScrollPercent.toFixed(2) + '%');
             }, 1000);
+
+            // Check if we should send data
+            if (shouldSendData()) {
+                console.log('🔄 Sending data after accumulating events...');
+                sendSessionSummary();
+            }
         }, 100));
 
         // Hover tracking
@@ -470,6 +476,12 @@ function getYandexCounterId() {
                 console.log('Hover event started:', {
                     element: getElementPath(target)
                 });
+            }
+
+            // Check if we should send data
+            if (shouldSendData()) {
+                console.log('🔄 Sending data after accumulating events...');
+                sendSessionSummary();
             }
         }, 100));
 
@@ -538,9 +550,9 @@ function getYandexCounterId() {
                 });
             }
 
-            // Send data immediately after click
-            if (sessionData.cta_clicks.length % 3 === 0) { // Send after every 3 clicks
-                console.log('🔄 Sending data after click...');
+            // Check if we should send data
+            if (shouldSendData()) {
+                console.log('🔄 Sending data after accumulating events...');
                 sendSessionSummary();
             }
         });
@@ -568,9 +580,17 @@ function getYandexCounterId() {
                 reject(new Error('JSONP request failed'));
             };
 
+            // Ensure all required fields are present
+            const sendData = {
+                ...data,
+                client_token: config.token,
+                timestamp: data.timestamp || new Date().toISOString(),
+                sdk_version: SDK_VERSION
+            };
+
             const params = new URLSearchParams({
                 callback: callbackName,
-                data: JSON.stringify(data),
+                data: JSON.stringify(sendData),
                 token: config.token
             });
 
@@ -598,29 +618,58 @@ function getYandexCounterId() {
             return;
         }
 
+        // Prepare data for sending
         const summary = {
-            ...sessionData,
             client_id: sessionData.client_id,
-            data_token: config.token,  // Explicitly set data_token
+            client_token: config.token,
+            session_id: sessionData.session_id,
             timestamp: new Date().toISOString(),
-            session_duration: getSessionDuration(),
-            page_views: sessionData.page_views.length,
-            scroll_chunks: sessionData.scroll_chunks.length,
-            max_scroll_depth: sessionData.max_scroll_depth || 0,
-            clicks: sessionData.cta_clicks.length,
-            hovers: sessionData.hover_events.length,
-            form_interactions: sessionData.form_interactions.length,
-            time_on_page: Date.now() - sessionData.last_activity,
-            sdk_version: SDK_VERSION
+            sdk_version: SDK_VERSION,
+            
+            // Page info
+            page_url: window.location.href,
+            domain: window.location.hostname,
+            path: window.location.pathname,
+            
+            // Session metrics
+            session_duration: Date.now() - sessionData.start_time,
+            time_to_first_interaction: sessionData.user_behavior.time_to_first_interaction,
+            total_interactions: sessionData.user_behavior.total_interactions,
+            
+            // Scroll data
+            scroll_depth_max: sessionData.user_behavior.scroll_depth_percentages ? 
+                Math.max(...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0,
+            scroll_count: sessionData.scroll_chunks.length,
+            
+            // Click data
+            click_count: sessionData.cta_clicks.length,
+            click_elements: sessionData.cta_clicks.map(click => ({
+                element: click.element,
+                timestamp: click.timestamp
+            })),
+            
+            // Hover data
+            hover_count: sessionData.hover_events.length,
+            hover_elements: sessionData.hover_events.map(hover => ({
+                element: hover.element,
+                duration: hover.duration
+            }))
         };
 
-        console.log('Preparing to send session data:', summary);
+        console.log('📊 Preparing to send session summary:', summary);
 
         try {
             const response = await sendDataWithFallback(summary);
-            console.log('Session data sent successfully:', response);
+            console.log('✅ Session data sent successfully:', response);
+            
+            // Clear events after successful send
+            sessionData.scroll_chunks = [];
+            sessionData.hover_events = [];
+            sessionData.cta_clicks = [];
+            
+            return response;
         } catch (error) {
-            console.error('Failed to send session data:', error);
+            console.error('❌ Failed to send session data:', error);
             addToFailedQueue(summary);
         }
     }
@@ -931,5 +980,17 @@ function getYandexCounterId() {
             console.error('❌ All send methods failed');
             throw new Error('All send methods failed');
         }
+    }
+
+    function shouldSendData() {
+        if (!sessionData) return false;
+        
+        // Send if we have enough events
+        const totalEvents = 
+            sessionData.scroll_chunks.length + 
+            sessionData.hover_events.length + 
+            sessionData.cta_clicks.length;
+            
+        return totalEvents >= 10; // Send after 10 events total
     }
 })(window); 
