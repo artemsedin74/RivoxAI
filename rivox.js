@@ -100,6 +100,11 @@ function getYandexCounterId() {
 
     // Улучшаем отслеживание кликов
     document.addEventListener('click', (e) => {
+        if (!sessionData || !sessionData.user_behavior) {
+            console.warn('Session data not properly initialized');
+            return;
+        }
+
         const target = e.target;
         const clickData = {
             timestamp: Date.now(),
@@ -125,24 +130,17 @@ function getYandexCounterId() {
         }
 
         // Обновляем время между кликами
-        const lastClick = sessionData.user_behavior.time_between_clicks[
-            sessionData.user_behavior.time_between_clicks.length - 1
-        ];
-        
-        if (lastClick) {
+        const currentTime = Date.now();
+        if (sessionData.user_behavior.last_click_time) {
             sessionData.user_behavior.time_between_clicks.push({
-                timeDelta: Date.now() - lastClick.timestamp,
-                timestamp: Date.now()
-            });
-        } else {
-            sessionData.user_behavior.time_between_clicks.push({
-                timeDelta: 0,
-                timestamp: Date.now()
+                timeDelta: currentTime - sessionData.user_behavior.last_click_time,
+                timestamp: currentTime
             });
         }
+        sessionData.user_behavior.last_click_time = currentTime;
 
         // Обновляем общее количество взаимодействий
-        sessionData.user_behavior.total_interactions++;
+        sessionData.user_behavior.total_interactions = (sessionData.user_behavior.total_interactions || 0) + 1;
     });
 
     // Проверка интерактивности элемента
@@ -286,7 +284,10 @@ function getYandexCounterId() {
                     viewport_size: {
                         width: window.innerWidth,
                         height: window.innerHeight
-                    }
+                    },
+                    total_interactions: 0,
+                    time_between_clicks: [], // Initialize the array
+                    last_click_time: null
                 },
                 device_info: {
                     user_agent: navigator.userAgent,
@@ -708,10 +709,11 @@ function getYandexCounterId() {
                     throw new Error('RIVOX SDK script tag not found');
                 }
                 
-                // Extract the base URL from the script src
-                const scriptSrc = sdkScript.src;
-                const baseUrl = scriptSrc.substring(0, scriptSrc.lastIndexOf('/'));
-                const endpoint = baseUrl + '/exec'; // Apps Script endpoint
+                // Get the endpoint URL
+                const endpoint = getEndpointUrl();
+                if (!endpoint) {
+                    throw new Error('Invalid endpoint URL');
+                }
                 
                 // Create URL with parameters
                 const params = new URLSearchParams();
@@ -720,7 +722,7 @@ function getYandexCounterId() {
                 params.append('origin', window.location.origin);
                 params.append('_', Date.now()); // Cache buster
                 
-                // Set script source
+                // Set script source with full URL
                 script.src = `${endpoint}?${params.toString()}`;
                 
                 if (config.debug) {
@@ -743,10 +745,11 @@ function getYandexCounterId() {
                     delete window[callbackName];
                 }
                 
-                // Handle errors
-                script.onerror = function() {
+                // Handle errors with more detail
+                script.onerror = function(error) {
                     cleanup();
-                    reject(new Error('Failed to load JSONP script'));
+                    console.error('JSONP script error:', error);
+                    reject(new Error('Failed to load JSONP script: ' + (error.message || 'Network error')));
                 };
                 
                 // Add script to page
@@ -755,10 +758,11 @@ function getYandexCounterId() {
                 // Set timeout
                 setTimeout(() => {
                     cleanup();
-                    reject(new Error('JSONP request timeout'));
+                    reject(new Error('JSONP request timeout after 10 seconds'));
                 }, 10000);
                 
             } catch (error) {
+                console.error('JSONP setup error:', error);
                 reject(error);
             }
         });
