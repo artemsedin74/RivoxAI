@@ -739,8 +739,13 @@ function getYandexCounterId() {
 
     function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
-            const callbackName = `rivoxCallback${Date.now()}${Math.random().toString(36).substr(2)}`;
+            // Generate a unique callback name with only alphanumeric characters
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substring(2, 10);
+            const callbackName = `rivoxCallback${timestamp}${random}`;
+
             let timeoutId;
+            let scriptElement;
 
             // Prepare data for transmission
             const preparedData = {
@@ -749,58 +754,77 @@ function getYandexCounterId() {
                 client_url: window.location.href,
                 timestamp: new Date().toISOString()
             };
-            
-            // Create URL with parameters
+
+            // Create URL parameters
             const params = new URLSearchParams();
             params.append('data', JSON.stringify(preparedData));
             params.append('callback', callbackName);
             params.append('origin', window.location.origin);
-            params.append('t', Date.now()); // cache buster
+            params.append('t', timestamp); // cache buster
 
-            // Create script element
-            const script = document.createElement('script');
-            script.type = 'text/javascript';
-            script.async = true;
-
-            // Setup cleanup
+            // Setup cleanup function
             const cleanup = () => {
-                if (timeoutId) clearTimeout(timeoutId);
-                if (script.parentNode) script.parentNode.removeChild(script);
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+                if (scriptElement && scriptElement.parentNode) {
+                    scriptElement.parentNode.removeChild(scriptElement);
+                }
                 delete window[callbackName];
             };
 
-            // Handle success
+            // Handle success callback
             window[callbackName] = (response) => {
                 cleanup();
                 if (response && response.status === 'success') {
+                    if (config.debug) {
+                        console.log('JSONP response received:', response);
+                    }
                     resolve(response);
                 } else {
                     reject(new Error(response?.message || 'Invalid server response'));
                 }
             };
 
+            // Create script element
+            scriptElement = document.createElement('script');
+            scriptElement.type = 'text/javascript';
+            scriptElement.async = true;
+
             // Handle load error
-            script.onerror = () => {
+            scriptElement.onerror = () => {
                 cleanup();
                 reject(new Error('Failed to load script'));
             };
 
-            // Set timeout (5 seconds)
+            // Set shorter timeout (3 seconds)
             timeoutId = setTimeout(() => {
                 cleanup();
                 reject(new Error('Request timeout'));
-            }, 5000);
+            }, 3000);
 
             // Log request details
-            console.log('JSONP request:', {
-                url: endpoint.substring(0, 100) + '...',
-                callbackName,
-                dataSize: JSON.stringify(preparedData).length
-            });
+            if (config.debug) {
+                console.log('JSONP request:', {
+                    url: endpoint,
+                    callbackName,
+                    dataSize: JSON.stringify(preparedData).length,
+                    timestamp: new Date().toISOString()
+                });
+            }
 
-            // Set source and append script
-            script.src = `${endpoint}?${params.toString()}`;
-            document.head.appendChild(script);
+            // Construct and validate URL
+            try {
+                const url = new URL(endpoint);
+                url.search = params.toString();
+                scriptElement.src = url.toString();
+                
+                // Append script to document
+                document.head.appendChild(scriptElement);
+            } catch (error) {
+                cleanup();
+                reject(new Error(`Invalid endpoint URL: ${error.message}`));
+            }
         });
     }
 
