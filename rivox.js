@@ -1,3 +1,42 @@
+// Logger utility with improved formatting and levels
+const Logger = {
+    LEVELS: {
+        DEBUG: 0,
+        INFO: 1,
+        WARN: 2,
+        ERROR: 3
+    },
+    level: 1, // Default to INFO level
+    
+    setLevel: function(level) {
+        this.level = level;
+    },
+    
+    debug: function(msg, data) {
+        if (this.level <= this.LEVELS.DEBUG && config.debug) {
+            console.log(`rivox.js [DEBUG]: ${msg}`, data || '');
+        }
+    },
+    
+    info: function(msg, data) {
+        if (this.level <= this.LEVELS.INFO && config.debug) {
+            console.log(`rivox.js ℹ️: ${msg}`, data || '');
+        }
+    },
+    
+    warn: function(msg, data) {
+        if (this.level <= this.LEVELS.WARN) {
+            console.warn(`rivox.js ⚠️: ${msg}`, data || '');
+        }
+    },
+    
+    error: function(msg, error) {
+        if (this.level <= this.LEVELS.ERROR) {
+            console.error(`rivox.js ❌: ${msg}`, error || '');
+        }
+    }
+};
+
 /**
  * RIVOX SDK - Client-side tracking and analytics
  * Version: 4.6.3
@@ -883,45 +922,6 @@ function getYandexCounterId() {
             Logger.error('Failed to initialize RIVOX SDK:', error);
         });
     })();
-
-    // Logger utility with improved formatting and levels
-    const Logger = {
-        LEVELS: {
-            DEBUG: 0,
-            INFO: 1,
-            WARN: 2,
-            ERROR: 3
-        },
-        level: 1, // Default to INFO level
-        
-        setLevel: function(level) {
-            this.level = level;
-        },
-        
-        debug: function(msg, data) {
-            if (this.level <= this.LEVELS.DEBUG && config.debug) {
-                console.log(`rivox.js [DEBUG]: ${msg}`, data || '');
-            }
-        },
-        
-        info: function(msg, data) {
-            if (this.level <= this.LEVELS.INFO && config.debug) {
-                console.log(`rivox.js ℹ️: ${msg}`, data || '');
-            }
-        },
-        
-        warn: function(msg, data) {
-            if (this.level <= this.LEVELS.WARN) {
-                console.warn(`rivox.js ⚠️: ${msg}`, data || '');
-            }
-        },
-        
-        error: function(msg, error) {
-            if (this.level <= this.LEVELS.ERROR) {
-                console.error(`rivox.js ❌: ${msg}`, error || '');
-            }
-        }
-    };
 
     // Auto-initialize after DOM is loaded
     document.addEventListener('DOMContentLoaded', function() {
