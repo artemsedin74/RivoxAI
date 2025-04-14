@@ -37,6 +37,21 @@ function getYandexCounterId() {
 
     // Session data
     let sessionData = null;
+    let isSessionActive = false;
+    let lastActivityTime = Date.now();
+
+    // Update last activity time
+    function updateActivity() {
+        lastActivityTime = Date.now();
+        if (sessionData) {
+            sessionData.last_activity = lastActivityTime;
+        }
+    }
+
+    // Get current session duration
+    function getSessionDuration() {
+        return lastActivityTime - sessionData.start_time;
+    }
 
     function isAllowedDomain(hostname) {
         if (!hostname) return false;
@@ -133,15 +148,32 @@ function getYandexCounterId() {
             session_id: generateSessionId(),
             start_time: Date.now(),
             last_activity: Date.now(),
-            page_views: [],
+            page_views: [{
+                timestamp: Date.now(),
+                url: window.location.href,
+                referrer: document.referrer
+            }],
             scroll_chunks: [],
             hover_events: [],
             form_interactions: [],
             cta_clicks: [],
-            modal_interactions: []
+            modal_interactions: [],
+            user_behavior: {
+                total_interactions: 0,
+                time_to_first_interaction: null,
+                time_between_clicks: [],
+                scroll_depth_percentages: []
+            }
         };
 
+        isSessionActive = true;
         setupEventListeners();
+
+        // Start activity tracking
+        document.addEventListener('mousemove', updateActivity);
+        document.addEventListener('keydown', updateActivity);
+        document.addEventListener('scroll', updateActivity);
+        document.addEventListener('click', updateActivity);
 
         // Start trackers with configured delay
         setTimeout(() => {
@@ -151,13 +183,23 @@ function getYandexCounterId() {
             }
         }, userConfig.initDelay);
 
-        // Final send with configured delay
-        setTimeout(() => {
-            if (typeof RIVOX.sendSessionSummary === 'function') {
-                console.log("📤 RIVOX manual send");
-                RIVOX.sendSessionSummary();
+        // Set up periodic data sending
+        setInterval(() => {
+            if (isSessionActive && getSessionDuration() > config.sendDelay) {
+                console.log("📤 RIVOX periodic send");
+                sendSessionSummary();
             }
-        }, userConfig.sendDelay);
+        }, config.sendDelay);
+
+        // Set up session timeout check
+        setInterval(() => {
+            const inactiveTime = Date.now() - lastActivityTime;
+            if (inactiveTime > config.sessionTimeout) {
+                console.log("⏹️ Session timeout due to inactivity");
+                isSessionActive = false;
+                sendSessionSummary();
+            }
+        }, 60000); // Check every minute
     }
 
     // Enhanced event listeners setup
@@ -166,53 +208,144 @@ function getYandexCounterId() {
         
         // Scroll tracking with heatmap
         let lastScrollY = window.scrollY;
+        let scrollTimeout;
+        
         window.addEventListener('scroll', throttle(() => {
+            updateActivity();
             const currentScrollY = window.scrollY;
             const scrollDelta = Math.abs(currentScrollY - lastScrollY);
             
             if (scrollDelta >= config.scrollChunkSize) {
+                const documentHeight = Math.max(
+                    document.body.scrollHeight,
+                    document.documentElement.scrollHeight
+                );
+                const viewportHeight = window.innerHeight;
+                const scrollPercent = (currentScrollY / (documentHeight - viewportHeight)) * 100;
+                
                 console.log('Scroll event captured:', {
                     position: currentScrollY,
-                    delta: scrollDelta
+                    delta: scrollDelta,
+                    percent: scrollPercent.toFixed(2) + '%'
                 });
                 
                 sessionData.scroll_chunks.push({
                     timestamp: Date.now(),
                     position: currentScrollY,
                     delta: scrollDelta,
-                    viewport_height: window.innerHeight,
-                    document_height: document.documentElement.scrollHeight
+                    viewport_height: viewportHeight,
+                    document_height: documentHeight,
+                    percent: scrollPercent
                 });
+
+                // Update scroll depth percentages
+                if (!sessionData.user_behavior.scroll_depth_percentages) {
+                    sessionData.user_behavior.scroll_depth_percentages = [];
+                }
+                sessionData.user_behavior.scroll_depth_percentages.push({
+                    depth: scrollPercent,
+                    timestamp: Date.now()
+                });
+                
                 lastScrollY = currentScrollY;
             }
+
+            // Clear existing timeout
+            if (scrollTimeout) {
+                clearTimeout(scrollTimeout);
+            }
+
+            // Set new timeout
+            scrollTimeout = setTimeout(() => {
+                const maxScrollPercent = Math.max(
+                    ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)
+                );
+                console.log('Max scroll depth:', maxScrollPercent.toFixed(2) + '%');
+            }, 1000);
         }, 100));
 
         // Hover tracking
+        let hoverStartTime;
+        let hoveredElement;
+
         document.addEventListener('mouseover', throttle((e) => {
+            updateActivity();
             const target = e.target;
             if (isImportantElement(target)) {
-                console.log('Hover event captured:', {
-                    element: getElementPath(target)
-                });
+                hoverStartTime = Date.now();
+                hoveredElement = target;
                 
-                sessionData.hover_events.push({
-                    timestamp: Date.now(),
-                    element: getElementPath(target),
-                    duration: 0
+                console.log('Hover event started:', {
+                    element: getElementPath(target)
                 });
             }
         }, 100));
 
         document.addEventListener('mouseout', throttle((e) => {
+            updateActivity();
             const target = e.target;
-            if (isImportantElement(target)) {
-                const lastHover = sessionData.hover_events[sessionData.hover_events.length - 1];
-                if (lastHover) {
-                    lastHover.duration = Date.now() - lastHover.timestamp;
-                    console.log('Hover duration updated:', lastHover.duration);
-                }
+            if (isImportantElement(target) && hoverStartTime && target === hoveredElement) {
+                const hoverDuration = Date.now() - hoverStartTime;
+                
+                console.log('Hover event completed:', {
+                    element: getElementPath(target),
+                    duration: hoverDuration + 'ms'
+                });
+                
+                sessionData.hover_events.push({
+                    timestamp: Date.now(),
+                    element: getElementPath(target),
+                    duration: hoverDuration,
+                    start_time: hoverStartTime
+                });
+
+                hoverStartTime = null;
+                hoveredElement = null;
             }
         }, 100));
+
+        // Click tracking
+        document.addEventListener('click', (e) => {
+            updateActivity();
+            const target = e.target;
+            const clickData = {
+                timestamp: Date.now(),
+                element: getElementPath(target),
+                position: {
+                    x: e.clientX,
+                    y: e.clientY
+                },
+                is_cta: isCTAElement(target)
+            };
+
+            console.log('Click event captured:', clickData);
+            
+            sessionData.cta_clicks.push(clickData);
+            sessionData.user_behavior.total_interactions++;
+            
+            if (!sessionData.user_behavior.time_to_first_interaction) {
+                sessionData.user_behavior.time_to_first_interaction = Date.now() - sessionData.start_time;
+            }
+
+            // Update time between clicks
+            if (!sessionData.user_behavior.time_between_clicks) {
+                sessionData.user_behavior.time_between_clicks = [];
+            }
+            const lastClick = sessionData.user_behavior.time_between_clicks[
+                sessionData.user_behavior.time_between_clicks.length - 1
+            ];
+            if (lastClick) {
+                sessionData.user_behavior.time_between_clicks.push({
+                    timestamp: Date.now(),
+                    delta: Date.now() - lastClick.timestamp
+                });
+            } else {
+                sessionData.user_behavior.time_between_clicks.push({
+                    timestamp: Date.now(),
+                    delta: 0
+                });
+            }
+        });
 
         console.log('Event listeners setup complete');
     }
@@ -262,15 +395,17 @@ function getYandexCounterId() {
             console.log('Preparing to send session data');
         }
 
-        // Prepare final data
+        // Update session duration
         const summary = {
             ...sessionData,
-            session_duration: Date.now() - sessionData.start_time,
+            session_duration: getSessionDuration(),
             domain: window.location.hostname,
             path: window.location.pathname,
             timestamp: new Date().toISOString(),
-            sdk_version: '4.6.3'
+            sdk_version: SDK_VERSION
         };
+
+        console.log('Session duration:', summary.session_duration + 'ms');
 
         try {
             // Try JSONP first
@@ -447,6 +582,15 @@ function getYandexCounterId() {
                element.tagName === 'BUTTON' || 
                element.tagName === 'INPUT' ||
                (element.hasAttribute && element.hasAttribute('data-rivox-important'));
+    }
+
+    function isCTAElement(element) {
+        if (!element) return false;
+        
+        return element.tagName === 'A' || 
+               element.tagName === 'BUTTON' || 
+               element.tagName === 'INPUT' ||
+               (element.hasAttribute && element.hasAttribute('data-rivox-cta'));
     }
 
     // Expose public API
