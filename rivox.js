@@ -975,44 +975,71 @@ let Logger = {
         if (!element) return false;
 
         // CTA теги
-        const ctaTags = ['A', 'BUTTON', 'INPUT[type="submit"]', 'INPUT[type="button"]'];
+        const ctaTags = [
+            'A', 'BUTTON', 'INPUT[type="submit"]', 'INPUT[type="button"]',
+            'IMG[data-product-id]', // Картинки товаров
+            'DIV.price_matrix_block', // Блоки с ценами
+            'DIV.buy_block' // Блоки покупки
+        ];
         
         // CTA классы
         const ctaClasses = [
             'btn', 'button', 'cta', 'buy', 'add-to-cart', 'checkout',
-            'order', 'submit', 'callback', 'contact', 'phone'
+            'order', 'submit', 'callback', 'contact', 'phone',
+            'price', 'price_matrix_block', 'buy_block',
+            'product-item', 'product-card', 'product-detail',
+            'add_to_cart', 'quick_buy', 'fast_order'
         ];
 
         // CTA текст
         const ctaTexts = [
             'купить', 'заказать', 'добавить', 'корзин', 'оформить',
-            'позвонить', 'заказать звонок', 'отправить', 'оставить заявку'
+            'позвонить', 'заказать звонок', 'отправить', 'оставить заявку',
+            'в 1 клик', 'быстрый заказ', 'быстрая покупка'
         ];
 
-        // Проверка по тегу
-        const isCtaTag = ctaTags.some(tag => {
-            const [tagName, type] = tag.split('[type="');
-            if (type) {
-                return element.tagName === tagName && element.type === type.slice(0, -1);
+        // Проверяем элемент и его родителей
+        let currentElement = element;
+        while (currentElement && currentElement !== document) {
+            // Проверка по тегу
+            const isCtaTag = ctaTags.some(tag => {
+                const [tagName, type] = tag.split('[type="');
+                if (type) {
+                    return currentElement.tagName === tagName && currentElement.type === type.slice(0, -1);
+                }
+                if (tag.includes('.')) {
+                    const [tagNameOnly, className] = tag.split('.');
+                    return currentElement.tagName === tagNameOnly && 
+                           currentElement.className && 
+                           currentElement.className.includes(className);
+                }
+                return currentElement.tagName === tag;
+            });
+
+            // Проверка по классам
+            const hasCtaClass = currentElement.className && 
+                typeof currentElement.className === 'string' && 
+                ctaClasses.some(cls => currentElement.className.toLowerCase().includes(cls));
+
+            // Проверка по тексту
+            const elementText = (currentElement.textContent || currentElement.value || '').toLowerCase();
+            const hasCtaText = ctaTexts.some(text => elementText.includes(text));
+
+            // Проверка по data-атрибутам
+            const hasCtaAttr = currentElement.hasAttribute('data-rivox-cta') || 
+                              currentElement.hasAttribute('data-cta') ||
+                              currentElement.hasAttribute('data-buy') ||
+                              currentElement.hasAttribute('data-product-buy') ||
+                              currentElement.hasAttribute('data-product-id');
+
+            if (isCtaTag || hasCtaClass || hasCtaText || hasCtaAttr) {
+                return true;
             }
-            return element.tagName === tag;
-        });
 
-        // Проверка по классам
-        const hasCtaClass = element.className && typeof element.className === 'string' && 
-            ctaClasses.some(cls => element.className.toLowerCase().includes(cls));
+            currentElement = currentElement.parentElement;
+        }
 
-        // Проверка по тексту
-        const elementText = (element.textContent || element.value || '').toLowerCase();
-        const hasCtaText = ctaTexts.some(text => elementText.includes(text));
-
-        // Проверка по data-атрибутам
-        const hasCtaAttr = element.hasAttribute('data-rivox-cta') || 
-                          element.hasAttribute('data-cta') ||
-                          element.hasAttribute('data-buy') ||
-                          element.hasAttribute('data-product-buy');
-
-        return isCtaTag || hasCtaClass || hasCtaText || hasCtaAttr;
+        return false;
     }
 
     // Expose public API
@@ -1188,16 +1215,16 @@ let Logger = {
             
         // Отправляем если:
         // 1. Накопилось достаточно событий
-        if (totalEvents >= 15) return true; // было 5
+        if (totalEvents >= 25) return true; // увеличили с 15 до 25
         
         // 2. Прошло значительное время
         const timeOnSite = Date.now() - sessionData.start_time;
-        if (timeOnSite >= 120000) return true; // увеличили до 2 минут
+        if (timeOnSite >= 180000) return true; // увеличили до 3 минут
         
         // 3. Глубокий скролл
         const maxScroll = sessionData.user_behavior.scroll_depth_percentages ? 
-            Math.max(0, ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0; // Ensure Math.max doesn't return -Infinity for empty array
-        if (maxScroll > 80) return true; // увеличили порог
+            Math.max(0, ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0;
+        if (maxScroll > 80) return true;
         
         // 4. Есть важные события
         if (sessionData.metrika_goals.length > 0) return true;
@@ -1207,15 +1234,42 @@ let Logger = {
     }
 
     // Yandex.Metrika goal tracking
-    function setupMetrikaTracking() {
+    function setupMetrikaTracking(attempts = 0, maxAttempts = 5) {
         const counterId = getYandexCounterId();
         if (!counterId) {
-            Logger.warn('Yandex.Metrika counter ID not found');
+            if (attempts < maxAttempts) {
+                Logger.info(`Counter ID not found, retrying in 1s (attempt ${attempts + 1}/${maxAttempts})`);
+                setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
+                return;
+            }
+            Logger.warn('Failed to find Yandex.Metrika counter ID after max attempts');
+            return;
+        }
+
+        Logger.info(`Setting up Metrika tracking for counter ${counterId}`);
+        
+        // Check if counter object exists
+        if (!window[`yaCounter${counterId}`]) {
+            Logger.warn(`Counter object yaCounter${counterId} not found`);
+            if (attempts < maxAttempts) {
+                setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
+                return;
+            }
             return;
         }
 
         // Store original reachGoal function
         const originalReachGoal = window[`yaCounter${counterId}`].reachGoal;
+        if (!originalReachGoal) {
+            Logger.warn('reachGoal function not found on counter object');
+            if (attempts < maxAttempts) {
+                setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
+                return;
+            }
+            return;
+        }
+
+        Logger.info('Successfully found Metrika counter and reachGoal function');
 
         // Override reachGoal to capture goals
         window[`yaCounter${counterId}`].reachGoal = function(goalName, params) {
@@ -1277,7 +1331,7 @@ let Logger = {
             };
         }
 
-        Logger.info('Metrika tracking initialized for counter:', counterId);
+        Logger.info('✅ Metrika tracking initialized for counter:', counterId);
     }
 
     // Important goals that should trigger immediate data send
