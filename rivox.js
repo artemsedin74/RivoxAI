@@ -24,18 +24,7 @@ function getYandexCounterId() {
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
         sendDelay: 1000,
-        scrollChunkSize: 100,
-        sessionTimeout: 30 * 60 * 1000, // 30 минут
-        hoverThreshold: 1000,
-        formInteractionThreshold: 2000,
-        mlFeatures: {
-            collectScrollMap: true,
-            trackFormInteractions: true,
-            trackHoverEvents: true,
-            trackCTAClicks: true,
-            trackModalInteractions: true,
-            analyzeUserPaths: true
-        }
+        useImage: true // Используем изображение для отправки данных
     };
 
     // Session data
@@ -289,6 +278,9 @@ function getYandexCounterId() {
 
             console.log('RIVOX SDK initialized successfully');
 
+            // Пробуем отправить сохраненные запросы
+            retryFailedRequests();
+
             // Отправляем начальные данные
             setTimeout(() => {
                 if (sessionData) {
@@ -396,7 +388,7 @@ function getYandexCounterId() {
         const sessionDuration = now - sessionData.start_time;
         
         // Time to first click
-        const firstClick = sessionData.time_between_clicks[0];
+        const firstClick = sessionData.user_behavior.time_between_clicks[0];
         const timeToFirstClick = firstClick ? firstClick.timestamp - sessionData.start_time : null;
         
         // Average time between events
@@ -411,13 +403,13 @@ function getYandexCounterId() {
         let currentBurst = [];
         const BURST_WINDOW = 5000; // 5 seconds
         
-        sessionData.time_between_clicks.forEach((click, index) => {
+        sessionData.user_behavior.time_between_clicks.forEach((click, index) => {
             if (index === 0) {
                 currentBurst.push(click);
                 return;
             }
             
-            const timeSinceLastClick = click.timestamp - sessionData.time_between_clicks[index-1].timestamp;
+            const timeSinceLastClick = click.timestamp - sessionData.user_behavior.time_between_clicks[index-1].timestamp;
             if (timeSinceLastClick <= BURST_WINDOW) {
                 currentBurst.push(click);
             } else {
@@ -667,57 +659,35 @@ function getYandexCounterId() {
         }, 20 * 60 * 1000);
     }
 
-    // Send data using JSONP
-    function sendDataJSONP(data) {
+    // Функция для отправки данных через изображение
+    function sendDataViaImage(data) {
         return new Promise((resolve, reject) => {
             try {
-                const callbackName = 'rivox_' + Math.random().toString(36).substr(2, 9);
-                const endpoint = getEndpointUrl();
-                
-                // Создаем URL с параметрами
+                const img = new Image();
                 const params = new URLSearchParams({
-                    data: JSON.stringify(data),
-                    callback: callbackName
+                    d: btoa(JSON.stringify(data)),
+                    t: Date.now()
                 });
 
-                // Создаем элемент script
-                const script = document.createElement('script');
-                script.src = `${endpoint}?${params.toString()}`;
-                
-                // Устанавливаем обработчики
-                window[callbackName] = function(response) {
-                    cleanup();
-                    resolve(response);
+                img.onload = () => {
+                    if (config.debug) {
+                        console.log('Data sent successfully via image');
+                    }
+                    resolve();
                 };
 
-                // Функция очистки
-                function cleanup() {
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    delete window[callbackName];
-                }
-
-                // Обработка ошибок
-                script.onerror = function() {
-                    cleanup();
-                    reject(new Error('Failed to load script'));
+                img.onerror = () => {
+                    reject(new Error('Failed to send data via image'));
                 };
 
-                // Добавляем скрипт на страницу
-                document.head.appendChild(script);
-
-                // Таймаут
-                setTimeout(() => {
-                    cleanup();
-                    reject(new Error('Request timeout'));
-                }, 10000);
-
+                img.src = `${config.endpoint}/pixel.gif?${params.toString()}`;
             } catch (error) {
                 reject(error);
             }
         });
     }
 
-    // Send session summary
+    // Обновляем функцию отправки данных
     async function sendSessionSummary() {
         try {
             if (!sessionData) {
@@ -746,13 +716,13 @@ function getYandexCounterId() {
                 ml_features: sessionData.ml_features || {}
             };
 
-            // Пробуем отправить через sendBeacon
-            if (navigator.sendBeacon) {
+            // Сначала пробуем отправить через sendBeacon
+            if (navigator.sendBeacon && !config.useImage) {
                 const blob = new Blob([JSON.stringify(summary)], {
                     type: 'application/json'
                 });
                 
-                if (navigator.sendBeacon(getEndpointUrl(), blob)) {
+                if (navigator.sendBeacon(config.endpoint, blob)) {
                     if (config.debug) {
                         console.log('Data sent successfully via beacon');
                     }
@@ -760,12 +730,9 @@ function getYandexCounterId() {
                 }
             }
 
-            // Если sendBeacon не сработал, используем JSONP
-            await sendDataJSONP(summary);
-            
-            if (config.debug) {
-                console.log('Data sent successfully via JSONP');
-            }
+            // Если sendBeacon не сработал или отключен, используем изображение
+            await sendDataViaImage(summary);
+
         } catch (error) {
             console.warn('Error sending session data:', error);
             
@@ -777,6 +744,9 @@ function getYandexCounterId() {
                         timestamp: Date.now(),
                         data: summary
                     });
+                    if (failedRequests.length > 10) {
+                        failedRequests.shift();
+                    }
                     localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
                 } catch (e) {
                     console.warn('Failed to store failed request:', e);
@@ -1774,36 +1744,36 @@ function getYandexCounterId() {
         });
     }
 
-    // Add retry mechanism for failed requests
+    // Обновляем функцию для повторной отправки
     function retryFailedRequests() {
         if (!window.localStorage) return;
-        
+
         try {
             const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
             if (failedRequests.length === 0) return;
-            
-            console.log('Retrying', failedRequests.length, 'failed requests');
-            
-            const retryPromises = failedRequests.map(request => 
-                sendDataJSONP(request.data)
-                    .then(() => {
-                        console.log('Successfully retried request from:', new Date(request.timestamp));
-                        return true;
-                    })
-                    .catch(() => false)
+
+            const currentTime = Date.now();
+            const validRequests = failedRequests.filter(request => 
+                currentTime - request.timestamp < 24 * 60 * 60 * 1000 // Только за последние 24 часа
             );
-            
-            Promise.all(retryPromises).then(results => {
-                // Remove successful retries
-                const remainingRequests = failedRequests.filter((_, index) => !results[index]);
-                localStorage.setItem('rivox_failed_requests', JSON.stringify(remainingRequests));
-                
-                console.log('Retry complete.', 
-                    results.filter(r => r).length, 'succeeded,',
-                    remainingRequests.length, 'remaining');
+
+            if (validRequests.length === 0) {
+                localStorage.removeItem('rivox_failed_requests');
+                return;
+            }
+
+            // Отправляем запросы по одному
+            validRequests.forEach(async (request) => {
+                try {
+                    await sendDataViaImage(request.data);
+                } catch (error) {
+                    console.warn('Failed to retry request:', error);
+                }
             });
-        } catch (e) {
-            console.warn('Error retrying failed requests:', e);
+
+            localStorage.removeItem('rivox_failed_requests');
+        } catch (error) {
+            console.warn('Error processing failed requests:', error);
         }
     }
 
