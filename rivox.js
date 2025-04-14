@@ -701,24 +701,66 @@ function getYandexCounterId() {
     }
 
     // JSONP data sending implementation with improved error handling
+    async function sendData(data) {
+        const maxRetries = 3;
+        const retryDelay = (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000);
+        
+        let lastError;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                const endpoint = getEndpointUrl();
+                if (!endpoint) {
+                    throw new Error('Invalid endpoint URL');
+                }
+
+                if (attempt > 0) {
+                    console.log(`Retry attempt ${attempt} of ${maxRetries - 1}...`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay(attempt)));
+                }
+
+                // Use only JSONP
+                const response = await sendDataJSONP(data, endpoint);
+                if (response && response.status === 'success') {
+                    return response;
+                }
+                throw new Error(response?.message || 'Invalid server response');
+
+            } catch (error) {
+                lastError = error;
+                console.warn(`Send attempt ${attempt + 1} failed:`, error.message);
+                
+                if (attempt === maxRetries - 1) {
+                    storeFailedRequest(data);
+                    throw new Error(`Failed to send data after ${maxRetries} retries: ${lastError.message}`);
+                }
+            }
+        }
+    }
+
     function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
             const callbackName = `rivoxCallback${Date.now()}${Math.random().toString(36).substr(2)}`;
             let timeoutId;
+
+            // Prepare data for transmission
+            const preparedData = {
+                ...data,
+                client_domain: window.location.hostname,
+                client_url: window.location.href,
+                timestamp: new Date().toISOString()
+            };
             
             // Create URL with parameters
-            const params = new URLSearchParams({
-                data: JSON.stringify(data),
-                callback: callbackName,
-                origin: window.location.origin,
-                t: Date.now() // cache buster
-            });
+            const params = new URLSearchParams();
+            params.append('data', JSON.stringify(preparedData));
+            params.append('callback', callbackName);
+            params.append('origin', window.location.origin);
+            params.append('t', Date.now()); // cache buster
 
             // Create script element
             const script = document.createElement('script');
             script.type = 'text/javascript';
             script.async = true;
-            script.src = `${endpoint}?${params.toString()}`;
 
             // Setup cleanup
             const cleanup = () => {
@@ -733,64 +775,33 @@ function getYandexCounterId() {
                 if (response && response.status === 'success') {
                     resolve(response);
                 } else {
-                    reject(new Error(response?.message || 'Invalid response'));
+                    reject(new Error(response?.message || 'Invalid server response'));
                 }
             };
 
-            // Handle errors
+            // Handle load error
             script.onerror = () => {
                 cleanup();
-                reject(new Error('Script failed to load'));
+                reject(new Error('Failed to load script'));
             };
 
-            // Set timeout
+            // Set timeout (5 seconds)
             timeoutId = setTimeout(() => {
                 cleanup();
                 reject(new Error('Request timeout'));
-            }, 10000);
+            }, 5000);
 
             // Log request details
             console.log('JSONP request:', {
-                url: script.src.substring(0, 100) + '...',
+                url: endpoint.substring(0, 100) + '...',
                 callbackName,
-                dataSize: JSON.stringify(data).length
+                dataSize: JSON.stringify(preparedData).length
             });
 
-            // Append script to document
+            // Set source and append script
+            script.src = `${endpoint}?${params.toString()}`;
             document.head.appendChild(script);
         });
-    }
-
-    // Main data sending function with retry logic
-    async function sendData(data) {
-        const maxRetries = 3;
-        const retryDelay = (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000);
-
-        let lastError;
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-            try {
-                const endpoint = getEndpointUrl();
-                if (!endpoint) {
-                    throw new Error('Invalid endpoint URL');
-                }
-
-                if (attempt > 0) {
-                    console.log(`Retry attempt ${attempt} of ${maxRetries - 1}...`);
-                    await new Promise(resolve => setTimeout(resolve, retryDelay(attempt)));
-                }
-
-                return await sendDataJSONP(data, endpoint);
-            } catch (error) {
-                lastError = error;
-                console.warn(`Send attempt ${attempt + 1} failed:`, error.message);
-                
-                // Only store and throw on the last attempt
-                if (attempt === maxRetries - 1) {
-                    storeFailedRequest(data);
-                    throw new Error(`Failed to send data after ${maxRetries} retries: ${lastError.message}`);
-                }
-            }
-        }
     }
 
     // Send session summary with improved error handling
