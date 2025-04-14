@@ -42,6 +42,157 @@ function getYandexCounterId() {
     // Session data
     let sessionData = null;
 
+    // Добавляем трекинг видимости и фокуса
+    let isPageVisible = true;
+    let isWindowFocused = true;
+    let lastActiveTime = Date.now();
+    let totalInactiveTime = 0;
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            isPageVisible = false;
+            lastActiveTime = Date.now();
+        } else {
+            isPageVisible = true;
+            if (lastActiveTime) {
+                totalInactiveTime += Date.now() - lastActiveTime;
+            }
+        }
+        updateSessionDuration();
+    });
+
+    window.addEventListener('focus', () => {
+        isWindowFocused = true;
+        if (lastActiveTime) {
+            totalInactiveTime += Date.now() - lastActiveTime;
+        }
+        updateSessionDuration();
+    });
+
+    window.addEventListener('blur', () => {
+        isWindowFocused = false;
+        lastActiveTime = Date.now();
+        updateSessionDuration();
+    });
+
+    function updateSessionDuration() {
+        if (sessionData) {
+            const rawDuration = Date.now() - sessionData.start_time;
+            sessionData.session_duration = rawDuration - totalInactiveTime;
+            sessionData.active_duration = isPageVisible && isWindowFocused ? 
+                sessionData.session_duration : 
+                sessionData.session_duration - (Date.now() - lastActiveTime);
+        }
+    }
+
+    // Улучшаем отслеживание скроллов
+    let lastScrollPosition = 0;
+    let maxScrollDepth = 0;
+    let scrollStartTime = null;
+    let isScrolling = false;
+
+    window.addEventListener('scroll', throttle(() => {
+        const scrollPosition = window.scrollY;
+        const documentHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const currentDepth = (scrollPosition / documentHeight) * 100;
+        
+        if (!isScrolling) {
+            scrollStartTime = Date.now();
+            isScrolling = true;
+        }
+
+        // Обновляем максимальную глубину скролла
+        if (currentDepth > maxScrollDepth) {
+            maxScrollDepth = currentDepth;
+            sessionData.scroll_depth_percentages.push({
+                depth: maxScrollDepth,
+                timestamp: Date.now()
+            });
+        }
+
+        // Записываем чанк скролла
+        if (Math.abs(scrollPosition - lastScrollPosition) >= config.scrollChunkSize) {
+            sessionData.scroll_chunks.push({
+                timestamp: Date.now(),
+                position: scrollPosition,
+                delta: scrollPosition - lastScrollPosition,
+                document_height: documentHeight,
+                viewport_height: window.innerHeight,
+                duration: scrollStartTime ? Date.now() - scrollStartTime : 0
+            });
+            lastScrollPosition = scrollPosition;
+        }
+    }, 50));
+
+    // Сброс флага скроллинга после остановки
+    let scrollTimeout;
+    window.addEventListener('scroll', () => {
+        clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => {
+            isScrolling = false;
+        }, 150);
+    });
+
+    // Улучшаем отслеживание кликов
+    document.addEventListener('click', (e) => {
+        const target = e.target;
+        const clickData = {
+            timestamp: Date.now(),
+            element: getElementPath(target),
+            text: target.textContent?.trim(),
+            tag: target.tagName.toLowerCase(),
+            classes: Array.from(target.classList).join(' '),
+            position: {
+                x: e.clientX,
+                y: e.clientY,
+                scrollY: window.scrollY
+            },
+            is_interactive: isInteractiveElement(target)
+        };
+
+        // Сохраняем все клики
+        sessionData.all_clicks = sessionData.all_clicks || [];
+        sessionData.all_clicks.push(clickData);
+
+        // Если это CTA, добавляем в специальный массив
+        if (isCTAElement(target)) {
+            sessionData.cta_clicks.push(clickData);
+        }
+
+        // Обновляем время между кликами
+        const lastClick = sessionData.user_behavior.time_between_clicks[
+            sessionData.user_behavior.time_between_clicks.length - 1
+        ];
+        
+        if (lastClick) {
+            sessionData.user_behavior.time_between_clicks.push({
+                timeDelta: Date.now() - lastClick.timestamp,
+                timestamp: Date.now()
+            });
+        } else {
+            sessionData.user_behavior.time_between_clicks.push({
+                timeDelta: 0,
+                timestamp: Date.now()
+            });
+        }
+
+        // Обновляем общее количество взаимодействий
+        sessionData.user_behavior.total_interactions++;
+    });
+
+    // Проверка интерактивности элемента
+    function isInteractiveElement(element) {
+        const interactiveTags = ['a', 'button', 'input', 'select', 'textarea'];
+        const interactiveRoles = ['button', 'link', 'menuitem', 'tab', 'checkbox', 'radio'];
+        
+        return interactiveTags.includes(element.tagName.toLowerCase()) ||
+               element.hasAttribute('onclick') ||
+               element.hasAttribute('href') ||
+               interactiveRoles.includes(element.getAttribute('role')) ||
+               element.hasAttribute('tabindex') ||
+               window.getComputedStyle(element).cursor === 'pointer';
+    }
+
     function isAllowedDomain(hostname) {
         if (!hostname) return false;
         
@@ -840,33 +991,26 @@ function getYandexCounterId() {
 
     // Send session summary
     async function sendSessionSummary() {
+        updateSessionDuration(); // Обновляем длительность сессии перед отправкой
+
+        const summary = {
+            ...sessionData,
+            final_scroll_depth: maxScrollDepth,
+            scroll_count: sessionData.scroll_chunks.length,
+            click_count: (sessionData.all_clicks || []).length,
+            cta_click_count: sessionData.cta_clicks.length,
+            interaction_density: sessionData.user_behavior.total_interactions / 
+                (sessionData.session_duration / 1000), // взаимодействий в секунду
+            active_ratio: sessionData.active_duration / sessionData.session_duration,
+            viewport_coverage: calculateViewportCoverage(),
+            engagement_score: calculateEngagementScore()
+        };
+
         const endpoint = getEndpointUrl();
         
         if (config.debug) {
             console.log('Preparing to send session data');
         }
-
-        // Prepare final data
-        const summary = {
-            ...sessionData,
-            session_duration: Date.now() - sessionData.start_time,
-            domain: window.location.hostname,
-            path: window.location.pathname,
-            timestamp: new Date().toISOString(),
-            sdk_version: '4.6.3',
-            // Добавляем обновленную информацию об устройстве
-            device_info: {
-                ...sessionData.device_info,
-                is_mobile: /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
-                is_tablet: /(tablet|ipad|playbook|silk)|(android(?!.*mobile))/i.test(navigator.userAgent.toLowerCase()),
-                screen_size: {
-                    width: window.screen.width,
-                    height: window.screen.height,
-                    colorDepth: window.screen.colorDepth,
-                    pixelRatio: window.devicePixelRatio
-                }
-            }
-        };
 
         try {
             // Try JSONP first
