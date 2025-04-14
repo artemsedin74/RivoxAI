@@ -93,7 +93,7 @@ function getYandexCounterId() {
         
         // If session was inactive and now active again
         if (timeSinceLastActivity > config.maxInactiveTime) {
-            console.log('Session reactivated after inactivity');
+            Logger.info('Session reactivated after inactivity');
             startNewSession();
             return;
         }
@@ -162,7 +162,7 @@ function getYandexCounterId() {
         };
 
         isSessionActive = true;
-        console.log('New session started:', sessionData.session_id);
+        Logger.info('New session started:', sessionData.session_id);
     }
 
     // Extract UTM data
@@ -209,7 +209,7 @@ function getYandexCounterId() {
         queuedData = [];
 
         sendDataJSONP(dataToSend).catch(error => {
-            console.error('Failed to send queued data:', error);
+            Logger.error('Failed to send queued data:', error);
             // Return failed items to queue
             queuedData = [...dataToSend, ...queuedData];
         });
@@ -233,7 +233,7 @@ function getYandexCounterId() {
         });
 
         if (config.debug) {
-            console.log('Checking domain:', {
+            Logger.debug('Checking domain:', {
                 original: hostname,
                 normalized: normalizedHostname,
                 allowed: isAllowed,
@@ -247,7 +247,7 @@ function getYandexCounterId() {
     // Get endpoint URL
     function getEndpointUrl() {
         if (config.debug) {
-            console.log('Using endpoint:', config.endpoint);
+            Logger.debug('Using endpoint:', config.endpoint);
         }
         return config.endpoint;
     }
@@ -256,14 +256,14 @@ function getYandexCounterId() {
     function loadConfig() {
         const script = document.querySelector('script[data-token]');
         if (!script) {
-            console.error('RIVOX SDK script tag with data-token not found');
+            Logger.error('RIVOX SDK script tag with data-token not found');
             return null;
         }
 
         // Get token
         const token = script.dataset.token;
         if (!token) {
-            console.error('RIVOX SDK token not specified');
+            Logger.error('RIVOX SDK token not specified');
             return null;
         }
 
@@ -275,7 +275,7 @@ function getYandexCounterId() {
         config.token = token;
 
         if (config.debug) {
-            console.log('RIVOX SDK Configuration:', {
+            Logger.debug('RIVOX SDK Configuration:', {
                 token,
                 initDelay,
                 sendDelay
@@ -293,11 +293,11 @@ function getYandexCounterId() {
     async function init() {
         const currentDomain = window.location.hostname;
         if (!isAllowedDomain(currentDomain)) {
-            console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
+            Logger.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
             return;
         }
         
-        console.log('RIVOX SDK initializing...');
+        Logger.info('RIVOX SDK initializing...');
         
         // Load configuration
         const userConfig = loadConfig();
@@ -306,11 +306,11 @@ function getYandexCounterId() {
         // Wait for client id before proceeding
         const clientId = await generateClientId();
         if (!clientId) {
-            console.error('Could not initialize RIVOX SDK: Failed to get Yandex.Metrika client ID');
+            Logger.error('Could not initialize RIVOX SDK: Failed to get Yandex.Metrika client ID');
             return;
         }
 
-        console.log('RIVOX SDK initialized with client ID:', clientId);
+        Logger.info('RIVOX SDK initialized with client ID:', clientId);
 
         // Initialize session data
         sessionData = {
@@ -375,7 +375,7 @@ function getYandexCounterId() {
         // Start trackers with configured delay
         setTimeout(() => {
             if (typeof RIVOX.start === 'function') {
-                console.log("🟢 RIVOX tracking start");
+                Logger.info("🟢 RIVOX tracking start");
                 RIVOX.start();
             }
         }, userConfig.initDelay);
@@ -387,16 +387,18 @@ function getYandexCounterId() {
         setInterval(() => {
             const inactiveTime = Date.now() - lastActivityTime;
             if (inactiveTime > config.sessionTimeout) {
-                console.log("⏹️ Session timeout due to inactivity");
+                Logger.info("⏹️ Session timeout due to inactivity");
                 isSessionActive = false;
                 sendSessionSummary();
             }
         }, 60000); // Check every minute
+
+        setupMetrikaTracking();
     }
 
     // Enhanced event listeners setup
     function setupEventListeners() {
-        console.log('Setting up event listeners...');
+        Logger.info('Setting up event listeners...');
         
         // Scroll tracking with heatmap
         let lastScrollY = window.scrollY;
@@ -415,7 +417,7 @@ function getYandexCounterId() {
                 const viewportHeight = window.innerHeight;
                 const scrollPercent = (currentScrollY / (documentHeight - viewportHeight)) * 100;
                 
-                console.log('Scroll event captured:', {
+                Logger.debug('Scroll event:', {
                     position: currentScrollY,
                     delta: scrollDelta,
                     percent: scrollPercent.toFixed(2) + '%'
@@ -452,12 +454,12 @@ function getYandexCounterId() {
                 const maxScrollPercent = Math.max(
                     ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)
                 );
-                console.log('Max scroll depth:', maxScrollPercent.toFixed(2) + '%');
+                Logger.debug('Max scroll depth:', maxScrollPercent.toFixed(2) + '%');
             }, 1000);
 
             // Check if we should send data
             if (shouldSendData()) {
-                console.log('🔄 Sending data after accumulating events...');
+                Logger.info('Sending data after accumulating events');
                 sendSessionSummary();
             }
         }, 100));
@@ -473,14 +475,14 @@ function getYandexCounterId() {
                 hoverStartTime = Date.now();
                 hoveredElement = target;
                 
-                console.log('Hover event started:', {
+                Logger.debug('Hover event started:', {
                     element: getElementPath(target)
                 });
             }
 
             // Check if we should send data
             if (shouldSendData()) {
-                console.log('🔄 Sending data after accumulating events...');
+                Logger.info('Sending data after accumulating events');
                 sendSessionSummary();
             }
         }, 100));
@@ -491,7 +493,7 @@ function getYandexCounterId() {
             if (isImportantElement(target) && hoverStartTime && target === hoveredElement) {
                 const hoverDuration = Date.now() - hoverStartTime;
                 
-                console.log('Hover event completed:', {
+                Logger.debug('Hover event completed:', {
                     element: getElementPath(target),
                     duration: hoverDuration + 'ms'
                 });
@@ -522,7 +524,7 @@ function getYandexCounterId() {
                 is_cta: isCTAElement(target)
             };
 
-            console.log('🖱️ Click event captured:', clickData);
+            Logger.debug('🖱️ Click event captured:', clickData);
             
             sessionData.cta_clicks.push(clickData);
             sessionData.user_behavior.total_interactions++;
@@ -552,12 +554,12 @@ function getYandexCounterId() {
 
             // Send data after each click on important elements
             if (isImportantElement(target) || shouldSendData()) {
-                console.log('�� Sending data after click...');
-                sendSessionSummary().catch(console.error);
+                Logger.info('Sending data after click');
+                sendSessionSummary().catch(Logger.error);
             }
         });
 
-        console.log('Event listeners setup complete');
+        Logger.info('Event listeners setup complete');
     }
 
     // Send data using JSONP
@@ -583,7 +585,7 @@ function getYandexCounterId() {
                 
                 // Setup callback
                 window[callbackName] = function(response) {
-                    console.log('📥 JSONP response received:', response);
+                    Logger.debug('JSONP response received:', response);
                     document.body.removeChild(script);
                     delete window[callbackName];
                     resolve(response);
@@ -607,10 +609,10 @@ function getYandexCounterId() {
                 
                 // Append script to document
                 document.body.appendChild(script);
-                console.log('📡 JSONP request sent to:', script.src);
+                Logger.debug('📡 JSONP request sent to:', script.src);
                 
             } catch (error) {
-                console.error('❌ Error in sendDataJSONP:', error);
+                Logger.error('❌ Error in sendDataJSONP:', error);
                 reject(error);
             }
         });
@@ -619,7 +621,7 @@ function getYandexCounterId() {
     // Modify sendSessionSummary to add logging
     async function sendSessionSummary() {
         if (!sessionData || !isSessionActive) {
-            console.log('❌ No session data to send or session not active');
+            Logger.warn('No session data to send or session not active');
             return;
         }
 
@@ -656,17 +658,17 @@ function getYandexCounterId() {
             hovers: sessionData.hover_events
         };
 
-        console.log('📊 Sending session data:', summary);
+        Logger.debug('Preparing to send session data', summary);
 
         try {
             // Try JSONP first
             try {
-                console.log('📡 Attempting JSONP request...');
+                Logger.debug('Attempting JSONP request...');
                 const response = await sendDataJSONP(summary);
-                console.log('✅ JSONP request successful:', response);
+                Logger.info('JSONP request successful');
                 return response;
             } catch (jsonpError) {
-                console.warn('⚠️ JSONP failed, trying direct POST...', jsonpError);
+                Logger.warn('JSONP failed, trying direct POST...', jsonpError);
                 
                 // Try direct POST request
                 const response = await fetch(config.endpoint, {
@@ -682,11 +684,11 @@ function getYandexCounterId() {
                 }
 
                 const result = await response.json();
-                console.log('✅ POST request successful:', result);
+                Logger.info('POST request successful');
                 return result;
             }
         } catch (error) {
-            console.error('❌ Failed to send data:', error);
+            Logger.error('Failed to send data:', error);
             
             // Try beacon API as last resort
             if (navigator.sendBeacon) {
@@ -696,11 +698,11 @@ function getYandexCounterId() {
                     });
                     const success = navigator.sendBeacon(config.endpoint, blob);
                     if (success) {
-                        console.log('✅ Data sent via beacon API');
+                        Logger.info('Data sent via beacon API');
                         return { success: true, method: 'beacon' };
                     }
                 } catch (beaconError) {
-                    console.error('❌ Beacon API failed:', beaconError);
+                    Logger.error('Beacon API failed:', beaconError);
                 }
             }
             
@@ -738,7 +740,7 @@ function getYandexCounterId() {
             // First try to get from backup
             const backupId = localStorage.getItem('_ym_client_id_backup');
             if (backupId) {
-                console.log('Using backed up Yandex.Metrika client ID:', backupId);
+                Logger.info('Using backed up Yandex.Metrika client ID:', backupId);
                 resolve(backupId);
                 return;
             }
@@ -746,11 +748,11 @@ function getYandexCounterId() {
             // Then try to get from Yandex.Metrika cookies
             const ymUid = getCookie('_ym_uid');
             if (ymUid) {
-                console.log('Using Yandex.Metrika cookie ID:', ymUid);
+                Logger.info('Using Yandex.Metrika cookie ID:', ymUid);
                 try {
                     localStorage.setItem('_ym_client_id_backup', ymUid);
                 } catch (e) {
-                    console.warn('Could not save client ID to localStorage:', e);
+                    Logger.warn('Could not save client ID to localStorage:', e);
                 }
                 resolve(ymUid);
                 return;
@@ -759,7 +761,7 @@ function getYandexCounterId() {
             // Finally try to get directly from Metrika
             const getFromMetrika = (attempts = 0, maxAttempts = 5) => {
                 if (attempts >= maxAttempts) {
-                    console.error('Failed to get Yandex.Metrika client ID after', maxAttempts, 'attempts');
+                    Logger.error('Failed to get Yandex.Metrika client ID after', maxAttempts, 'attempts');
                     resolve(null);
                     return;
                 }
@@ -778,7 +780,7 @@ function getYandexCounterId() {
                 }
 
                 if (!counterId) {
-                    console.log('Counter ID not found, retrying...');
+                    Logger.info('Counter ID not found, retrying...');
                     setTimeout(() => getFromMetrika(attempts + 1), 1000);
                     return;
                 }
@@ -787,20 +789,20 @@ function getYandexCounterId() {
                 try {
                     ym(counterId, 'getClientID', function(clientID) {
                         if (clientID) {
-                            console.log('Got client ID from Yandex.Metrika:', clientID);
+                            Logger.info('Got client ID from Yandex.Metrika:', clientID);
                             try {
                                 localStorage.setItem('_ym_client_id_backup', clientID);
                             } catch (e) {
-                                console.warn('Could not save client ID to localStorage:', e);
+                                Logger.warn('Could not save client ID to localStorage:', e);
                             }
                             resolve(clientID);
                         } else {
-                            console.log('No client ID returned, retrying...');
+                            Logger.info('No client ID returned, retrying...');
                             setTimeout(() => getFromMetrika(attempts + 1), 1000);
                         }
                     });
                 } catch (e) {
-                    console.error('Error getting client ID:', e);
+                    Logger.error('Error getting client ID:', e);
                     setTimeout(() => getFromMetrika(attempts + 1), 1000);
                 }
             };
@@ -867,7 +869,7 @@ function getYandexCounterId() {
     // Initialize when Metrika is ready
     (function waitForYaMetrika(attempts = 0, maxAttempts = 20) {
         if (attempts >= maxAttempts) {
-            console.error('Failed to detect Yandex.Metrika after', maxAttempts, 'attempts');
+            Logger.error('Failed to detect Yandex.Metrika after', maxAttempts, 'attempts');
             return;
         }
 
@@ -878,30 +880,45 @@ function getYandexCounterId() {
 
         // Initialize SDK only after Metrika is detected
         init().catch(error => {
-            console.error('Failed to initialize RIVOX SDK:', error);
+            Logger.error('Failed to initialize RIVOX SDK:', error);
         });
     })();
 
-    // Logger utility with improved formatting
+    // Logger utility with improved formatting and levels
     const Logger = {
-        log: function(msg, data) {
-            if (config.debug) {
-                console.log(`rivox.js: ${msg}`, data || '');
+        LEVELS: {
+            DEBUG: 0,
+            INFO: 1,
+            WARN: 2,
+            ERROR: 3
+        },
+        level: 1, // Default to INFO level
+        
+        setLevel: function(level) {
+            this.level = level;
+        },
+        
+        debug: function(msg, data) {
+            if (this.level <= this.LEVELS.DEBUG && config.debug) {
+                console.log(`rivox.js [DEBUG]: ${msg}`, data || '');
             }
         },
-        error: function(msg, error) {
-            if (config.debug) {
-                console.error(`rivox.js: ❌ ${msg}`, error || '');
+        
+        info: function(msg, data) {
+            if (this.level <= this.LEVELS.INFO && config.debug) {
+                console.log(`rivox.js ℹ️: ${msg}`, data || '');
             }
         },
+        
         warn: function(msg, data) {
-            if (config.debug) {
-                console.warn(`rivox.js: ⚠️ ${msg}`, data || '');
+            if (this.level <= this.LEVELS.WARN) {
+                console.warn(`rivox.js ⚠️: ${msg}`, data || '');
             }
         },
-        success: function(msg, data) {
-            if (config.debug) {
-                console.log(`rivox.js: ✅ ${msg}`, data || '');
+        
+        error: function(msg, error) {
+            if (this.level <= this.LEVELS.ERROR) {
+                console.error(`rivox.js ❌: ${msg}`, error || '');
             }
         }
     };
@@ -911,7 +928,7 @@ function getYandexCounterId() {
         setTimeout(window.RIVOX.init, config.initDelay);
     });
 
-    Logger.success('SDK loaded successfully');
+    Logger.info('SDK loaded successfully');
 
     function addToFailedQueue(data) {
         if (failedQueue.length >= config.maxQueueSize) {
@@ -961,7 +978,7 @@ function getYandexCounterId() {
         try {
             await sendDataWithFallback(item.data);
             failedQueue.shift();
-            Logger.success('Successfully sent queued data');
+            Logger.info('Successfully sent queued data');
         } catch (error) {
             item.attempts++;
             Logger.warn(`Retry attempt ${item.attempts} failed`, error);
@@ -975,7 +992,7 @@ function getYandexCounterId() {
 
     // Modify sendDataWithFallback to add logging
     async function sendDataWithFallback(data) {
-        console.log('🔄 Attempting to send data:', {
+        Logger.debug('�� Attempting to send data:', {
             endpoint: getEndpointUrl(),
             dataSize: JSON.stringify(data).length,
             timestamp: new Date().toISOString()
@@ -990,7 +1007,7 @@ function getYandexCounterId() {
 
         // Try POST first as it's more reliable
         try {
-            console.log('📡 Trying POST request...');
+            Logger.debug('📡 Trying POST request...');
             const response = await fetch(getEndpointUrl(), {
                 method: 'POST',
                 mode: 'cors',
@@ -1008,20 +1025,20 @@ function getYandexCounterId() {
             }
             
             const result = await response.json();
-            console.log('✅ POST request successful:', result);
+            Logger.info('✅ POST request successful:', result);
             return result;
         } catch (error) {
-            console.warn('⚠️ POST failed, trying JSONP...', error);
+            Logger.warn('⚠️ POST failed, trying JSONP...', error);
             
             // For small payloads, try JSONP
             if (JSON.stringify(preparedData).length < 2000) {
                 try {
-                    console.log('📡 Trying JSONP request...');
+                    Logger.debug('📡 Trying JSONP request...');
                     const response = await sendDataJSONP(preparedData);
-                    console.log('✅ JSONP request successful:', response);
+                    Logger.info('✅ JSONP request successful:', response);
                     return response;
                 } catch (jsonpError) {
-                    console.error('❌ JSONP failed:', jsonpError);
+                    Logger.error('❌ JSONP failed:', jsonpError);
                 }
             }
             
@@ -1032,13 +1049,13 @@ function getYandexCounterId() {
                 });
                 
                 if (navigator.sendBeacon(getEndpointUrl(), beaconData)) {
-                    console.log('✅ Data sent via beacon API');
+                    Logger.info('✅ Data sent via beacon API');
                     return { success: true, method: 'beacon' };
                 }
             }
             
             // If all methods fail, add to retry queue
-            console.error('❌ All send methods failed, adding to retry queue');
+            Logger.error('❌ All send methods failed, adding to retry queue');
             addToFailedQueue(preparedData);
             throw new Error('All send methods failed');
         }
@@ -1053,10 +1070,10 @@ function getYandexCounterId() {
             sessionData.hover_events.length + 
             sessionData.cta_clicks.length;
             
-        const shouldSend = totalEvents >= 5; // Уменьшил до 5 событий
+        const shouldSend = totalEvents >= 5;
         
         if (shouldSend) {
-            console.log('📈 Accumulated enough events:', {
+            Logger.debug('Events accumulated:', {
                 scrolls: sessionData.scroll_chunks.length,
                 hovers: sessionData.hover_events.length,
                 clicks: sessionData.cta_clicks.length,
@@ -1065,5 +1082,90 @@ function getYandexCounterId() {
         }
         
         return shouldSend;
+    }
+
+    // Yandex.Metrika goal tracking
+    function setupMetrikaTracking() {
+        const counterId = getYandexCounterId();
+        if (!counterId) {
+            Logger.warn('Yandex.Metrika counter ID not found');
+            return;
+        }
+
+        // Store original reachGoal function
+        const originalReachGoal = window[`yaCounter${counterId}`].reachGoal;
+
+        // Override reachGoal to capture goals
+        window[`yaCounter${counterId}`].reachGoal = function(goalName, params) {
+            // Call original function first
+            const result = originalReachGoal.apply(this, arguments);
+
+            // Track goal in our system
+            if (sessionData && sessionData.metrika_goals) {
+                const goalData = {
+                    name: goalName,
+                    params: params || {},
+                    timestamp: Date.now()
+                };
+
+                sessionData.metrika_goals.push(goalData);
+                sessionData.conversion_data.goals_reached.push(goalData);
+                sessionData.conversion_data.last_goal_timestamp = Date.now();
+
+                // Update conversion path
+                sessionData.conversion_data.conversion_path.push({
+                    type: 'goal',
+                    name: goalName,
+                    timestamp: Date.now()
+                });
+
+                Logger.debug('Goal reached:', goalData);
+
+                // Send data after important goals
+                if (isImportantGoal(goalName)) {
+                    sendSessionSummary().catch(error => 
+                        Logger.error('Failed to send data after goal:', error)
+                    );
+                }
+            }
+
+            return result;
+        };
+
+        // Also track ecommerce events if available
+        if (window.dataLayer) {
+            const originalPush = window.dataLayer.push;
+            window.dataLayer.push = function(data) {
+                const result = originalPush.apply(this, arguments);
+
+                // Track ecommerce events
+                if (data && data.ecommerce && sessionData) {
+                    sessionData.conversion_data.ecommerce_data.push({
+                        data: data.ecommerce,
+                        timestamp: Date.now()
+                    });
+
+                    Logger.debug('Ecommerce event:', data.ecommerce);
+                }
+
+                return result;
+            };
+        }
+
+        Logger.info('Metrika tracking initialized for counter:', counterId);
+    }
+
+    // Important goals that should trigger immediate data send
+    function isImportantGoal(goalName) {
+        const importantGoals = [
+            'order',
+            'purchase',
+            'lead',
+            'contact',
+            'form',
+            'callback',
+            'phone'
+        ];
+        return importantGoals.some(g => goalName.toLowerCase().includes(g));
     }
 })(window); 
