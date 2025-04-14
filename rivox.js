@@ -702,179 +702,118 @@ function getYandexCounterId() {
         }, 20 * 60 * 1000);
     }
 
-    // Функция для отправки данных через JSONP
-    function sendDataJSONP(data) {
+    // JSONP data sending implementation with improved error handling
+    function sendDataJSONP(data, callback) {
         return new Promise((resolve, reject) => {
-            try {
-                const callbackName = 'rivox_' + Math.random().toString(36).substr(2, 9);
-                
-                // Create script element
-                const script = document.createElement('script');
-                script.async = true;
-                
-                // Get the endpoint URL
-                const endpoint = getEndpointUrl();
-                if (!endpoint) {
-                    throw new Error('Invalid endpoint URL');
-                }
-
-                // Prepare data for sending
-                const sendData = {
-                    ...data,
-                    callback: callbackName,
-                    origin: window.location.origin,
-                    timestamp: new Date().toISOString()
-                };
-
-                // Convert data to base64 to avoid URL length issues
-                const base64Data = btoa(JSON.stringify(sendData));
-                
-                // Set script source with encoded data
-                script.src = `${endpoint}?data=${encodeURIComponent(base64Data)}&_=${Date.now()}`;
-                
-                if (config.debug) {
-                    console.log('Sending data:', sendData);
-                    console.log('JSONP Request URL:', script.src);
-                }
-                
-                // Setup callback
-                window[callbackName] = function(response) {
-                    cleanup();
-                    if (response && response.status === 'success') {
-                        resolve(response);
-                    } else {
-                        reject(new Error('Server returned error: ' + JSON.stringify(response)));
-                    }
-                };
-                
-                // Cleanup function
-                function cleanup() {
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    delete window[callbackName];
-                }
-                
-                // Handle errors with more detail
-                script.onerror = function(error) {
-                    cleanup();
-                    console.error('JSONP script error:', error);
-
-                    // Try alternative method if JSONP fails
-                    console.log('Trying alternative method...');
-                    sendDataFallback(data)
-                        .then(resolve)
-                        .catch(reject);
-                };
-                
-                // Add script to page
-                document.head.appendChild(script);
-                
-                // Set timeout
-                setTimeout(() => {
-                    cleanup();
-                    reject(new Error('JSONP request timeout after 10 seconds'));
-                }, 10000);
-                
-            } catch (error) {
-                console.error('JSONP setup error:', error);
-                // Try alternative method if JSONP setup fails
-                sendDataFallback(data)
-                    .then(resolve)
-                    .catch(reject);
-            }
-        });
-    }
-
-    // Fallback method using fetch with CORS mode
-    function sendDataFallback(data) {
-        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.async = true;
+            
+            // Create unique callback name
+            const callbackName = 'rivoxCallback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            
+            // Create URL with parameters
+            const params = new URLSearchParams();
+            params.append('data', JSON.stringify(data));
+            params.append('callback', callbackName);
+            params.append('origin', window.location.origin);
+            params.append('_', Date.now()); // Cache buster
+            
             const endpoint = getEndpointUrl();
-            if (!endpoint) {
-                reject(new Error('Invalid endpoint URL'));
-                return;
-            }
-
-            const fetchOptions = {
-                method: 'POST',
-                mode: 'cors',
-                headers: {
-                    'Content-Type': 'text/plain', // Use text/plain to avoid preflight
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify({
-                    ...data,
-                    origin: window.location.origin,
-                    timestamp: new Date().toISOString()
-                })
+            script.src = `${endpoint}?${params.toString()}`;
+            
+            // Set timeout
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error('JSONP request timeout'));
+            }, 10000);
+            
+            // Setup callback
+            window[callbackName] = (response) => {
+                cleanup();
+                resolve(response);
             };
-
-            if (config.debug) {
-                console.log('Sending data via fetch:', fetchOptions);
-            }
-
-            fetch(endpoint, fetchOptions)
-                .then(response => response.json())
-                .then(result => {
-                    if (result && result.status === 'success') {
-                        resolve(result);
-                    } else {
-                        reject(new Error('Server returned error: ' + JSON.stringify(result)));
-                    }
-                })
-                .catch(error => {
-                    console.error('Fetch error:', error);
-                    reject(error);
-                });
-        });
-    }
-
-    // Update sendSessionSummary function
-    async function sendSessionSummary() {
-        try {
-            const summary = {
-                ...sessionData,
-                timestamp: new Date().toISOString(),
-                sdk_version: SDK_VERSION,
-                domain: window.location.hostname,
-                page_url: window.location.href,
-                referrer: document.referrer
+            
+            // Error handling
+            script.onerror = () => {
+                cleanup();
+                reject(new Error('Failed to load JSONP script'));
             };
-
-            let attempts = 0;
-            const maxAttempts = config.maxRetries;
-            const baseDelay = config.retryDelay;
-
-            while (attempts < maxAttempts) {
-                try {
-                    if (config.debug) {
-                        console.log(`Sending attempt ${attempts + 1}/${maxAttempts}`);
-                    }
-
-                    // Try JSONP first
-                    const result = await sendDataJSONP(summary);
-                    
-                    if (config.debug) {
-                        console.log(`✓ Session data sent successfully (attempt ${attempts + 1})`);
-                    }
-                    return true;
-                } catch (error) {
-                    attempts++;
-                    console.warn(`Attempt ${attempts} failed:`, error);
-                    
-                    if (attempts === maxAttempts) {
-                        console.error('Failed to send session data after', maxAttempts, 'attempts');
-                        return false;
-                    }
-                    
-                    // Exponential backoff
-                    const delay = baseDelay * Math.pow(2, attempts - 1);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
+            
+            // Cleanup function
+            function cleanup() {
+                clearTimeout(timeoutId);
+                document.head.removeChild(script);
+                delete window[callbackName];
             }
             
-            return false;
+            // Append script to head
+            document.head.appendChild(script);
+        });
+    }
+
+    // Main data sending function with retry logic
+    async function sendData(data, retryCount = 0) {
+        try {
+            // Try JSONP first
+            return await sendDataJSONP(data);
+        } catch (jsonpError) {
+            console.warn('JSONP request failed:', jsonpError);
+            
+            // Fall back to fetch with retry logic
+            try {
+                const response = await fetch(getEndpointUrl(), {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                return await response.json();
+            } catch (fetchError) {
+                if (retryCount < config.maxRetries) {
+                    console.warn(`Retry attempt ${retryCount + 1} of ${config.maxRetries}`);
+                    await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+                    return sendData(data, retryCount + 1);
+                }
+                throw new Error(`Failed to send data after ${config.maxRetries} retries`);
+            }
+        }
+    }
+
+    // Send session summary with improved error handling
+    async function sendSessionSummary() {
+        if (!sessionData.client_id || !sessionData.session_id) {
+            console.error('Missing required session identifiers');
+            return;
+        }
+
+        const summary = {
+            ...sessionData,
+            timestamp: Date.now(),
+            sdk_version: SDK_VERSION,
+            user_behavior: {
+                ...sessionData.user_behavior,
+                active_duration: sessionData.active_duration,
+                total_duration: Date.now() - sessionData.start_time,
+                interaction_density: sessionData.user_behavior.total_interactions / (sessionData.active_duration / 1000)
+            }
+        };
+
+        try {
+            const response = await sendData(summary);
+            if (config.debug) {
+                console.log('Session summary sent successfully:', response);
+            }
+            return response;
         } catch (error) {
-            console.error('Error in sendSessionSummary:', error);
-            return false;
+            console.error('Failed to send session summary:', error);
+            throw error;
         }
     }
 
