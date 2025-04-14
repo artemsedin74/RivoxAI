@@ -712,29 +712,28 @@ function getYandexCounterId() {
                 const script = document.createElement('script');
                 script.async = true;
                 
-                // Get the deployment URL from the script tag
-                const sdkScript = document.querySelector('script[data-token]');
-                if (!sdkScript) {
-                    throw new Error('RIVOX SDK script tag not found');
-                }
-                
                 // Get the endpoint URL
                 const endpoint = getEndpointUrl();
                 if (!endpoint) {
                     throw new Error('Invalid endpoint URL');
                 }
+
+                // Prepare data for sending
+                const sendData = {
+                    ...data,
+                    callback: callbackName,
+                    origin: window.location.origin,
+                    timestamp: new Date().toISOString()
+                };
+
+                // Convert data to base64 to avoid URL length issues
+                const base64Data = btoa(JSON.stringify(sendData));
                 
-                // Create URL with parameters
-                const params = new URLSearchParams();
-                params.append('callback', callbackName);
-                params.append('data', JSON.stringify(data));
-                params.append('origin', window.location.origin);
-                params.append('_', Date.now()); // Cache buster
-                
-                // Set script source with full URL
-                script.src = `${endpoint}?${params.toString()}`;
+                // Set script source with encoded data
+                script.src = `${endpoint}?data=${encodeURIComponent(base64Data)}&_=${Date.now()}`;
                 
                 if (config.debug) {
+                    console.log('Sending data:', sendData);
                     console.log('JSONP Request URL:', script.src);
                 }
                 
@@ -758,7 +757,12 @@ function getYandexCounterId() {
                 script.onerror = function(error) {
                     cleanup();
                     console.error('JSONP script error:', error);
-                    reject(new Error('Failed to load JSONP script: ' + (error.message || 'Network error')));
+
+                    // Try alternative method if JSONP fails
+                    console.log('Trying alternative method...');
+                    sendDataFallback(data)
+                        .then(resolve)
+                        .catch(reject);
                 };
                 
                 // Add script to page
@@ -772,8 +776,54 @@ function getYandexCounterId() {
                 
             } catch (error) {
                 console.error('JSONP setup error:', error);
-                reject(error);
+                // Try alternative method if JSONP setup fails
+                sendDataFallback(data)
+                    .then(resolve)
+                    .catch(reject);
             }
+        });
+    }
+
+    // Fallback method using fetch with CORS mode
+    function sendDataFallback(data) {
+        return new Promise((resolve, reject) => {
+            const endpoint = getEndpointUrl();
+            if (!endpoint) {
+                reject(new Error('Invalid endpoint URL'));
+                return;
+            }
+
+            const fetchOptions = {
+                method: 'POST',
+                mode: 'cors',
+                headers: {
+                    'Content-Type': 'text/plain', // Use text/plain to avoid preflight
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({
+                    ...data,
+                    origin: window.location.origin,
+                    timestamp: new Date().toISOString()
+                })
+            };
+
+            if (config.debug) {
+                console.log('Sending data via fetch:', fetchOptions);
+            }
+
+            fetch(endpoint, fetchOptions)
+                .then(response => response.json())
+                .then(result => {
+                    if (result && result.status === 'success') {
+                        resolve(result);
+                    } else {
+                        reject(new Error('Server returned error: ' + JSON.stringify(result)));
+                    }
+                })
+                .catch(error => {
+                    console.error('Fetch error:', error);
+                    reject(error);
+                });
         });
     }
 
@@ -783,16 +833,25 @@ function getYandexCounterId() {
             const summary = {
                 ...sessionData,
                 timestamp: new Date().toISOString(),
-                sdk_version: SDK_VERSION
+                sdk_version: SDK_VERSION,
+                domain: window.location.hostname,
+                page_url: window.location.href,
+                referrer: document.referrer
             };
 
             let attempts = 0;
-            const maxAttempts = 3;
-            const baseDelay = 1000;
+            const maxAttempts = config.maxRetries;
+            const baseDelay = config.retryDelay;
 
             while (attempts < maxAttempts) {
                 try {
-                    await sendDataJSONP(summary);
+                    if (config.debug) {
+                        console.log(`Sending attempt ${attempts + 1}/${maxAttempts}`);
+                    }
+
+                    // Try JSONP first
+                    const result = await sendDataJSONP(summary);
+                    
                     if (config.debug) {
                         console.log(`✓ Session data sent successfully (attempt ${attempts + 1})`);
                     }
