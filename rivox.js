@@ -674,99 +674,11 @@ function getYandexCounterId() {
             try {
                 const callbackName = 'rivox_' + Math.random().toString(36).substr(2, 9);
                 
-                // Создаем элемент script
+                // Create script element
                 const script = document.createElement('script');
                 script.async = true;
                 
-                // Создаем URL с параметрами
-                const params = new URLSearchParams();
-                
-                // Add data as a separate parameter
-                params.append('data', JSON.stringify(data));
-                params.append('callback', callbackName);
-                params.append('origin', window.location.origin);
-                params.append('_', Date.now()); // Cache buster
-                
-                // Set script source with all parameters
-                const url = `${config.endpoint}?${params.toString()}`;
-                script.src = url;
-                
-                if (config.debug) {
-                    console.log('JSONP Request URL:', url);
-                }
-                
-                // Устанавливаем обработчики
-                window[callbackName] = function(response) {
-                    cleanup();
-                    if (response && response.status === 'success') {
-                        resolve(response);
-                    } else {
-                        reject(new Error('Server returned error response: ' + JSON.stringify(response)));
-                    }
-                };
-                
-                // Функция очистки
-                function cleanup() {
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    delete window[callbackName];
-                }
-                
-                // Обработка ошибок
-                script.onerror = function() {
-                    cleanup();
-                    reject(new Error('Failed to load JSONP script'));
-                };
-                
-                // Добавляем скрипт на страницу
-                document.head.appendChild(script);
-                
-                // Таймаут
-                setTimeout(() => {
-                    cleanup();
-                    reject(new Error('JSONP request timeout'));
-                }, 10000);
-                
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-
-    // Обновляем функцию отправки данных
-    async function sendSessionSummary() {
-        try {
-            const summary = {
-                ...sessionData,
-                timestamp: new Date().toISOString(),
-                sdk_version: SDK_VERSION
-            };
-
-            async function attemptSend() {
-                return new Promise((resolve, reject) => {
-                    try {
-                        // Create a unique callback name
-                        const callbackName = 'rivoxCallback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                        
-                        // Setup callback
-                        window[callbackName] = function(response) {
-                            cleanup();
-                            if (response && response.status === 'success') {
-                                resolve(true);
-                            } else {
-                                reject(new Error('Server returned error: ' + JSON.stringify(response)));
-                            }
-                        };
-
-                        // Cleanup function
-                        function cleanup() {
-                            if (script.parentNode) script.parentNode.removeChild(script);
-                            delete window[callbackName];
-                        }
-
-                        // Create script element
-                        const script = document.createElement('script');
-                        script.async = true;
-
+                // Get the deployment URL from the script tag
                         // Handle script load error
                         script.onerror = function() {
                             cleanup();
