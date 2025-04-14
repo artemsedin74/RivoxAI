@@ -24,7 +24,7 @@ function getYandexCounterId() {
         debug: true, // Enable debug mode
         sendInterval: 60000,
         version: SDK_VERSION,
-        endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzupBK1ZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlY1XhxmqupKBHsXSIKtnW/exec',
+        endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
         sendDelay: 4000,
@@ -221,10 +221,8 @@ function getYandexCounterId() {
 
     // Validate and get endpoint URL
     function getEndpointUrl() {
-        if (config.debug) {
-            console.log('Getting endpoint URL from config:', config.endpoint);
-        }
-        return config.endpoint;
+        // Use the correct deployment URL
+        return 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec';
     }
 
     // Load configuration from script data attributes
@@ -767,49 +765,29 @@ function getYandexCounterId() {
     async function sendData(data) {
         const maxRetries = 3;
         const retryDelay = (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000);
-        
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+
+        let lastError;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
             try {
                 const endpoint = getEndpointUrl();
                 if (!endpoint) {
                     throw new Error('Invalid endpoint URL');
                 }
-                
-                if (attempt > 1) {
-                    console.log(`Retry attempt ${attempt} of ${maxRetries}...`);
-                    await new Promise(resolve => setTimeout(resolve, retryDelay(attempt - 1)));
+
+                if (attempt > 0) {
+                    console.log(`Retry attempt ${attempt} of ${maxRetries - 1}...`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay(attempt)));
                 }
 
-                // Try fetch first (CORS)
-                try {
-                    const response = await fetch(endpoint, {
-                        method: 'POST',
-                        mode: 'cors',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Origin': window.location.origin
-                        },
-                        body: JSON.stringify(data)
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-
-                    const result = await response.json();
-                    if (result.status === 'success') {
-                        return result;
-                    }
-                    throw new Error(result.message || 'Server error');
-                } catch (fetchError) {
-                    console.log('Fetch failed, falling back to JSONP:', fetchError);
-                    // If fetch fails, try JSONP as fallback
-                    return await sendDataJSONP(data, endpoint);
-                }
+                return await sendDataJSONP(data, endpoint);
             } catch (error) {
-                console.warn(`Send attempt ${attempt} failed:`, error.message);
-                if (attempt === maxRetries) {
-                    throw new Error(`Failed to send data after ${maxRetries} retries`);
+                lastError = error;
+                console.warn(`Send attempt ${attempt + 1} failed:`, error.message);
+                
+                // Only store and throw on the last attempt
+                if (attempt === maxRetries - 1) {
+                    storeFailedRequest(data);
+                    throw new Error(`Failed to send data after ${maxRetries} retries: ${lastError.message}`);
                 }
             }
         }
