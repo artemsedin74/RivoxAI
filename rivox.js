@@ -1,6 +1,9 @@
 // RIVOX SDK v4.6.3
 // Enhanced version with ML data collection capabilities
 
+// Define SDK version constant
+const SDK_VERSION = '4.6.3';
+
 // Utility functions for Yandex.Metrika
 function isYandexMetrikaReady() {
     return typeof ym !== 'undefined' || typeof Ya !== 'undefined' || !!window.yaCounter;
@@ -277,7 +280,7 @@ function getYandexCounterId() {
                     user_agent: navigator.userAgent,
                     platform: navigator.platform
                 },
-                sdk_version: '4.6.3'
+                sdk_version: SDK_VERSION
             };
 
             // Устанавливаем обработчики событий
@@ -719,7 +722,7 @@ function getYandexCounterId() {
             const summary = {
                 ...sessionData,
                 timestamp: new Date().toISOString(),
-                sdk_version: '4.6.3'
+                sdk_version: SDK_VERSION
             };
 
             async function attemptSend() {
