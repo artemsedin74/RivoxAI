@@ -981,29 +981,26 @@ function getYandexCounterId() {
             timestamp: new Date().toISOString()
         });
         
+        // Prepare data with token and origin
+        const preparedData = {
+            ...data,
+            token: config.token,
+            origin: window.location.origin
+        };
+
+        // Try POST first as it's more reliable
         try {
-            // Try JSONP first for GET requests
-            if (JSON.stringify(data).length < 2000) { // URL length limit
-                console.log('📡 Trying JSONP request...');
-                const response = await sendDataJSONP(data);
-                console.log('✅ JSONP request successful:', response);
-                return response;
-            }
-            
-            // For larger payloads, try POST
-            console.log('📡 Payload too large for JSONP, trying POST...');
+            console.log('📡 Trying POST request...');
             const response = await fetch(getEndpointUrl(), {
                 method: 'POST',
+                mode: 'cors',
                 credentials: 'include',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Origin': window.location.origin
+                    'Origin': window.location.origin,
+                    'Accept': 'application/json'
                 },
-                body: JSON.stringify({
-                    ...data,
-                    token: config.token,
-                    origin: window.location.origin
-                })
+                body: JSON.stringify(preparedData)
             });
             
             if (!response.ok) {
@@ -1014,15 +1011,23 @@ function getYandexCounterId() {
             console.log('✅ POST request successful:', result);
             return result;
         } catch (error) {
-            console.error('❌ Request failed:', error);
+            console.warn('⚠️ POST failed, trying JSONP...', error);
+            
+            // For small payloads, try JSONP
+            if (JSON.stringify(preparedData).length < 2000) {
+                try {
+                    console.log('📡 Trying JSONP request...');
+                    const response = await sendDataJSONP(preparedData);
+                    console.log('✅ JSONP request successful:', response);
+                    return response;
+                } catch (jsonpError) {
+                    console.error('❌ JSONP failed:', jsonpError);
+                }
+            }
             
             // Last resort: try navigator.sendBeacon
             if (navigator.sendBeacon) {
-                const beaconData = new Blob([JSON.stringify({
-                    ...data,
-                    token: config.token,
-                    origin: window.location.origin
-                })], {
+                const beaconData = new Blob([JSON.stringify(preparedData)], {
                     type: 'application/json'
                 });
                 
@@ -1033,7 +1038,8 @@ function getYandexCounterId() {
             }
             
             // If all methods fail, add to retry queue
-            addToFailedQueue(data);
+            console.error('❌ All send methods failed, adding to retry queue');
+            addToFailedQueue(preparedData);
             throw new Error('All send methods failed');
         }
     }
