@@ -905,10 +905,35 @@ let Logger = {
     function isImportantElement(element) {
         if (!element) return false;
         
-        return element.tagName === 'A' || 
-               element.tagName === 'BUTTON' || 
-               element.tagName === 'INPUT' ||
-               (element.hasAttribute && element.hasAttribute('data-rivox-important'));
+        // Расширенный список важных тегов
+        const importantTags = [
+            'A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 
+            'LABEL', 'FORM', 'IMG', 'VIDEO', 'IFRAME'
+        ];
+        
+        // Важные классы и атрибуты
+        const importantClasses = [
+            'btn', 'button', 'link', 'cta', 'card', 
+            'product', 'price', 'buy', 'cart', 'checkout',
+            'modal', 'popup', 'form', 'submit', 'order'
+        ];
+
+        // Важные data-атрибуты
+        const importantDataAttrs = [
+            'data-rivox-important',
+            'data-product',
+            'data-sku',
+            'data-price',
+            'data-category'
+        ];
+
+        return (
+            importantTags.includes(element.tagName) ||
+            (element.className && typeof element.className === 'string' && importantClasses.some(cls => 
+                element.className.toLowerCase().includes(cls)
+            )) ||
+            importantDataAttrs.some(attr => element.hasAttribute(attr))
+        );
     }
 
     function isCTAElement(element) {
@@ -1091,21 +1116,22 @@ let Logger = {
             sessionData.hover_events.length + 
             sessionData.cta_clicks.length;
             
-        // Send if:
-        // 1. We have many events
-        if (totalEvents >= 5) return true;
+        // Отправляем если:
+        // 1. Накопилось достаточно событий
+        if (totalEvents >= 15) return true; // было 5
         
-        // 2. User spent significant time
+        // 2. Прошло значительное время
         const timeOnSite = Date.now() - sessionData.start_time;
-        if (timeOnSite >= 60000) return true; // 1 minute
+        if (timeOnSite >= 120000) return true; // увеличили до 2 минут
         
-        // 3. Deep scroll
+        // 3. Глубокий скролл
         const maxScroll = sessionData.user_behavior.scroll_depth_percentages ? 
-            Math.max(...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0;
-        if (maxScroll > 70) return true;
+            Math.max(0, ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0; // Ensure Math.max doesn't return -Infinity for empty array
+        if (maxScroll > 80) return true; // увеличили порог
         
-        // 4. Multiple page views
-        if (sessionData.page_history.length > 1) return true;
+        // 4. Есть важные события
+        if (sessionData.metrika_goals.length > 0) return true;
+        if (sessionData.cta_clicks.length >= 3) return true;
         
         return false;
     }
@@ -1312,6 +1338,9 @@ let Logger = {
                 currentPage.time_spent = Date.now() - currentPage.timestamp;
             }
 
+            // Update ML features before sending
+            updateMLFeatures(); 
+
             // Prepare complete session summary
             const summary = {
                 ...sessionData,
@@ -1320,6 +1349,14 @@ let Logger = {
                 sdk_version: SDK_VERSION,
                 total_session_duration: Date.now() - sessionData.start_time
             };
+
+            // --- Add Duplicate Check ---
+            if (isDuplicate(summary)) {
+                Logger.info(`Duplicate data detected, skipping send (${reason})`);
+                resolve(); // Resolve successfully as we don't need to send
+                return;
+            }
+            // --- End of Duplicate Check ---
 
             // Try to send data
             sendDataWithFallback(summary)
@@ -1359,4 +1396,76 @@ let Logger = {
         sendDataGuaranteed,
         getSessionData: () => sessionData
     };
+
+    // ---- New ML Features Function ----
+    function updateMLFeatures() {
+        if (!sessionData || !sessionData.ml_features) return;
+
+        const now = Date.now();
+        const timeOnSite = now - sessionData.start_time;
+        const timeOnSiteMinutes = Math.max(1, timeOnSite) / 60000; // Avoid division by zero, use minutes
+        
+        // Сигналы интереса
+        sessionData.ml_features.interest_signals = [
+            {
+                type: 'time_on_site',
+                value: parseFloat((timeOnSite / 1000).toFixed(2)), // в секундах
+                timestamp: now
+            },
+            {
+                type: 'scroll_depth',
+                value: parseFloat(sessionData.user_behavior.scroll_depth_percentages ? 
+                    Math.max(0, ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0).toFixed(2),
+                timestamp: now
+            },
+            {
+                type: 'interaction_rate',
+                value: parseFloat((sessionData.user_behavior.total_interactions / timeOnSiteMinutes).toFixed(2)), // в минуту
+                timestamp: now
+            }
+        ];
+
+        // Паттерны поведения
+        const totalHoverDuration = sessionData.hover_events.reduce((sum, h) => sum + h.duration, 0);
+        const avgHoverDuration = totalHoverDuration / (sessionData.hover_events.length || 1);
+
+        sessionData.ml_features.behavior_patterns = [
+            {
+                type: 'scroll_speed',
+                value: parseFloat((sessionData.scroll_chunks.length / timeOnSiteMinutes).toFixed(2)) // скроллов в минуту
+            },
+            {
+                type: 'click_frequency',
+                value: parseFloat((sessionData.cta_clicks.length / timeOnSiteMinutes).toFixed(2)) // кликов в минуту
+            },
+            {
+                type: 'hover_duration_avg',
+                value: parseFloat(avgHoverDuration.toFixed(0)) // средняя длительность наведения
+            }
+        ];
+
+        // Анализ воронки
+        sessionData.ml_features.funnel_analysis = {
+            page_views: sessionData.page_history.length,
+            product_views: sessionData.page_history.filter(p => 
+                p.url.includes('/catalog/') || p.url.includes('/product/')
+            ).length,
+            cart_interactions: sessionData.cta_clicks.filter(c => 
+                c.element && (
+                    c.element.toLowerCase().includes('cart') || 
+                    c.element.toLowerCase().includes('basket') ||
+                    c.element.toLowerCase().includes('add_to_cart')
+                )
+            ).length,
+            checkout_attempts: sessionData.metrika_goals.filter(g => 
+                g.name && (
+                    g.name.toLowerCase().includes('checkout') || 
+                    g.name.toLowerCase().includes('order') ||
+                    g.name.toLowerCase().includes('purchase')
+                )
+            ).length
+        };
+        Logger.debug('ML features updated:', sessionData.ml_features);
+    }
+    // ---- End of New ML Features Function ----
 })(window); 
