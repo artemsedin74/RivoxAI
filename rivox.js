@@ -42,7 +42,10 @@ function getYandexCounterId() {
         maxClickGap: 10000,
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
-        sendDelay: 60000 // Send data every minute
+        sendDelay: 300000, // Send data every 5 minutes
+        retryDelay: 60000, // Retry failed requests every minute
+        maxRetries: 3,
+        maxQueueSize: 10
     };
 
     // Session data
@@ -51,6 +54,10 @@ function getYandexCounterId() {
     let lastActivityTime = Date.now();
     let queuedData = [];
     let sendTimer = null;
+
+    // Add failed queue
+    const failedQueue = [];
+    let retryTimer = null;
 
     // Update last activity time
     function updateActivity() {
@@ -553,8 +560,12 @@ function getYandexCounterId() {
             sdk_version: SDK_VERSION
         };
 
-        // Add to queue instead of sending immediately
-        queueData(summary);
+        try {
+            await sendDataWithFallback(summary);
+        } catch (error) {
+            Logger.warn('Adding failed request to retry queue');
+            addToFailedQueue(summary);
+        }
     }
 
     // Start periodic sending
@@ -739,13 +750,19 @@ function getYandexCounterId() {
             }
         },
         error: function(msg, error) {
-            console.error(`rivox.js: ❌ ${msg}`, error || '');
+            if (config.debug) {
+                console.error(`rivox.js: ❌ ${msg}`, error || '');
+            }
         },
         warn: function(msg, data) {
-            console.warn(`rivox.js: ⚠️ ${msg}`, data || '');
+            if (config.debug) {
+                console.warn(`rivox.js: ⚠️ ${msg}`, data || '');
+            }
         },
         success: function(msg, data) {
-            console.log(`rivox.js: ✅ ${msg}`, data || '');
+            if (config.debug) {
+                console.log(`rivox.js: ✅ ${msg}`, data || '');
+            }
         }
     };
 
@@ -755,4 +772,82 @@ function getYandexCounterId() {
     });
 
     Logger.success('SDK loaded successfully');
+
+    function addToFailedQueue(data) {
+        if (failedQueue.length >= config.maxQueueSize) {
+            failedQueue.shift(); // Remove oldest item if queue is full
+        }
+        failedQueue.push({
+            data,
+            attempts: 0,
+            timestamp: Date.now()
+        });
+        
+        // Start retry timer if not running
+        if (!retryTimer) {
+            startRetryTimer();
+        }
+    }
+
+    function startRetryTimer() {
+        if (retryTimer) {
+            clearInterval(retryTimer);
+        }
+        
+        retryTimer = setInterval(processFailedQueue, config.retryDelay);
+    }
+
+    async function processFailedQueue() {
+        if (failedQueue.length === 0) {
+            clearInterval(retryTimer);
+            retryTimer = null;
+            return;
+        }
+
+        const item = failedQueue[0]; // Get first item but don't remove yet
+        
+        if (item.attempts >= config.maxRetries) {
+            Logger.warn(`Dropping data after ${config.maxRetries} failed attempts`, item.data);
+            failedQueue.shift();
+            return;
+        }
+
+        try {
+            await sendDataWithFallback(item.data);
+            failedQueue.shift(); // Remove only after successful send
+            Logger.success('Successfully sent queued data');
+        } catch (error) {
+            item.attempts++;
+            Logger.warn(`Retry attempt ${item.attempts} failed`, error);
+        }
+    }
+
+    async function sendDataWithFallback(data) {
+        try {
+            // First try JSONP
+            Logger.log('Attempting JSONP request...');
+            await sendDataJSONP(data);
+            Logger.success('Data sent via JSONP');
+            return;
+        } catch (error) {
+            Logger.warn('JSONP failed, trying beacon API...', error);
+        }
+
+        // Try beacon API
+        if (navigator.sendBeacon) {
+            try {
+                const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+                const success = navigator.sendBeacon(config.endpoint, blob);
+                if (success) {
+                    Logger.success('Data sent via beacon API');
+                    return;
+                }
+            } catch (error) {
+                Logger.warn('Beacon API failed', error);
+            }
+        }
+
+        // If both methods fail, throw error to trigger queue
+        throw new Error('All send methods failed');
+    }
 })(window); 
