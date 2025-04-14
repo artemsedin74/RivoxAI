@@ -29,7 +29,8 @@ function getYandexCounterId() {
         initDelay: 300,
         sendDelay: 4000,
         maxRetries: 3,
-        retryDelay: 1000
+        retryDelay: 1000,
+        useJSONP: true
     };
 
     // Initialize empty session data structure
@@ -221,25 +222,21 @@ function getYandexCounterId() {
 
     // Validate and get endpoint URL
     function getEndpointUrl() {
-        const baseUrl = 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec';
+        const scriptTag = document.querySelector('script[data-rivox-token]');
+        let endpoint = scriptTag?.getAttribute('data-endpoint') || config.endpoint;
         
-        // Log the endpoint URL
-        console.log('Apps Script URL:', baseUrl);
+        // Ensure endpoint ends with /exec for Apps Script
+        if (!endpoint.endsWith('/exec')) {
+            endpoint = endpoint.replace(/\/?$/, '/exec');
+        }
         
-        // Test the endpoint with a simple request
-        fetch(`${baseUrl}?test=1`)
-            .then(response => {
-                console.log('Apps Script test response:', {
-                    status: response.status,
-                    ok: response.ok,
-                    headers: Object.fromEntries(response.headers)
-                });
-            })
-            .catch(error => {
-                console.error('Apps Script test failed:', error);
-            });
+        // Remove any existing query parameters
+        endpoint = endpoint.split('?')[0];
         
-        return baseUrl;
+        // Log the endpoint being used
+        console.log('RIVOX Endpoint:', endpoint);
+        
+        return endpoint;
     }
 
     // Load configuration from script data attributes
@@ -756,87 +753,53 @@ function getYandexCounterId() {
 
     function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
-            try {
-                // Generate callback name
-                const timestamp = Date.now();
-                const callbackName = `rivoxCallback${timestamp}`;
+            const callbackName = `rivoxCallback_${Date.now()}`;
+            const params = new URLSearchParams({
+                data: JSON.stringify(data),
+                callback: callbackName,
+                origin: window.location.origin,
+                _: Date.now() // cache buster
+            });
 
-                // Prepare minimal data
-                const preparedData = {
-                    ...data,
-                    timestamp: new Date().toISOString()
-                };
+            const fullUrl = `${endpoint}?${params.toString()}`;
+            
+            console.log(`RIVOX: Sending JSONP request to ${endpoint}`);
+            console.log('RIVOX: Request details:', { 
+                timestamp: new Date().toISOString(),
+                dataSize: JSON.stringify(data).length
+            });
 
-                // Create URL parameters
-                const params = new URLSearchParams();
-                params.append('data', JSON.stringify(preparedData));
-                params.append('callback', callbackName);
-                params.append('origin', window.location.origin);
+            let timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error('JSONP request timeout (5s)'));
+            }, 5000);
 
-                // Construct URL
-                const url = `${endpoint}?${params.toString()}`;
-
-                console.log('Sending JSONP request to:', url);
-
-                // Create script element
-                const script = document.createElement('script');
-                script.type = 'text/javascript';
-                
-                // Add load event listener
-                script.onload = () => {
-                    console.log('JSONP script loaded successfully');
-                };
-
-                // Handle script load error with details
-                script.onerror = (error) => {
-                    console.error('JSONP Load Error:', {
-                        error: error,
-                        url: url,
-                        time: Date.now() - timestamp,
-                        scriptElement: script
-                    });
-                    cleanup();
-                    reject(new Error('Script load failed'));
-                };
-
-                // Setup cleanup function
-                const cleanup = () => {
-                    if (script.parentNode) {
-                        script.parentNode.removeChild(script);
-                    }
-                    delete window[callbackName];
-                    clearTimeout(timeoutId);
-                };
-
-                // Setup timeout (5 seconds)
-                const timeoutId = setTimeout(() => {
-                    console.error('JSONP Request Timeout:', {
-                        url: url,
-                        time: Date.now() - timestamp
-                    });
-                    cleanup();
-                    reject(new Error('Request timeout'));
-                }, 5000);
-
-                // Setup success callback
-                window[callbackName] = (response) => {
-                    console.log('JSONP Response received:', response);
-                    cleanup();
-                    if (response && response.status === 'success') {
-                        resolve(response);
-                    } else {
-                        reject(new Error(response?.message || 'Invalid response'));
-                    }
-                };
-
-                // Set src and append script (do this last)
-                script.src = url;
-                document.head.appendChild(script);
-
-            } catch (error) {
-                console.error('JSONP Setup Error:', error);
-                reject(error);
+            function cleanup() {
+                if (script && script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                delete window[callbackName];
+                clearTimeout(timeoutId);
             }
+
+            window[callbackName] = function(response) {
+                cleanup();
+                if (response.error) {
+                    reject(new Error(response.error));
+                } else {
+                    resolve(response);
+                }
+            };
+
+            const script = document.createElement('script');
+            script.async = true;
+            script.src = fullUrl;
+            script.onerror = () => {
+                cleanup();
+                reject(new Error('Failed to load JSONP script'));
+            };
+
+            document.head.appendChild(script);
         });
     }
 
