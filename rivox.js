@@ -745,12 +745,20 @@ function getYandexCounterId() {
                 const random = Math.random().toString(36).substring(2, 10);
                 const callbackName = `rivoxCallback${timestamp}${random}`;
 
+                // Prepare data for transmission
+                const preparedData = {
+                    ...data,
+                    client_domain: window.location.hostname,
+                    client_url: window.location.href,
+                    timestamp: new Date().toISOString()
+                };
+
                 // Create URL with parameters
                 const params = new URLSearchParams();
-                params.append('data', encodeURIComponent(JSON.stringify(data)));
+                params.append('data', JSON.stringify(preparedData));
                 params.append('callback', callbackName);
                 params.append('origin', window.location.origin);
-                params.append('_', timestamp); // Cache buster
+                params.append('t', timestamp); // Cache buster
 
                 // Construct full URL
                 const url = `${endpoint}?${params.toString()}`;
@@ -760,7 +768,7 @@ function getYandexCounterId() {
                     console.log('JSONP request:', {
                         url: url.substring(0, 100) + '...',
                         callbackName,
-                        dataSize: JSON.stringify(data).length
+                        dataSize: JSON.stringify(preparedData).length
                     });
                 }
 
@@ -786,24 +794,24 @@ function getYandexCounterId() {
                 // Setup success callback
                 window[callbackName] = (response) => {
                     cleanup();
-                    if (response.status === 'success') {
+                    if (response && response.status === 'success') {
                         if (config.debug) {
                             console.log('JSONP response:', response);
                         }
                         resolve(response);
                     } else {
-                        reject(new Error(response.message || 'Unknown error'));
+                        reject(new Error(response?.message || 'Invalid server response'));
                     }
                 };
 
                 // Handle script load error
                 script.onerror = () => {
                     cleanup();
-                    reject(new Error('Failed to load JSONP script'));
+                    reject(new Error('Failed to load script'));
                 };
 
                 // Add script to document
-                document.body.appendChild(script);
+                document.head.appendChild(script);
 
             } catch (error) {
                 reject(new Error(`JSONP request failed: ${error.message}`));
