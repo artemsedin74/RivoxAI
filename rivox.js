@@ -743,7 +743,13 @@ let Logger = {
         }
 
         Logger.info('Preparing to send session data...');
-        Logger.info('Goals data to send:', sessionData.metrika_goals);
+        Logger.info('Session data to send:', {
+            client_id: sessionData.client_id,
+            session_id: sessionData.session_id,
+            goals_count: sessionData.metrika_goals?.length || 0,
+            goals: sessionData.metrika_goals || [],
+            conversion_data: sessionData.conversion_data || {}
+        });
 
         // Update ML features before sending
         updateMLFeatures();
@@ -796,7 +802,8 @@ let Logger = {
 
         Logger.info('Sending data to server:', {
             goals_count: summary.metrika_goals.length,
-            goals: summary.metrika_goals
+            goals: summary.metrika_goals,
+            conversion_data: summary.conversion_data
         });
 
         let retryCount = 0;
@@ -807,6 +814,7 @@ let Logger = {
             try {
                 // Try direct POST first
                 try {
+                    Logger.info(`Attempting POST request (attempt ${retryCount + 1}/${maxRetries})...`);
                     const response = await fetch(config.endpoint, {
                         method: 'POST',
                         headers: {
@@ -821,8 +829,7 @@ let Logger = {
                     }
 
                     const result = await response.json();
-                    Logger.info('✅ POST request successful');
-                    Logger.info('Server response:', result);
+                    Logger.info('✅ POST request successful:', result);
                     return result;
                 } catch (error) {
                     Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
@@ -830,6 +837,7 @@ let Logger = {
                     // If we're out of retries, try beacon API as last resort
                     if (retryCount === maxRetries - 1 && navigator.sendBeacon) {
                         try {
+                            Logger.info('Trying beacon API as last resort...');
                             const blob = new Blob([JSON.stringify(summary)], {
                                 type: 'application/json'
                             });
@@ -1343,6 +1351,13 @@ let Logger = {
                     timestamp: Date.now()
                 };
 
+                // Log before adding to session data
+                Logger.info('Adding goal to session data:', goalData);
+                Logger.info('Current session data:', {
+                    metrika_goals: sessionData.metrika_goals,
+                    conversion_data: sessionData.conversion_data
+                });
+
                 sessionData.metrika_goals.push(goalData);
                 sessionData.conversion_data.goals_reached.push(goalData);
                 sessionData.conversion_data.last_goal_timestamp = Date.now();
@@ -1354,15 +1369,22 @@ let Logger = {
                     timestamp: Date.now()
                 });
 
+                // Log after adding to session data
                 Logger.info('Goal data added to session:', goalData);
-                Logger.info('Current goals array:', sessionData.metrika_goals);
+                Logger.info('Updated session data:', {
+                    metrika_goals: sessionData.metrika_goals,
+                    conversion_data: sessionData.conversion_data
+                });
 
                 // Send data after important goals
                 if (isImportantGoal(goalName)) {
+                    Logger.info(`Important goal reached (${goalName}), sending data...`);
                     sendSessionSummary().catch(error => 
                         Logger.error('Failed to send data after goal:', error)
                     );
                 }
+            } else {
+                Logger.error('Session data or metrika_goals not initialized');
             }
 
             return result;
