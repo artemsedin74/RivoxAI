@@ -17,6 +17,15 @@ function getYandexCounterId() {
     return counterObjects.length > 0 ? counterObjects[0].replace('yaCounter', '') : null;
 }
 
+// Define a placeholder Logger globally first
+let Logger = {
+    setLevel: () => {},
+    debug: () => {},
+    info: () => {},
+    warn: console.warn, // Use console directly for warnings/errors initially
+    error: console.error
+};
+
 (function(window) {
     'use strict';
 
@@ -49,8 +58,8 @@ function getYandexCounterId() {
         deduplicationWindow: 60000 // 1 минута
     };
 
-    // Logger utility with improved formatting and levels
-    const Logger = {
+    // Re-define the global Logger with full functionality inside the IIFE
+    Logger = {
         LEVELS: {
             DEBUG: 0,
             INFO: 1,
@@ -70,7 +79,7 @@ function getYandexCounterId() {
         },
         
         info: function(msg, data) {
-            if (this.level <= this.LEVELS.INFO && config.debug) {
+            if (this.level <= this.LEVELS.INFO && config.debug) { 
                 console.log(`rivox.js ℹ️: ${msg}`, data || '');
             }
         },
@@ -433,6 +442,9 @@ function getYandexCounterId() {
         }, 60000); // Check every minute
 
         setupMetrikaTracking();
+
+        // Log successful initialization
+        Logger.info('✅ RIVOX SDK initialized successfully.');
     }
 
     // Enhanced event listeners setup
