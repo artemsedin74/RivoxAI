@@ -756,54 +756,64 @@ let Logger = {
 
         Logger.debug('Preparing to send session data', summary);
 
-        try {
-            // Try JSONP first
+        let retryCount = 0;
+        const maxRetries = 3;
+        const retryDelay = 1000; // 1 second
+
+        while (retryCount < maxRetries) {
             try {
-                Logger.debug('Attempting JSONP request...');
-                const response = await sendDataJSONP(summary);
-                Logger.info('JSONP request successful');
-                return response;
-            } catch (jsonpError) {
-                Logger.warn('JSONP failed, trying direct POST...', jsonpError);
-                
-                // Try direct POST request
-                const response = await fetch(config.endpoint, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(summary)
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
-                const result = await response.json();
-                Logger.info('POST request successful');
-                return result;
-            }
-        } catch (error) {
-            Logger.error('Failed to send data:', error);
-            
-            // Try beacon API as last resort
-            if (navigator.sendBeacon) {
+                // Try direct POST first
                 try {
-                    const blob = new Blob([JSON.stringify(summary)], {
-                        type: 'application/json'
+                    const response = await fetch(config.endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Origin': window.location.origin
+                        },
+                        body: JSON.stringify(summary)
                     });
-                    const success = navigator.sendBeacon(config.endpoint, blob);
-                    if (success) {
-                        Logger.info('Data sent via beacon API');
-                        return { success: true, method: 'beacon' };
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
                     }
-                } catch (beaconError) {
-                    Logger.error('Beacon API failed:', beaconError);
+
+                    const result = await response.json();
+                    Logger.info('✅ POST request successful');
+                    return result;
+                } catch (error) {
+                    Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
+                    
+                    // If we're out of retries, try beacon API as last resort
+                    if (retryCount === maxRetries - 1 && navigator.sendBeacon) {
+                        try {
+                            const blob = new Blob([JSON.stringify(summary)], {
+                                type: 'application/json'
+                            });
+                            const success = navigator.sendBeacon(config.endpoint, blob);
+                            if (success) {
+                                Logger.info('✅ Data sent via beacon API');
+                                return { success: true, method: 'beacon' };
+                            }
+                        } catch (beaconError) {
+                            Logger.error('Beacon API failed:', beaconError);
+                        }
+                    }
+                    
+                    // Wait before retry
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    retryCount++;
                 }
+            } catch (error) {
+                Logger.error(`Failed to send data (attempt ${retryCount + 1}/${maxRetries}):`, error);
+                if (retryCount === maxRetries - 1) {
+                    throw error;
+                }
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+                retryCount++;
             }
-            
-            throw error;
         }
+
+        throw new Error(`Failed to send data after ${maxRetries} attempts`);
     }
 
     // Start periodic sending
