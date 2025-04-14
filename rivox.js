@@ -719,7 +719,7 @@ function getYandexCounterId() {
             const summary = {
                 ...sessionData,
                 timestamp: new Date().toISOString(),
-                sdk_version: SDK_VERSION
+                sdk_version: '4.6.3'
             };
 
             async function attemptSend() {
