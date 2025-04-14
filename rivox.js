@@ -715,21 +715,38 @@ function getYandexCounterId() {
             params.append('origin', window.location.origin);
             params.append('_', Date.now()); // Cache buster
             
-            // Build full URL
+            // Build full URL with proper encoding
             const url = `${endpoint}?${params.toString()}`;
             
-            // Set script attributes
+            // Set script attributes for better loading
             script.async = true;
-            script.src = url;
-            
-            // Setup cleanup function
-            const cleanup = () => {
-                if (script.parentNode) script.parentNode.removeChild(script);
-                delete window[callbackName];
-                clearTimeout(timeoutId);
+            script.onerror = () => {
+                cleanup();
+                reject(new Error('Failed to load JSONP script'));
+            };
+            script.onload = () => {
+                // Start timeout only after script is loaded
+                timeoutId = setTimeout(() => {
+                    cleanup();
+                    reject(new Error('JSONP request timeout - no callback'));
+                }, 10000);
             };
             
-            // Handle success
+            // Setup cleanup function
+            let timeoutId;
+            const cleanup = () => {
+                if (script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                if (window[callbackName]) {
+                    delete window[callbackName];
+                }
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+            };
+            
+            // Handle success callback
             window[callbackName] = (response) => {
                 cleanup();
                 if (response.status === 'error') {
@@ -739,26 +756,18 @@ function getYandexCounterId() {
                 }
             };
             
-            // Handle errors
-            script.onerror = () => {
-                cleanup();
-                reject(new Error('Failed to load JSONP script'));
-            };
+            // Log request details
+            if (config.debug) {
+                console.log('JSONP request:', {
+                    url: url.substring(0, 100) + '...',
+                    callbackName,
+                    dataSize: JSON.stringify(data).length,
+                    timestamp: new Date().toISOString()
+                });
+            }
             
-            // Set timeout
-            const timeoutId = setTimeout(() => {
-                cleanup();
-                reject(new Error('JSONP request timeout'));
-            }, 10000); // 10 second timeout
-            
-            // Log request
-            console.log('JSONP request:', {
-                url: url.substring(0, 100) + '...',
-                callbackName,
-                dataSize: JSON.stringify(data).length
-            });
-            
-            // Append script to document
+            // Set script source and append to document
+            script.src = url;
             document.head.appendChild(script);
         });
     }
