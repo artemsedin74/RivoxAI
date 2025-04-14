@@ -703,93 +703,83 @@ function getYandexCounterId() {
     }
 
     // JSONP data sending implementation with improved error handling
-    function sendDataJSONP(data) {
+    function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.async = true;
             
-            // Create unique callback name
-            const callbackName = 'rivoxCallback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            // Generate callback name using timestamp
+            const callbackName = 'rivoxCallback' + Date.now();
             
-            // Prepare data for sending
-            const sendData = {
-                ...data,
-                timestamp: new Date().toISOString(),
-                origin: window.location.origin
+            // Create cleanup function
+            const cleanup = () => {
+                delete window[callbackName];
+                if (script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                clearTimeout(timeoutId);
             };
-            
-            // Create URL with parameters
-            const params = new URLSearchParams();
-            params.append('data', encodeURIComponent(JSON.stringify(sendData)));
-            params.append('callback', callbackName);
-            params.append('origin', window.location.origin);
-            params.append('_', Date.now()); // Cache buster
-            
-            const endpoint = getEndpointUrl();
-            if (!endpoint) {
-                reject(new Error('Invalid endpoint URL'));
-                return;
-            }
-            
-            script.src = `${endpoint}?${params.toString()}`;
-            
-            // Set timeout
-            const timeoutId = setTimeout(() => {
-                cleanup();
-                reject(new Error('JSONP request timeout'));
-            }, 10000);
             
             // Setup callback
             window[callbackName] = (response) => {
                 cleanup();
-                if (response && response.status === 'success') {
+                if (response.status === 'success') {
                     resolve(response);
                 } else {
-                    reject(new Error('Server returned error: ' + JSON.stringify(response)));
+                    reject(new Error(response.message || 'Server error'));
                 }
             };
             
-            // Error handling
+            // Setup error handler
             script.onerror = () => {
                 cleanup();
-                reject(new Error('Failed to load JSONP script'));
+                reject(new Error('JSONP request failed'));
             };
             
-            // Cleanup function
-            function cleanup() {
-                clearTimeout(timeoutId);
-                if (script.parentNode) {
-                    script.parentNode.removeChild(script);
-                }
-                delete window[callbackName];
-            }
+            // Setup timeout
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error('JSONP request timeout'));
+            }, config.requestTimeout || 10000);
             
-            // Append script to head
+            // Prepare URL with parameters
+            const params = new URLSearchParams();
+            params.append('data', encodeURIComponent(JSON.stringify(data)));
+            params.append('callback', callbackName);
+            params.append('origin', window.location.origin);
+            params.append('_', Date.now()); // Cache buster
+            
+            // Set script source and append to document
+            script.src = `${endpoint}?${params.toString()}`;
             document.head.appendChild(script);
         });
     }
 
     // Main data sending function with retry logic
-    async function sendData(data, retryCount = 0) {
-        const maxRetries = config.maxRetries || 3;
-        const retryDelay = config.retryDelay || 1000;
-
-        try {
-            // Try JSONP first
-            return await sendDataJSONP(data);
-        } catch (jsonpError) {
-            console.warn('JSONP request failed:', jsonpError);
-            
-            if (retryCount >= maxRetries) {
-                throw new Error(`Failed to send data after ${maxRetries} retries`);
-            }
-            
-            // Wait before retry
-            await new Promise(resolve => setTimeout(resolve, retryDelay * Math.pow(2, retryCount)));
-            
-            // Retry with incremented counter
-            return sendData(data, retryCount + 1);
-        }
+    async function sendData(data) {
+        const retryDelay = (attempt) => Math.min(1000 * Math.pow(2, attempt), 30000);
+        let attempt = 0;
+        
+        const send = () => {
+            return sendDataJSONP(data, config.endpoint)
+                .catch(error => {
+                    console.error('RIVOX send error:', error);
+                    
+                    // Retry with exponential backoff
+                    if (attempt < config.maxRetries) {
+                        attempt++;
+                        return new Promise(resolve => {
+                            setTimeout(() => resolve(send()), retryDelay(attempt));
+                        });
+                    }
+                    
+                    // Store failed request for later retry
+                    storeFailedRequest(data);
+                    throw error;
+                });
+        };
+        
+        return send();
     }
 
     // Send session summary with improved error handling
@@ -1808,13 +1798,7 @@ function getYandexCounterId() {
         }
 
         // Try to send via JSONP with retries
-        sendDataJSONP({
-            type: 'goal',
-            client_id: sessionData.client_id,
-            session_id: sessionData.session_id,
-            goal_data: goalData,
-            conversion_path: sessionData.conversion_data.conversion_path
-        }).catch(error => {
+        sendDataJSONP(goalData, endpoint).catch(error => {
             console.error('Failed to send goal data:', error);
             // Store failed request for retry
             if (window.localStorage) {
