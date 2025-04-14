@@ -20,11 +20,13 @@ function getYandexCounterId() {
     const config = {
         debug: false,
         sendInterval: 60000,
-        endpoint: 'https://apps.rivox.ru/collect',
+        // Используем Google Apps Script в качестве резервного эндпоинта
+        endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzupBK1ZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlY1XhxmqupKBHsXSIKtnW/exec',
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
         sendDelay: 1000,
-        useImage: true // Используем изображение для отправки данных
+        maxRetries: 3,
+        retryDelay: 1000
     };
 
     // Session data
@@ -242,6 +244,11 @@ function getYandexCounterId() {
                 return;
             }
 
+            // Ждем загрузки DOM
+            if (document.readyState !== 'complete') {
+                await new Promise(resolve => window.addEventListener('load', resolve, { once: true }));
+            }
+
             // Получаем client ID
             const clientId = await generateClientId();
             if (!clientId) {
@@ -277,9 +284,6 @@ function getYandexCounterId() {
             setupEventListeners();
 
             console.log('RIVOX SDK initialized successfully');
-
-            // Пробуем отправить сохраненные запросы
-            retryFailedRequests();
 
             // Отправляем начальные данные
             setTimeout(() => {
@@ -659,28 +663,59 @@ function getYandexCounterId() {
         }, 20 * 60 * 1000);
     }
 
-    // Функция для отправки данных через изображение
-    function sendDataViaImage(data) {
+    // Функция для отправки данных через форму
+    function sendDataViaForm(data) {
         return new Promise((resolve, reject) => {
             try {
-                const img = new Image();
-                const params = new URLSearchParams({
-                    d: btoa(JSON.stringify(data)),
-                    t: Date.now()
-                });
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = config.endpoint;
+                form.target = 'rivox_target_' + Date.now();
+                form.style.display = 'none';
 
-                img.onload = () => {
-                    if (config.debug) {
-                        console.log('Data sent successfully via image');
-                    }
+                // Создаем скрытый iframe
+                const iframe = document.createElement('iframe');
+                iframe.name = form.target;
+                iframe.style.display = 'none';
+                document.body.appendChild(iframe);
+
+                // Добавляем данные
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'data';
+                input.value = JSON.stringify(data);
+                form.appendChild(input);
+
+                // Добавляем форму
+                document.body.appendChild(form);
+
+                // Устанавливаем обработчики
+                iframe.onload = () => {
+                    cleanup();
                     resolve();
                 };
 
-                img.onerror = () => {
-                    reject(new Error('Failed to send data via image'));
+                iframe.onerror = () => {
+                    cleanup();
+                    reject(new Error('Failed to send data'));
                 };
 
-                img.src = `${config.endpoint}/pixel.gif?${params.toString()}`;
+                function cleanup() {
+                    setTimeout(() => {
+                        if (form.parentNode) form.parentNode.removeChild(form);
+                        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+                    }, 100);
+                }
+
+                // Отправляем форму
+                form.submit();
+
+                // Таймаут
+                setTimeout(() => {
+                    cleanup();
+                    reject(new Error('Request timeout'));
+                }, 10000);
+
             } catch (error) {
                 reject(error);
             }
@@ -689,6 +724,37 @@ function getYandexCounterId() {
 
     // Обновляем функцию отправки данных
     async function sendSessionSummary() {
+        let retryCount = 0;
+
+        async function attemptSend(data) {
+            try {
+                // Сначала пробуем sendBeacon
+                if (navigator.sendBeacon) {
+                    const blob = new Blob([JSON.stringify(data)], {
+                        type: 'application/json'
+                    });
+                    
+                    if (navigator.sendBeacon(config.endpoint, blob)) {
+                        if (config.debug) {
+                            console.log('Data sent successfully via beacon');
+                        }
+                        return true;
+                    }
+                }
+
+                // Затем пробуем форму
+                await sendDataViaForm(data);
+                if (config.debug) {
+                    console.log('Data sent successfully via form');
+                }
+                return true;
+
+            } catch (error) {
+                console.warn(`Send attempt ${retryCount + 1} failed:`, error);
+                return false;
+            }
+        }
+
         try {
             if (!sessionData) {
                 console.warn('No session data available');
@@ -716,22 +782,18 @@ function getYandexCounterId() {
                 ml_features: sessionData.ml_features || {}
             };
 
-            // Сначала пробуем отправить через sendBeacon
-            if (navigator.sendBeacon && !config.useImage) {
-                const blob = new Blob([JSON.stringify(summary)], {
-                    type: 'application/json'
-                });
-                
-                if (navigator.sendBeacon(config.endpoint, blob)) {
-                    if (config.debug) {
-                        console.log('Data sent successfully via beacon');
-                    }
+            // Пробуем отправить с повторами
+            while (retryCount < config.maxRetries) {
+                if (await attemptSend(summary)) {
                     return;
+                }
+                retryCount++;
+                if (retryCount < config.maxRetries) {
+                    await new Promise(resolve => setTimeout(resolve, config.retryDelay));
                 }
             }
 
-            // Если sendBeacon не сработал или отключен, используем изображение
-            await sendDataViaImage(summary);
+            throw new Error(`Failed to send data after ${config.maxRetries} attempts`);
 
         } catch (error) {
             console.warn('Error sending session data:', error);
