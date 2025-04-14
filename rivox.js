@@ -26,7 +26,7 @@ function getYandexCounterId() {
     const config = {
         endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
         debug: true,
-        sessionTimeout: 30 * 60 * 1000, // 30 minutes
+        sessionTimeout: 30 * 60 * 1000, // 30 минут
         scrollChunkSize: 100,
         minInteractionGap: 500,
         maxInactiveTime: 300000,
@@ -42,11 +42,11 @@ function getYandexCounterId() {
         maxClickGap: 10000,
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
-        sendDelay: 300000, // Send data every 5 minutes
-        retryDelay: 120000, // Retry every 2 minutes
+        sendDelay: 300000, // 5 минут
+        retryDelay: 120000, // 2 минуты
         maxRetries: 3,
         maxQueueSize: 10,
-        deduplicationWindow: 60000 // 1 minute window for deduplication
+        deduplicationWindow: 60000 // 1 минута
     };
 
     // Session data
