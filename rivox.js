@@ -753,12 +753,12 @@ function getYandexCounterId() {
     function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
             const callbackName = `rivoxCallback_${Date.now()}`;
-            const params = new URLSearchParams({
-                data: JSON.stringify(data),
-                callback: callbackName,
-                origin: window.location.origin,
-                _: Date.now() // cache buster
-            });
+            const params = new URLSearchParams();
+            
+            // Add data parameter with proper encoding
+            params.append('data', JSON.stringify(data));
+            params.append('callback', callbackName);
+            params.append('_', Date.now()); // cache buster
 
             const fullUrl = `${endpoint}?${params.toString()}`;
             
@@ -785,8 +785,10 @@ function getYandexCounterId() {
             window[callbackName] = function(response) {
                 cleanup();
                 if (response.error) {
+                    console.error('RIVOX: Server returned error:', response.error);
                     reject(new Error(response.error));
                 } else {
+                    console.log('RIVOX: Request successful');
                     resolve(response);
                 }
             };
@@ -794,7 +796,8 @@ function getYandexCounterId() {
             const script = document.createElement('script');
             script.async = true;
             script.src = fullUrl;
-            script.onerror = () => {
+            script.onerror = (error) => {
+                console.error('RIVOX: Script load error:', error);
                 cleanup();
                 reject(new Error('Failed to load JSONP script'));
             };
