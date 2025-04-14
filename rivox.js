@@ -20,13 +20,15 @@ function getYandexCounterId() {
     const config = {
         endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
         debug: true,
-        sessionTimeout: 30 * 60 * 1000,
+        sessionTimeout: 30 * 60 * 1000, // 30 минут
         scrollChunkSize: 100,
         hoverThreshold: 1000,
         formInteractionThreshold: 2000,
         allowedDomains: ['spb.sotovik.shop'],
         initDelay: 300,    // Default delay before starting trackers (ms)
-        sendDelay: 4000,   // Default delay before final send (ms)
+        sendDelay: 30000,  // Увеличиваем до 30 секунд
+        sendInterval: 60000, // Отправка каждую минуту
+        exitDelay: 100,    // Задержка при уходе со страницы
         mlFeatures: {
             collectScrollMap: true,
             trackFormInteractions: true,
@@ -197,6 +199,30 @@ function getYandexCounterId() {
         setupMLFeatures();
         setupMetrikaGoalsTracking();
 
+        // Периодическая отправка данных
+        setInterval(() => {
+            if (typeof RIVOX.sendSessionSummary === 'function') {
+                console.log("📤 RIVOX periodic send");
+                RIVOX.sendSessionSummary();
+            }
+        }, config.sendInterval);
+
+        // Отправка при уходе со страницы
+        window.addEventListener('beforeunload', () => {
+            if (typeof RIVOX.sendSessionSummary === 'function') {
+                console.log("👋 RIVOX exit send");
+                
+                // Используем sendBeacon для надежной отправки при закрытии
+                const data = {
+                    ...sessionData,
+                    session_duration: Date.now() - sessionData.start_time,
+                    exit_type: 'page_unload'
+                };
+                
+                navigator.sendBeacon(config.endpoint, JSON.stringify(data));
+            }
+        });
+
         // Start trackers with configured delay
         setTimeout(() => {
             if (typeof RIVOX.start === 'function') {
@@ -205,10 +231,10 @@ function getYandexCounterId() {
             }
         }, userConfig.initDelay);
 
-        // Final send with configured delay
+        // Initial send with configured delay
         setTimeout(() => {
             if (typeof RIVOX.sendSessionSummary === 'function') {
-                console.log("📤 RIVOX manual send");
+                console.log("�� RIVOX initial send");
                 RIVOX.sendSessionSummary();
             }
         }, userConfig.sendDelay);
