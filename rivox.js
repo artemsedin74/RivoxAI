@@ -715,97 +715,76 @@ function getYandexCounterId() {
 
     // Обновляем функцию отправки данных
     async function sendSessionSummary() {
-        let retryCount = 0;
-        let summaryData = null;
-
         try {
-            if (!sessionData) {
-                console.warn('No session data available');
-                return;
-            }
-
-            // Подготавливаем данные для отправки
-            summaryData = {
-                client_id: sessionData.client_id,
-                session_id: sessionData.session_id,
-                data_token: sessionData.data_token,
+            const summary = {
+                ...sessionData,
                 timestamp: new Date().toISOString(),
-                sdk_version: sessionData.sdk_version,
-                session_duration: sessionData.session_duration || 0,
-                domain: window.location.hostname,
-                path: window.location.pathname,
-                page_url: window.location.href,
-                scroll_chunks: sessionData.scroll_chunks || [],
-                hover_events: sessionData.hover_events || [],
-                form_interactions: sessionData.form_interactions || [],
-                cta_clicks: sessionData.cta_clicks || [],
-                user_behavior: sessionData.user_behavior || {},
-                device_info: sessionData.device_info || {},
-                ml_features: sessionData.ml_features || {}
+                sdk_version: SDK_VERSION
             };
 
-            // Функция для одной попытки отправки
             async function attemptSend() {
-                try {
-                    // Сначала пробуем sendBeacon
-                    if (navigator.sendBeacon) {
-                        const blob = new Blob([JSON.stringify(summaryData)], {
-                            type: 'application/json'
-                        });
-                        
-                        if (navigator.sendBeacon(config.endpoint, blob)) {
-                            if (config.debug) {
-                                console.log('Data sent successfully via beacon');
-                            }
-                            return true;
-                        }
+                // Try sendBeacon first for better reliability during page unload
+                const beaconUrl = `${getEndpointUrl()}?data=${encodeURIComponent(JSON.stringify(summary))}`;
+                if (navigator.sendBeacon && navigator.sendBeacon(beaconUrl)) {
+                    return true;
+                }
+
+                // Fallback to JSONP if sendBeacon fails
+                return new Promise((resolve, reject) => {
+                    const script = document.createElement('script');
+                    const callbackName = 'rivoxCallback_' + Math.random().toString(36).substr(2, 9);
+                    
+                    window[callbackName] = function(response) {
+                        cleanup();
+                        resolve(true);
+                    };
+
+                    function cleanup() {
+                        if (script.parentNode) script.parentNode.removeChild(script);
+                        delete window[callbackName];
                     }
 
-                    // Если не получилось, пробуем JSONP
-                    await sendDataJSONP(summaryData);
+                    script.onerror = function() {
+                        cleanup();
+                        reject(new Error('Failed to load JSONP script'));
+                    };
+
+                    const url = `${getEndpointUrl()}?data=${encodeURIComponent(JSON.stringify(summary))}&callback=${callbackName}`;
+                    script.src = url;
+                    document.head.appendChild(script);
+
+                    // Set timeout
+                    setTimeout(() => {
+                        cleanup();
+                        reject(new Error('JSONP request timed out'));
+                    }, 10000);
+                });
+            }
+
+            // Try sending with retries
+            let attempts = 0;
+            const maxAttempts = 3;
+
+            while (attempts < maxAttempts) {
+                try {
+                    await attemptSend();
                     if (config.debug) {
-                        console.log('Data sent successfully via JSONP');
+                        console.log('✓ Session data sent successfully');
                     }
                     return true;
-
                 } catch (error) {
-                    console.warn(`Send attempt ${retryCount + 1} failed:`, error);
-                    return false;
-                }
-            }
-
-            // Пробуем отправить с повторами
-            while (retryCount < config.maxRetries) {
-                if (await attemptSend()) {
-                    return;
-                }
-                retryCount++;
-                if (retryCount < config.maxRetries) {
-                    await new Promise(resolve => setTimeout(resolve, config.retryDelay));
-                }
-            }
-
-            throw new Error(`Failed to send data after ${config.maxRetries} attempts`);
-
-        } catch (error) {
-            console.warn('Error sending session data:', error);
-            
-            // Сохраняем для повторной отправки
-            if (window.localStorage && summaryData) {
-                try {
-                    const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
-                    failedRequests.push({
-                        timestamp: Date.now(),
-                        data: summaryData
-                    });
-                    if (failedRequests.length > 10) {
-                        failedRequests.shift();
+                    attempts++;
+                    if (attempts === maxAttempts) {
+                        console.warn('Failed to send session data after', maxAttempts, 'attempts:', error);
+                        return false;
                     }
-                    localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
-                } catch (e) {
-                    console.warn('Failed to store failed request:', e);
+                    // Wait before retry
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
+        } catch (error) {
+            console.warn('Error in sendSessionSummary:', error);
+            return false;
         }
     }
 
