@@ -582,10 +582,16 @@ function getYandexCounterId() {
 
         const summary = {
             ...sessionData,
+            client_token: config.token,
+            timestamp: Date.now(),
             session_duration: getSessionDuration(),
-            domain: window.location.hostname,
-            path: window.location.pathname,
-            timestamp: new Date().toISOString(),
+            page_views: sessionData.page_views.length,
+            scroll_chunks: sessionData.scroll_chunks.length,
+            max_scroll_depth: sessionData.max_scroll_depth || 0,
+            clicks: sessionData.cta_clicks.length,
+            hovers: sessionData.hover_events.length,
+            form_interactions: sessionData.form_interactions.length,
+            time_on_page: Date.now() - sessionData.last_activity,
             sdk_version: SDK_VERSION
         };
 
