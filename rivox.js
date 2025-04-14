@@ -733,7 +733,20 @@ let Logger = {
             
             // Hover data
             hover_count: sessionData.hover_events.length,
-            hovers: sessionData.hover_events
+            hovers: sessionData.hover_events,
+
+            // UTM Data
+            utm_data: sessionData.utm_data,
+
+            // Metrika Goals and Conversion Data
+            metrika_goals: sessionData.metrika_goals,
+            conversion_data: sessionData.conversion_data,
+            
+            // User Behavior
+            user_behavior: sessionData.user_behavior,
+
+            // ML Features
+            ml_features: sessionData.ml_features
         };
 
         Logger.debug('Preparing to send session data', summary);
