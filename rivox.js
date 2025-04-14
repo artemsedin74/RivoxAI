@@ -20,7 +20,7 @@ function getYandexCounterId() {
     const config = {
         debug: false,
         sendInterval: 60000,
-        // Используем Google Apps Script в качестве резервного эндпоинта
+        // Используем прямой URL к Google Apps Script
         endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzupBK1ZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlY1XhxmqupKBHsXSIKtnW/exec',
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
@@ -29,7 +29,7 @@ function getYandexCounterId() {
         retryDelay: 1000
     };
 
-    // Session data
+    // Глобальная переменная для хранения данных сессии
     let sessionData = null;
 
     // Добавляем трекинг видимости и фокуса
@@ -663,59 +663,50 @@ function getYandexCounterId() {
         }, 20 * 60 * 1000);
     }
 
-    // Функция для отправки данных через форму
-    function sendDataViaForm(data) {
+    // Функция для отправки данных через JSONP
+    function sendDataJSONP(data) {
         return new Promise((resolve, reject) => {
             try {
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = config.endpoint;
-                form.target = 'rivox_target_' + Date.now();
-                form.style.display = 'none';
-
-                // Создаем скрытый iframe
-                const iframe = document.createElement('iframe');
-                iframe.name = form.target;
-                iframe.style.display = 'none';
-                document.body.appendChild(iframe);
-
-                // Добавляем данные
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'data';
-                input.value = JSON.stringify(data);
-                form.appendChild(input);
-
-                // Добавляем форму
-                document.body.appendChild(form);
-
+                const callbackName = 'rivox_' + Math.random().toString(36).substr(2, 9);
+                
+                // Создаем элемент script
+                const script = document.createElement('script');
+                
+                // Создаем URL с параметрами
+                const params = new URLSearchParams({
+                    data: JSON.stringify(data),
+                    callback: callbackName
+                });
+                
+                script.src = `${config.endpoint}?${params.toString()}`;
+                
                 // Устанавливаем обработчики
-                iframe.onload = () => {
+                window[callbackName] = function(response) {
                     cleanup();
-                    resolve();
+                    resolve(response);
                 };
-
-                iframe.onerror = () => {
-                    cleanup();
-                    reject(new Error('Failed to send data'));
-                };
-
+                
+                // Функция очистки
                 function cleanup() {
-                    setTimeout(() => {
-                        if (form.parentNode) form.parentNode.removeChild(form);
-                        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-                    }, 100);
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    delete window[callbackName];
                 }
-
-                // Отправляем форму
-                form.submit();
-
+                
+                // Обработка ошибок
+                script.onerror = function() {
+                    cleanup();
+                    reject(new Error('Failed to load script'));
+                };
+                
+                // Добавляем скрипт на страницу
+                document.head.appendChild(script);
+                
                 // Таймаут
                 setTimeout(() => {
                     cleanup();
                     reject(new Error('Request timeout'));
                 }, 10000);
-
+                
             } catch (error) {
                 reject(error);
             }
@@ -725,35 +716,7 @@ function getYandexCounterId() {
     // Обновляем функцию отправки данных
     async function sendSessionSummary() {
         let retryCount = 0;
-
-        async function attemptSend(data) {
-            try {
-                // Сначала пробуем sendBeacon
-                if (navigator.sendBeacon) {
-                    const blob = new Blob([JSON.stringify(data)], {
-                        type: 'application/json'
-                    });
-                    
-                    if (navigator.sendBeacon(config.endpoint, blob)) {
-                        if (config.debug) {
-                            console.log('Data sent successfully via beacon');
-                        }
-                        return true;
-                    }
-                }
-
-                // Затем пробуем форму
-                await sendDataViaForm(data);
-                if (config.debug) {
-                    console.log('Data sent successfully via form');
-                }
-                return true;
-
-            } catch (error) {
-                console.warn(`Send attempt ${retryCount + 1} failed:`, error);
-                return false;
-            }
-        }
+        let summaryData = null;
 
         try {
             if (!sessionData) {
@@ -761,15 +724,14 @@ function getYandexCounterId() {
                 return;
             }
 
-            updateSessionDuration();
-
-            const summary = {
+            // Подготавливаем данные для отправки
+            summaryData = {
                 client_id: sessionData.client_id,
                 session_id: sessionData.session_id,
                 data_token: sessionData.data_token,
                 timestamp: new Date().toISOString(),
                 sdk_version: sessionData.sdk_version,
-                session_duration: sessionData.session_duration,
+                session_duration: sessionData.session_duration || 0,
                 domain: window.location.hostname,
                 path: window.location.pathname,
                 page_url: window.location.href,
@@ -782,9 +744,39 @@ function getYandexCounterId() {
                 ml_features: sessionData.ml_features || {}
             };
 
+            // Функция для одной попытки отправки
+            async function attemptSend() {
+                try {
+                    // Сначала пробуем sendBeacon
+                    if (navigator.sendBeacon) {
+                        const blob = new Blob([JSON.stringify(summaryData)], {
+                            type: 'application/json'
+                        });
+                        
+                        if (navigator.sendBeacon(config.endpoint, blob)) {
+                            if (config.debug) {
+                                console.log('Data sent successfully via beacon');
+                            }
+                            return true;
+                        }
+                    }
+
+                    // Если не получилось, пробуем JSONP
+                    await sendDataJSONP(summaryData);
+                    if (config.debug) {
+                        console.log('Data sent successfully via JSONP');
+                    }
+                    return true;
+
+                } catch (error) {
+                    console.warn(`Send attempt ${retryCount + 1} failed:`, error);
+                    return false;
+                }
+            }
+
             // Пробуем отправить с повторами
             while (retryCount < config.maxRetries) {
-                if (await attemptSend(summary)) {
+                if (await attemptSend()) {
                     return;
                 }
                 retryCount++;
@@ -799,12 +791,12 @@ function getYandexCounterId() {
             console.warn('Error sending session data:', error);
             
             // Сохраняем для повторной отправки
-            if (window.localStorage) {
+            if (window.localStorage && summaryData) {
                 try {
                     const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
                     failedRequests.push({
                         timestamp: Date.now(),
-                        data: summary
+                        data: summaryData
                     });
                     if (failedRequests.length > 10) {
                         failedRequests.shift();
