@@ -112,20 +112,21 @@ function getYandexCounterId() {
         }
 
         sessionData = {
-        client_id: generateClientId(),
-        session_id: generateSessionId(),
-        start_time: Date.now(),
-        last_activity: Date.now(),
+            client_id: generateClientId(),
+            client_token: config.token,
+            session_id: generateSessionId(),
+            start_time: Date.now(),
+            last_activity: Date.now(),
             page_views: [{
                 timestamp: Date.now(),
                 url: window.location.href,
                 referrer: document.referrer
             }],
-        scroll_chunks: [],
-        hover_events: [],
-        form_interactions: [],
-        cta_clicks: [],
-        modal_interactions: [],
+            scroll_chunks: [],
+            hover_events: [],
+            form_interactions: [],
+            cta_clicks: [],
+            modal_interactions: [],
             utm_data: extractUTMData(),
             metrika_goals: [],
             conversion_data: {
@@ -151,14 +152,14 @@ function getYandexCounterId() {
                     height: window.innerHeight
                 }
             },
-        ml_features: {
-            interest_signals: [],
-            behavior_patterns: [],
-            user_segment: null,
-            conversion_probability: null,
-            funnel_analysis: {}
-        }
-    };
+            ml_features: {
+                interest_signals: [],
+                behavior_patterns: [],
+                user_segment: null,
+                conversion_probability: null,
+                funnel_analysis: {}
+            }
+        };
 
         isSessionActive = true;
         console.log('New session started:', sessionData.session_id);
@@ -311,6 +312,7 @@ function getYandexCounterId() {
         // Initialize session data
         sessionData = {
             client_id: clientId,
+            client_token: config.token,
             session_id: generateSessionId(),
             start_time: Date.now(),
             last_activity: Date.now(),
