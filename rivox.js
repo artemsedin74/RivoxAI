@@ -18,17 +18,16 @@ function getYandexCounterId() {
 
     // Configuration
     const config = {
-        endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
-        debug: true,
-        sessionTimeout: 30 * 60 * 1000, // 30 минут
+        debug: false,
+        sendInterval: 60000,
+        endpoint: 'https://apps.rivox.ru/collect',
+        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
+        initDelay: 300,
+        sendDelay: 1000,
         scrollChunkSize: 100,
+        sessionTimeout: 30 * 60 * 1000, // 30 минут
         hoverThreshold: 1000,
         formInteractionThreshold: 2000,
-        allowedDomains: ['spb.sotovik.shop'],
-        initDelay: 300,    // Default delay before starting trackers (ms)
-        sendDelay: 30000,  // Увеличиваем до 30 секунд
-        sendInterval: 60000, // Отправка каждую минуту
-        exitDelay: 100,    // Задержка при уходе со страницы
         mlFeatures: {
             collectScrollMap: true,
             trackFormInteractions: true,
@@ -91,38 +90,7 @@ function getYandexCounterId() {
     let scrollStartTime = null;
     let isScrolling = false;
 
-    window.addEventListener('scroll', throttle(() => {
-        const scrollPosition = window.scrollY;
-        const documentHeight = document.documentElement.scrollHeight - window.innerHeight;
-        const currentDepth = (scrollPosition / documentHeight) * 100;
-        
-        if (!isScrolling) {
-            scrollStartTime = Date.now();
-            isScrolling = true;
-        }
-
-        // Обновляем максимальную глубину скролла
-        if (currentDepth > maxScrollDepth) {
-            maxScrollDepth = currentDepth;
-            sessionData.scroll_depth_percentages.push({
-                depth: maxScrollDepth,
-                timestamp: Date.now()
-            });
-        }
-
-        // Записываем чанк скролла
-        if (Math.abs(scrollPosition - lastScrollPosition) >= config.scrollChunkSize) {
-            sessionData.scroll_chunks.push({
-                timestamp: Date.now(),
-                position: scrollPosition,
-                delta: scrollPosition - lastScrollPosition,
-                document_height: documentHeight,
-                viewport_height: window.innerHeight,
-                duration: scrollStartTime ? Date.now() - scrollStartTime : 0
-            });
-            lastScrollPosition = scrollPosition;
-        }
-    }, 50));
+    window.addEventListener('scroll', throttle(handleScroll, 50));
 
     // Сброс флага скроллинга после остановки
     let scrollTimeout;
@@ -196,25 +164,14 @@ function getYandexCounterId() {
     function isAllowedDomain(hostname) {
         if (!hostname) return false;
         
-        // Нормализуем домен (убираем www. если есть)
+        // Убираем www. если есть
         const normalizedHostname = hostname.replace(/^www\./, '');
         
-        // Проверяем домен
-        const isAllowed = config.allowedDomains.some(domain => {
+        // Проверяем наличие домена в списке разрешенных
+        return config.allowedDomains.some(domain => {
             const normalizedDomain = domain.replace(/^www\./, '');
             return normalizedHostname === normalizedDomain;
         });
-
-        if (config.debug) {
-            console.log('Checking domain:', {
-                original: hostname,
-                normalized: normalizedHostname,
-                allowed: isAllowed,
-                allowedDomains: config.allowedDomains
-            });
-        }
-
-        return isAllowed;
     }
 
     // Add trackNavigation function at the top level
@@ -280,113 +237,59 @@ function getYandexCounterId() {
     async function init() {
         try {
             const currentDomain = window.location.hostname;
+            
+            // Проверяем домен перед инициализацией
             if (!isAllowedDomain(currentDomain)) {
-                console.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
+                console.warn(`Domain ${currentDomain} not in allowed list:`, config.allowedDomains);
                 return;
             }
-            
+
             console.log('RIVOX SDK initializing...');
             
-            // Load configuration
+            // Загружаем конфигурацию
             const userConfig = loadConfig();
             if (!userConfig) {
                 console.warn('Failed to load configuration');
                 return;
             }
 
-            // Wait for client id
+            // Получаем client ID
             const clientId = await generateClientId();
             if (!clientId) {
                 console.warn('Failed to get client ID');
                 return;
             }
 
-            console.log('RIVOX SDK Configuration:', {
-                token: userConfig.token,
-                clientId: clientId
-            });
-
-            // Initialize session data
+            // Инициализируем данные сессии
             sessionData = {
                 client_id: clientId,
                 session_id: generateSessionId(),
                 data_token: userConfig.token,
                 start_time: Date.now(),
                 last_activity: Date.now(),
-                page_views: [],
                 scroll_chunks: [],
                 hover_events: [],
                 form_interactions: [],
                 cta_clicks: [],
-                modal_interactions: [],
-                utm_data: collectUtmData(),
-                metrika_goals: [],
-                conversion_data: {
-                    goals_reached: [],
-                    ecommerce_data: [],
-                    last_goal_timestamp: null,
-                    conversion_path: []
-                },
-                traffic_source: {
-                    referrer: document.referrer,
-                    landing_page: window.location.href,
-                    entry_point: window.location.pathname
-                },
                 user_behavior: {
-                    time_to_first_interaction: null,
-                    total_interactions: 0,
-                    interaction_frequency: [],
-                    scroll_depth_percentages: [],
-                    time_between_clicks: [],
-                    mouse_movement_heatmap: [],
                     viewport_size: {
                         width: window.innerWidth,
                         height: window.innerHeight
                     }
                 },
-                ml_features: {
-                    interest_signals: [],
-                    behavior_patterns: [],
-                    user_segment: null,
-                    conversion_probability: null,
-                    funnel_analysis: {}
-                },
                 device_info: {
                     user_agent: navigator.userAgent,
-                    platform: navigator.platform,
-                    vendor: navigator.vendor,
-                    language: navigator.language,
-                    connection_type: navigator.connection ? navigator.connection.effectiveType : null,
-                    is_mobile: /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
-                    is_tablet: /(tablet|ipad|playbook|silk)|(android(?!.*mobile))/i.test(navigator.userAgent.toLowerCase()),
-                    screen_size: {
-                        width: window.screen.width,
-                        height: window.screen.height,
-                        colorDepth: window.screen.colorDepth,
-                        pixelRatio: window.devicePixelRatio
-                    }
+                    platform: navigator.platform
                 },
                 sdk_version: '4.6.3'
             };
 
-            // Setup event listeners and features
+            // Устанавливаем обработчики событий
             setupEventListeners();
-            setupMLFeatures();
-            setupMetrikaGoalsTracking();
 
-            // Restore session data if available
-            restoreSessionData();
+            console.log('RIVOX SDK initialized successfully');
 
-            // Start periodic data sending
-            setInterval(() => {
-                if (sessionData) {
-                    sendSessionSummary().catch(error => {
-                        console.warn('Failed to send periodic update:', error);
-                    });
-                }
-            }, config.sendInterval);
-
-            // Send initial data after delay
+            // Отправляем начальные данные
             setTimeout(() => {
                 if (sessionData) {
                     console.log('🚀 RIVOX initial send');
@@ -396,7 +299,6 @@ function getYandexCounterId() {
                 }
             }, userConfig.sendDelay);
 
-            console.log('✅ RIVOX SDK initialized successfully');
         } catch (error) {
             console.error('Failed to initialize RIVOX SDK:', error);
         }
@@ -768,67 +670,50 @@ function getYandexCounterId() {
     // Send data using JSONP
     function sendDataJSONP(data) {
         return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            const callbackName = 'rivox_callback_' + Date.now();
-            let retryCount = 0;
-            const maxRetries = 3;
-            const retryDelay = 1000; // 1 second
+            try {
+                const callbackName = 'rivox_' + Math.random().toString(36).substr(2, 9);
+                const endpoint = getEndpointUrl();
+                
+                // Создаем URL с параметрами
+                const params = new URLSearchParams({
+                    data: JSON.stringify(data),
+                    callback: callbackName
+                });
 
-            function attemptSend() {
-                // Create global callback
+                // Создаем элемент script
+                const script = document.createElement('script');
+                script.src = `${endpoint}?${params.toString()}`;
+                
+                // Устанавливаем обработчики
                 window[callbackName] = function(response) {
                     cleanup();
                     resolve(response);
                 };
 
-                // Add error handler
-                script.onerror = () => {
-                    cleanup();
-                    if (retryCount < maxRetries) {
-                        retryCount++;
-                        console.log(`JSONP request failed, retrying (${retryCount}/${maxRetries})...`);
-                        setTimeout(attemptSend, retryDelay);
-                    } else {
-                        console.error('JSONP request failed after', maxRetries, 'retries');
-                        reject(new Error('JSONP request failed'));
-                    }
-                };
-
-                // Prepare URL with data
-                const params = new URLSearchParams({
-                    callback: callbackName,
-                    data: JSON.stringify(data)
-                });
-
-                script.src = `${config.endpoint}?${params.toString()}`;
-                document.body.appendChild(script);
-            }
-
-            function cleanup() {
-                if (window[callbackName]) {
+                // Функция очистки
+                function cleanup() {
+                    if (script.parentNode) script.parentNode.removeChild(script);
                     delete window[callbackName];
                 }
-                if (script.parentNode) {
-                    document.body.removeChild(script);
-                }
-            }
 
-            // Start first attempt
-            attemptSend();
-
-            // Set timeout
-            setTimeout(() => {
-                if (window[callbackName]) {
+                // Обработка ошибок
+                script.onerror = function() {
                     cleanup();
-                    if (retryCount < maxRetries) {
-                        retryCount++;
-                        console.log(`JSONP request timed out, retrying (${retryCount}/${maxRetries})...`);
-                        attemptSend();
-                    } else {
-                        reject(new Error('JSONP request timeout'));
-                    }
-                }
-            }, 10000); // 10 second timeout
+                    reject(new Error('Failed to load script'));
+                };
+
+                // Добавляем скрипт на страницу
+                document.head.appendChild(script);
+
+                // Таймаут
+                setTimeout(() => {
+                    cleanup();
+                    reject(new Error('Request timeout'));
+                }, 10000);
+
+            } catch (error) {
+                reject(error);
+            }
         });
     }
 
@@ -851,6 +736,7 @@ function getYandexCounterId() {
                 session_duration: sessionData.session_duration,
                 domain: window.location.hostname,
                 path: window.location.pathname,
+                page_url: window.location.href,
                 scroll_chunks: sessionData.scroll_chunks || [],
                 hover_events: sessionData.hover_events || [],
                 form_interactions: sessionData.form_interactions || [],
@@ -860,19 +746,13 @@ function getYandexCounterId() {
                 ml_features: sessionData.ml_features || {}
             };
 
-            const endpoint = getEndpointUrl();
-            
-            if (config.debug) {
-                console.log('Sending session data to:', endpoint);
-            }
-
             // Пробуем отправить через sendBeacon
             if (navigator.sendBeacon) {
                 const blob = new Blob([JSON.stringify(summary)], {
                     type: 'application/json'
                 });
                 
-                if (navigator.sendBeacon(endpoint, blob)) {
+                if (navigator.sendBeacon(getEndpointUrl(), blob)) {
                     if (config.debug) {
                         console.log('Data sent successfully via beacon');
                     }
@@ -881,34 +761,27 @@ function getYandexCounterId() {
             }
 
             // Если sendBeacon не сработал, используем JSONP
-            try {
-                await sendDataJSONP(summary);
-                if (config.debug) {
-                    console.log('Data sent successfully via JSONP');
-                }
-            } catch (error) {
-                console.warn('JSONP request failed:', error);
-                
-                // Сохраняем для повторной отправки
-                if (window.localStorage) {
-                    try {
-                        const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
-                        failedRequests.push({
-                            timestamp: Date.now(),
-                            endpoint: endpoint,
-                            data: summary
-                        });
-                        if (failedRequests.length > 10) {
-                            failedRequests.shift();
-                        }
-                        localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
-                    } catch (e) {
-                        console.warn('Failed to store failed request:', e);
-                    }
-                }
+            await sendDataJSONP(summary);
+            
+            if (config.debug) {
+                console.log('Data sent successfully via JSONP');
             }
         } catch (error) {
-            console.error('Error in sendSessionSummary:', error);
+            console.warn('Error sending session data:', error);
+            
+            // Сохраняем для повторной отправки
+            if (window.localStorage) {
+                try {
+                    const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+                    failedRequests.push({
+                        timestamp: Date.now(),
+                        data: summary
+                    });
+                    localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
+                } catch (e) {
+                    console.warn('Failed to store failed request:', e);
+                }
+            }
         }
     }
 
@@ -2074,8 +1947,11 @@ function getYandexCounterId() {
     // Обновляем функцию для отслеживания скролла
     function handleScroll(event) {
         try {
-            if (!sessionData || !sessionData.scroll_chunks) return;
-            
+            if (!sessionData || !Array.isArray(sessionData.scroll_chunks)) {
+                sessionData = sessionData || {};
+                sessionData.scroll_chunks = [];
+            }
+
             const scrollPosition = window.scrollY || window.pageYOffset;
             const documentHeight = Math.max(
                 document.body.scrollHeight,
@@ -2085,16 +1961,24 @@ function getYandexCounterId() {
                 document.body.clientHeight,
                 document.documentElement.clientHeight
             );
-            
-            sessionData.scroll_chunks.push({
-                position: scrollPosition,
-                document_height: documentHeight,
-                timestamp: Date.now(),
-                delta: scrollPosition - (sessionData.scroll_chunks[sessionData.scroll_chunks.length - 1]?.position || 0)
-            });
 
-            if (config.debug) {
-                console.log('Scroll event:', { position: scrollPosition, documentHeight });
+            const lastChunk = sessionData.scroll_chunks[sessionData.scroll_chunks.length - 1];
+            const delta = lastChunk ? scrollPosition - lastChunk.position : 0;
+
+            // Добавляем новый чанк только если прокрутка существенная
+            if (Math.abs(delta) >= config.scrollChunkSize || !lastChunk) {
+                const chunk = {
+                    position: scrollPosition,
+                    document_height: documentHeight,
+                    timestamp: Date.now(),
+                    delta: delta
+                };
+
+                sessionData.scroll_chunks.push(chunk);
+
+                if (config.debug) {
+                    console.log('Scroll chunk captured:', chunk);
+                }
             }
         } catch (error) {
             console.warn('Error in scroll handler:', error);
