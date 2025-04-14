@@ -16,6 +16,126 @@ function getYandexCounterId() {
     return counterObjects.length > 0 ? counterObjects[0].replace('yaCounter', '') : null;
 }
 
+// Добавляем утилиту для красивого логирования
+const Logger = {
+    styles: {
+        error: 'color: #ff5252; font-weight: bold',
+        warn: 'color: #fb8c00; font-weight: bold',
+        info: 'color: #2196f3; font-weight: bold',
+        success: 'color: #4caf50; font-weight: bold'
+    },
+    
+    error: (msg, data) => {
+        console.groupCollapsed('%c❌ ' + msg, Logger.styles.error);
+        if (data) console.log(data);
+        console.trace('Stack trace:');
+        console.groupEnd();
+    },
+    
+    warn: (msg, data) => {
+        console.groupCollapsed('%c⚠️ ' + msg, Logger.styles.warn);
+        if (data) console.log(data);
+        console.groupEnd();
+    },
+    
+    info: (msg, data) => {
+        console.groupCollapsed('%cℹ️ ' + msg, Logger.styles.info);
+        if (data) console.log(data);
+        console.groupEnd();
+    },
+    
+    success: (msg, data) => {
+        console.groupCollapsed('%c✅ ' + msg, Logger.styles.success);
+        if (data) console.log(data);
+        console.groupEnd();
+    }
+};
+
+// Добавляем мониторинг состояния сессии
+const SessionMonitor = {
+    lastActivity: Date.now(),
+    isActive: true,
+    
+    updateActivity() {
+        this.lastActivity = Date.now();
+        if (!this.isActive) {
+            this.isActive = true;
+            Logger.info('Session activated', {
+                inactiveTime: Date.now() - this.lastActivity,
+                timestamp: new Date().toISOString()
+            });
+        }
+    },
+    
+    checkInactivity() {
+        const inactiveTime = Date.now() - this.lastActivity;
+        if (inactiveTime > config.maxInactiveTime && this.isActive) {
+            this.isActive = false;
+            Logger.warn('Session inactive', {
+                inactiveTime,
+                threshold: config.maxInactiveTime,
+                timestamp: new Date().toISOString()
+            });
+        }
+    }
+};
+
+// Мониторинг сетевого соединения
+const NetworkMonitor = {
+    isOnline: navigator.onLine,
+    failedRequests: [],
+    
+    init() {
+        window.addEventListener('online', () => {
+            this.isOnline = true;
+            Logger.success('Network connection restored', {
+                failedRequests: this.failedRequests.length,
+                timestamp: new Date().toISOString()
+            });
+            this.retryFailedRequests();
+        });
+        
+        window.addEventListener('offline', () => {
+            this.isOnline = false;
+            Logger.warn('Network connection lost', {
+                timestamp: new Date().toISOString()
+            });
+        });
+    },
+    
+    addFailedRequest(request) {
+        this.failedRequests.push({
+            ...request,
+            timestamp: Date.now()
+        });
+        Logger.warn('Request failed - will retry', {
+            requestData: request,
+            queueLength: this.failedRequests.length
+        });
+    },
+    
+    async retryFailedRequests() {
+        if (this.failedRequests.length === 0) return;
+        
+        Logger.info('Retrying failed requests', {
+            count: this.failedRequests.length
+        });
+        
+        const requests = [...this.failedRequests];
+        this.failedRequests = [];
+        
+        for (const request of requests) {
+            try {
+                await sendData(request);
+                Logger.success('Retry successful', { request });
+            } catch (error) {
+                Logger.error('Retry failed', { request, error });
+                this.failedRequests.push(request);
+            }
+        }
+    }
+};
+
 (function(window) {
     'use strict';
 
@@ -30,7 +150,9 @@ function getYandexCounterId() {
         sendDelay: 4000,
         maxRetries: 3,
         retryDelay: 1000,
-        useJSONP: true
+        useJSONP: true,
+        maxInactiveTime: 20 * 1000, // 20 seconds
+        retryInterval: 5 * 60 * 1000 // 5 minutes
     };
 
     // Initialize empty session data structure
@@ -240,43 +362,30 @@ function getYandexCounterId() {
 
     // Load configuration from script data attributes
     function loadConfig() {
-        const script = document.querySelector('script[data-token]');
-        if (!script) {
-            console.error('RIVOX SDK script tag with data-token not found');
-            return null;
-        }
-
-        // Get token
-        const token = script.dataset.token;
-        if (!token) {
-            console.error('RIVOX SDK token not specified');
-            return null;
-        }
-
-        // Get optional delays
-        const initDelay = parseInt(script.dataset.initDelay);
-        const sendDelay = parseInt(script.dataset.sendDelay);
-
-        // Use script attributes if valid, otherwise use config defaults
-        const finalConfig = {
-            token,
-            initDelay: !isNaN(initDelay) ? initDelay : config.initDelay,
-            sendDelay: !isNaN(sendDelay) ? sendDelay : config.sendDelay
-        };
-
-        if (config.debug) {
-            console.log('RIVOX SDK Configuration:', {
-                token: finalConfig.token,
-                initDelay: finalConfig.initDelay,
-                sendDelay: finalConfig.sendDelay,
-                source: {
-                    initDelay: !isNaN(initDelay) ? 'script' : 'default',
-                    sendDelay: !isNaN(sendDelay) ? 'script' : 'default'
-                }
+        console.group('🔧 SDK Configuration Loading');
+        try {
+            const script = document.querySelector('script[data-token]');
+            console.log('Script element:', script);
+            console.log('Data attributes:', {
+                token: script?.dataset?.token,
+                endpoint: script?.dataset?.endpoint,
+                initDelay: script?.dataset?.initDelay,
+                sendDelay: script?.dataset?.sendDelay
             });
+            
+            config = {
+                debug: true, // Временно включаем отладку
+                token: script?.dataset?.token,
+                endpoint: script?.dataset?.endpoint || getEndpointUrl(),
+                initDelay: parseInt(script?.dataset?.initDelay) || 300,
+                sendDelay: parseInt(script?.dataset?.sendDelay) || 4000
+            };
+            
+            console.log('Final config:', config);
+        } catch (error) {
+            console.error('❌ Config loading error:', error);
         }
-
-        return finalConfig;
+        console.groupEnd();
     }
 
     // Initialize SDK
@@ -714,119 +823,155 @@ function getYandexCounterId() {
     }
 
     // JSONP data sending implementation with improved error handling
-    function sendDataJSONP(data) {
-        return new Promise((resolve, reject) => {
-            const callbackName = `rivoxCallback_${Date.now()}`;
-            const params = new URLSearchParams();
-            
-            // Add data parameter with proper encoding
-            params.append('data', JSON.stringify(data));
-            params.append('callback', callbackName);
-            params.append('_', Date.now()); // cache buster
-
-            const endpoint = getEndpointUrl();
-            const fullUrl = `${endpoint}?${params.toString()}`;
-            
-            console.log(`RIVOX: Sending JSONP request to ${endpoint}`);
-            console.log('RIVOX: Request details:', { 
-                timestamp: new Date().toISOString(),
-                dataSize: JSON.stringify(data).length,
-                callback: callbackName
-            });
-
-            // Create callback before script
-            window[callbackName] = function(response) {
-                cleanup();
-                if (response.error) {
-                    console.error('RIVOX: Server returned error:', response.error);
-                    reject(new Error(response.error));
-                } else {
-                    console.log('RIVOX: Request successful:', response);
-                    resolve(response);
-                }
-            };
-
-            let timeoutId = setTimeout(() => {
-                cleanup();
-                reject(new Error('JSONP request timeout (10s)'));
-            }, 10000); // Increased timeout to 10s
-
-            function cleanup() {
-                if (script && script.parentNode) {
-                    script.parentNode.removeChild(script);
-                }
-                if (window[callbackName]) {
-                    delete window[callbackName];
-                }
-                clearTimeout(timeoutId);
-            }
-
+    function sendDataJSONP(endpoint, data, callback) {
+        console.group('📡 JSONP Request');
+        console.log('Endpoint:', endpoint);
+        console.log('Data:', data);
+        console.log('Callback name:', callback);
+        
+        try {
             const script = document.createElement('script');
             script.async = true;
-            script.onerror = (error) => {
-                console.error('RIVOX: Script load error:', error);
+            
+            // Создаем URL с параметрами
+            const params = new URLSearchParams();
+            params.append('data', JSON.stringify(data));
+            params.append('callback', callback);
+            params.append('origin', window.location.origin);
+            params.append('_', Date.now()); // cache buster
+            
+            const url = `${endpoint}?${params.toString()}`;
+            console.log('Full URL:', url);
+            console.log('URL length:', url.length);
+            
+            // Добавляем обработчики для отслеживания загрузки скрипта
+            script.onload = () => {
+                console.log('✅ Script loaded successfully');
                 cleanup();
-                reject(new Error('Failed to load JSONP script'));
             };
-            script.src = fullUrl;
-
+            
+            script.onerror = () => {
+                console.error('❌ Script failed to load');
+                callback({ error: 'Failed to load JSONP script' });
+                cleanup();
+            };
+            
+            // Функция очистки
+            function cleanup() {
+                console.log('🧹 Cleaning up JSONP request');
+                if (script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                delete window[callback];
+            }
+            
+            script.src = url;
             document.head.appendChild(script);
-        });
+            
+            // Устанавливаем таймаут
+            setTimeout(() => {
+                if (window[callback]) {
+                    console.error('⏰ JSONP request timeout');
+                    callback({ error: 'JSONP request timeout' });
+                    cleanup();
+                }
+            }, 3000);
+            
+        } catch (error) {
+            console.error('❌ JSONP error:', error);
+            callback({ error: `JSONP error: ${error.message}` });
+        }
+        console.groupEnd();
     }
 
     async function sendData(data) {
-        const maxRetries = 3;
-        const retryDelay = (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000);
-
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                console.log(`RIVOX: Send attempt ${attempt} of ${maxRetries}`);
-                const response = await sendDataJSONP(data);
-                return response;
-            } catch (error) {
-                console.error(`RIVOX: Send attempt ${attempt} failed:`, error.message);
-                
-                if (attempt === maxRetries) {
-                    throw new Error(`Failed to send data after ${maxRetries} retries: ${error.message}`);
-                }
-
-                console.log(`RIVOX: Retry attempt ${attempt} of ${maxRetries - 1}...`);
-                await new Promise(resolve => setTimeout(resolve, retryDelay(attempt)));
+        console.group('📤 Sending Data');
+        try {
+            // Проверяем размер данных
+            const dataSize = new Blob([JSON.stringify(data)]).size;
+            console.log('Data size:', (dataSize / 1024).toFixed(2) + 'KB');
+            
+            if (dataSize > 1024 * 1024) { // 1MB
+                Logger.warn('Large payload detected', { size: dataSize });
             }
+            
+            // Проверяем обязательные поля
+            const requiredFields = ['session_id', 'client_id', 'timestamp'];
+            const missingFields = requiredFields.filter(field => !data[field]);
+            
+            if (missingFields.length > 0) {
+                throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+            }
+            
+            // Проверяем сетевое соединение
+            if (!NetworkMonitor.isOnline) {
+                NetworkMonitor.addFailedRequest(data);
+                throw new Error('No network connection');
+            }
+            
+            // Логируем состояние перед отправкой
+            Logger.info('Pre-send state', {
+                sessionDuration: Date.now() - sessionData.start_time,
+                interactionCount: getTotalInteractions(),
+                scrollDepth: getMaxScrollDepth(),
+                isSessionActive: SessionMonitor.isActive
+            });
+            
+            const response = await new Promise((resolve, reject) => {
+                sendDataJSONP(config.endpoint, data, (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                });
+            });
+            
+            Logger.success('Data sent successfully', {
+                response,
+                timestamp: new Date().toISOString()
+            });
+            
+            return response;
+            
+        } catch (error) {
+            Logger.error('Failed to send data', {
+                error,
+                data,
+                timestamp: new Date().toISOString()
+            });
+            throw error;
+        } finally {
+            console.groupEnd();
         }
     }
 
     // Send session summary with improved error handling
     async function sendSessionSummary() {
-        if (!sessionData.client_id || !sessionData.session_id) {
-            console.error('Missing required session identifiers');
-            return;
-        }
-
-        const summary = {
-            ...sessionData,
-            timestamp: new Date().toISOString(),
-            sdk_version: SDK_VERSION,
-            user_behavior: {
-                ...sessionData.user_behavior,
-                active_duration: sessionData.active_duration,
-                total_duration: Date.now() - sessionData.start_time,
-                interaction_density: calculateInteractionDensity()
-            }
-        };
-
+        console.group('📊 Session Summary');
         try {
-            const response = await sendData(summary);
-            if (config.debug) {
-                console.log('Session summary sent successfully:', response);
-            }
-            return response;
+            const summary = {
+                ...sessionData,
+                session_duration: Date.now() - sessionData.start_time,
+                viewport_size: {
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                },
+                user_behavior: {
+                    total_interactions: getTotalInteractions(),
+                    max_scroll_depth: getMaxScrollDepth(),
+                    time_between_clicks: calculateAverageTimeBetweenInteractions(),
+                    interaction_density: calculateInteractionDensity()
+                }
+            };
+            
+            console.log('Session data:', summary);
+            console.log('Session duration:', summary.session_duration);
+            console.log('Total interactions:', summary.user_behavior.total_interactions);
+            console.log('Scroll depth:', summary.user_behavior.max_scroll_depth);
+            
+            await sendData(summary);
         } catch (error) {
-            console.error('Failed to send session summary:', error);
-            // Store failed request for retry
-            storeFailedRequest(summary);
-            throw error;
+            console.error('❌ Session summary error:', error);
         }
+        console.groupEnd();
     }
 
     // Helper function to calculate interaction density
@@ -1812,25 +1957,31 @@ function getYandexCounterId() {
         }
 
         // Try to send via JSONP with retries
-        sendDataJSONP(goalData, endpoint).catch(error => {
-            console.error('Failed to send goal data:', error);
-            // Store failed request for retry
-            if (window.localStorage) {
-                try {
-                    const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
-                    failedRequests.push({
-                        timestamp: Date.now(),
-                        endpoint: endpoint,
-                        data: goalData
-                    });
-                    // Keep only last 10 failed requests
-                    if (failedRequests.length > 10) {
-                        failedRequests.shift();
+        sendDataJSONP(endpoint, goalData, (error, response) => {
+            if (error) {
+                console.error('Failed to send goal data:', error);
+                // Store failed request for retry
+                if (window.localStorage) {
+                    try {
+                        const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+                        failedRequests.push({
+                            timestamp: Date.now(),
+                            endpoint: endpoint,
+                            data: goalData
+                        });
+                        // Keep only last 10 failed requests
+                        if (failedRequests.length > 10) {
+                            failedRequests.shift();
+                        }
+                        localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
+                        console.log('Failed request stored for retry');
+                    } catch (e) {
+                        console.warn('Failed to store failed request:', e);
                     }
-                    localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
-                    console.log('Failed request stored for retry');
-                } catch (e) {
-                    console.warn('Failed to store failed request:', e);
+                }
+            } else {
+                if (config.debug) {
+                    console.log('Goal data sent successfully:', response);
                 }
             }
         });
@@ -2008,75 +2159,215 @@ function getYandexCounterId() {
 
     // Обновляем функцию для отслеживания скролла
     function handleScroll(event) {
+        console.group('📜 Scroll Event');
         try {
-            if (!sessionData || !Array.isArray(sessionData.scroll_chunks)) {
-                sessionData = sessionData || {};
-                sessionData.scroll_chunks = [];
-            }
-
-            const scrollPosition = window.scrollY || window.pageYOffset;
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
             const documentHeight = Math.max(
-                document.body.scrollHeight,
                 document.documentElement.scrollHeight,
-                document.body.offsetHeight,
                 document.documentElement.offsetHeight,
-                document.body.clientHeight,
                 document.documentElement.clientHeight
             );
-
-            const lastChunk = sessionData.scroll_chunks[sessionData.scroll_chunks.length - 1];
-            const delta = lastChunk ? scrollPosition - lastChunk.position : 0;
-
-            // Добавляем новый чанк только если прокрутка существенная
-            if (Math.abs(delta) >= config.scrollChunkSize || !lastChunk) {
-                const chunk = {
-                    position: scrollPosition,
-                    document_height: documentHeight,
-                    timestamp: Date.now(),
-                    delta: delta
-                };
-
-                sessionData.scroll_chunks.push(chunk);
-
-                if (config.debug) {
-                    console.log('Scroll chunk captured:', chunk);
-                }
-            }
+            
+            console.log('Scroll metrics:', {
+                scrollTop,
+                documentHeight,
+                viewportHeight: window.innerHeight,
+                scrollPercent: Math.round((scrollTop / (documentHeight - window.innerHeight)) * 100)
+            });
+            
+            const scrollData = {
+                timestamp: Date.now(),
+                position: scrollTop,
+                document_height: documentHeight,
+                viewport_height: window.innerHeight,
+                delta: scrollTop - (lastScrollPosition || 0)
+            };
+            
+            console.log('Processed scroll data:', scrollData);
+            sessionData.scroll_chunks.push(scrollData);
+            
+            lastScrollPosition = scrollTop;
         } catch (error) {
-            console.warn('Error in scroll handler:', error);
+            console.error('❌ Scroll handler error:', error);
         }
+        console.groupEnd();
     }
 
     // Обновляем функцию для отслеживания кликов
     function handleClick(event) {
+        console.group('🖱️ Click Event');
         try {
-            if (!sessionData || !sessionData.cta_clicks) return;
-            
             const target = event.target;
-            if (!target) return;
-
+            console.log('Click target:', target);
+            console.log('Click path:', getElementPath(target));
+            console.log('Is CTA:', isCTAElement(target));
+            console.log('Is interactive:', isInteractiveElement(target));
+            
+            // Анализ контекста клика
+            const clickContext = {
+                inViewport: isInViewport(target),
+                timeSinceLastClick: lastClickTime ? Date.now() - lastClickTime : null,
+                closestLink: target.closest('a')?.href,
+                closestButton: target.closest('button')?.textContent,
+                closestForm: target.closest('form')?.id,
+                targetSize: {
+                    width: target.offsetWidth,
+                    height: target.offsetHeight
+                }
+            };
+            
+            console.log('Click context:', clickContext);
+            
             const clickData = {
                 timestamp: Date.now(),
-                element: target.tagName.toLowerCase(),
-                classes: Array.from(target.classList || []).join(' '),
-                id: target.id || '',
-                text: (target.textContent || '').trim().substring(0, 100),
+                type: target.tagName.toLowerCase(),
+                text: target.textContent?.trim().substring(0, 50),
+                is_cta: isCTAElement(target),
+                is_interactive: isInteractiveElement(target),
                 href: target.href || target.closest('a')?.href || '',
                 path: getElementPath(target),
                 position: {
                     x: event.clientX,
-                    y: event.clientY
-                }
+                    y: event.clientY,
+                    relative_x: Math.round((event.clientX / window.innerWidth) * 100),
+                    relative_y: Math.round((event.clientY / window.innerHeight) * 100)
+                },
+                context: clickContext
             };
             
+            console.log('Processed click data:', clickData);
             sessionData.cta_clicks.push(clickData);
-
-            if (config.debug) {
-                console.log('Click event:', clickData);
-            }
+            
+            // Обновляем активность сессии
+            SessionMonitor.updateActivity();
+            lastClickTime = Date.now();
+            
         } catch (error) {
-            console.warn('Error in click handler:', error);
+            Logger.error('Click handler error:', error);
         }
+        console.groupEnd();
     }
 
-})(window); 
+    // Добавляем функцию проверки видимости элемента
+    function isInViewport(element) {
+        const rect = element.getBoundingClientRect();
+        return (
+            rect.top >= 0 &&
+            rect.left >= 0 &&
+            rect.bottom <= window.innerHeight &&
+            rect.right <= window.innerWidth
+        );
+    }
+
+    // Инициализация мониторов при запуске SDK
+    function initMonitors() {
+        NetworkMonitor.init();
+        
+        // Проверка неактивности каждые 5 секунд
+        setInterval(() => {
+            SessionMonitor.checkInactivity();
+        }, 5000);
+        
+        Logger.info('Monitors initialized', {
+            timestamp: new Date().toISOString(),
+            config: {
+                maxInactiveTime: config.maxInactiveTime,
+                retryInterval: config.retryInterval
+            }
+        });
+    }
+
+    // Добавляем расчет качества взаимодействия
+    function calculateInteractionQuality() {
+        if (!sessionData) return 0;
+
+        const weights = {
+            clickAccuracy: 0.3,  // Точность кликов
+            scrollSmooth: 0.2,   // Плавность скролла
+            dwellTime: 0.3,      // Время на контенте
+            formAccuracy: 0.2    // Точность заполнения форм
+        };
+
+        let quality = 0;
+
+        // 1. Оценка точности кликов
+        if (sessionData.all_clicks && sessionData.all_clicks.length > 0) {
+            const missedClicks = sessionData.all_clicks.filter(click => !click.is_interactive).length;
+            const clickAccuracy = 1 - (missedClicks / sessionData.all_clicks.length);
+            quality += clickAccuracy * weights.clickAccuracy;
+        }
+
+        // 2. Оценка плавности скролла
+        if (sessionData.scroll_chunks && sessionData.scroll_chunks.length > 1) {
+            const smoothScrolls = sessionData.scroll_chunks.filter(chunk => 
+                chunk.delta <= config.scrollChunkSize * 2
+            ).length;
+            const scrollSmoothness = smoothScrolls / sessionData.scroll_chunks.length;
+            quality += scrollSmoothness * weights.scrollSmooth;
+        }
+
+        // 3. Оценка времени на контенте
+        if (sessionData.session_duration > 0) {
+            const dwellTimeScore = Math.min(
+                sessionData.active_duration / sessionData.session_duration,
+                1
+            );
+            quality += dwellTimeScore * weights.dwellTime;
+        }
+
+        // 4. Оценка точности заполнения форм
+        if (sessionData.form_interactions && sessionData.form_interactions.length > 0) {
+            const formErrors = sessionData.form_interactions.filter(i => i.type === 'error').length;
+            const formAccuracy = 1 - (formErrors / sessionData.form_interactions.length);
+            quality += formAccuracy * weights.formAccuracy;
+        }
+
+        return Math.round(quality * 100) / 100;
+    }
+
+    // Вспомогательные функции для метрик
+    function calculateFormCompletionRate() {
+        if (!sessionData.form_interactions || sessionData.form_interactions.length === 0) {
+            return 0;
+        }
+
+        const formStarts = sessionData.form_interactions.filter(i => i.type === 'focus').length;
+        const formSubmits = sessionData.form_interactions.filter(i => i.type === 'submit').length;
+
+        return formStarts > 0 ? formSubmits / formStarts : 0;
+    }
+
+    function calculateAverageInteractionGap() {
+        if (!sessionData.user_behavior.time_between_clicks || 
+            sessionData.user_behavior.time_between_clicks.length < 2) {
+            return 0;
+        }
+
+        const gaps = sessionData.user_behavior.time_between_clicks
+            .map(click => click.timeDelta)
+            .filter(delta => delta > 0 && delta < 60000); // Игнорируем паузы больше минуты
+
+        return gaps.length > 0 ? 
+            gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 
+            0;
+    }
+
+    // Инициализация мониторов при запуске SDK
+    (function initMonitors() {
+        NetworkMonitor.init();
+        
+        // Проверка неактивности каждые 5 секунд
+        setInterval(() => {
+            SessionMonitor.checkInactivity();
+        }, 5000);
+        
+        Logger.info('Monitors initialized', {
+            timestamp: new Date().toISOString(),
+            config: {
+                maxInactiveTime: config.maxInactiveTime,
+                retryInterval: config.retryInterval
+            }
+        });
+    })();
+
+})(window);
