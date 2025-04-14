@@ -991,7 +991,7 @@ function getYandexCounterId() {
 
     // Send session summary
     async function sendSessionSummary() {
-        updateSessionDuration(); // Обновляем длительность сессии перед отправкой
+        updateSessionDuration();
 
         const summary = {
             ...sessionData,
@@ -1000,10 +1000,22 @@ function getYandexCounterId() {
             click_count: (sessionData.all_clicks || []).length,
             cta_click_count: sessionData.cta_clicks.length,
             interaction_density: sessionData.user_behavior.total_interactions / 
-                (sessionData.session_duration / 1000), // взаимодействий в секунду
+                (sessionData.session_duration / 1000),
             active_ratio: sessionData.active_duration / sessionData.session_duration,
             viewport_coverage: calculateViewportCoverage(),
-            engagement_score: calculateEngagementScore()
+            engagement_score: calculateEngagementScore(),
+            interaction_quality: calculateInteractionQuality(),
+            session_metrics: {
+                total_duration: sessionData.session_duration,
+                active_duration: sessionData.active_duration,
+                inactive_duration: totalInactiveTime,
+                scroll_depth: maxScrollDepth,
+                unique_elements_clicked: new Set(
+                    sessionData.all_clicks.map(click => click.element)
+                ).size,
+                form_completion_rate: calculateFormCompletionRate(),
+                average_interaction_gap: calculateAverageInteractionGap()
+            }
         };
 
         const endpoint = getEndpointUrl();
@@ -2108,6 +2120,115 @@ function getYandexCounterId() {
 
     // Retry failed requests periodically
     setInterval(retryFailedRequests, 5 * 60 * 1000); // Every 5 minutes
+
+    // Добавляем периодическое сохранение данных
+    function backupSessionData() {
+        if (sessionData) {
+            try {
+                localStorage.setItem('rivox_session_backup', JSON.stringify({
+                    timestamp: Date.now(),
+                    data: sessionData
+                }));
+            } catch (e) {
+                console.warn('Failed to backup session data:', e);
+            }
+        }
+    }
+
+    // Восстановление данных при перезагрузке
+    function restoreSessionData() {
+        try {
+            const backup = localStorage.getItem('rivox_session_backup');
+            if (backup) {
+                const { timestamp, data } = JSON.parse(backup);
+                // Проверяем, что бэкап не старше 30 минут
+                if (Date.now() - timestamp < 30 * 60 * 1000) {
+                    sessionData = data;
+                    console.log('Restored session data from backup');
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to restore session data:', e);
+        }
+    }
+
+    // Сохраняем каждые 10 секунд
+    setInterval(backupSessionData, 10000);
+
+    // Добавляем расчет качества взаимодействия
+    function calculateInteractionQuality() {
+        if (!sessionData) return 0;
+
+        const weights = {
+            clickAccuracy: 0.3,  // Точность кликов
+            scrollSmooth: 0.2,   // Плавность скролла
+            dwellTime: 0.3,      // Время на контенте
+            formAccuracy: 0.2    // Точность заполнения форм
+        };
+
+        let quality = 0;
+
+        // 1. Оценка точности кликов
+        if (sessionData.all_clicks && sessionData.all_clicks.length > 0) {
+            const missedClicks = sessionData.all_clicks.filter(click => !click.is_interactive).length;
+            const clickAccuracy = 1 - (missedClicks / sessionData.all_clicks.length);
+            quality += clickAccuracy * weights.clickAccuracy;
+        }
+
+        // 2. Оценка плавности скролла
+        if (sessionData.scroll_chunks && sessionData.scroll_chunks.length > 1) {
+            const smoothScrolls = sessionData.scroll_chunks.filter(chunk => 
+                chunk.delta <= config.scrollChunkSize * 2
+            ).length;
+            const scrollSmoothness = smoothScrolls / sessionData.scroll_chunks.length;
+            quality += scrollSmoothness * weights.scrollSmooth;
+        }
+
+        // 3. Оценка времени на контенте
+        if (sessionData.session_duration > 0) {
+            const dwellTimeScore = Math.min(
+                sessionData.active_duration / sessionData.session_duration,
+                1
+            );
+            quality += dwellTimeScore * weights.dwellTime;
+        }
+
+        // 4. Оценка точности заполнения форм
+        if (sessionData.form_interactions && sessionData.form_interactions.length > 0) {
+            const formErrors = sessionData.form_interactions.filter(i => i.type === 'error').length;
+            const formAccuracy = 1 - (formErrors / sessionData.form_interactions.length);
+            quality += formAccuracy * weights.formAccuracy;
+        }
+
+        return Math.round(quality * 100) / 100;
+    }
+
+    // Вспомогательные функции для метрик
+    function calculateFormCompletionRate() {
+        if (!sessionData.form_interactions || sessionData.form_interactions.length === 0) {
+            return 0;
+        }
+
+        const formStarts = sessionData.form_interactions.filter(i => i.type === 'focus').length;
+        const formSubmits = sessionData.form_interactions.filter(i => i.type === 'submit').length;
+
+        return formStarts > 0 ? formSubmits / formStarts : 0;
+    }
+
+    function calculateAverageInteractionGap() {
+        if (!sessionData.user_behavior.time_between_clicks || 
+            sessionData.user_behavior.time_between_clicks.length < 2) {
+            return 0;
+        }
+
+        const gaps = sessionData.user_behavior.time_between_clicks
+            .map(click => click.timeDelta)
+            .filter(delta => delta > 0 && delta < 60000); // Игнорируем паузы больше минуты
+
+        return gaps.length > 0 ? 
+            gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 
+            0;
+    }
 
     // Expose public API
     window.RIVOX = {
