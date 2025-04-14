@@ -550,10 +550,10 @@ function getYandexCounterId() {
                 });
             }
 
-            // Check if we should send data
-            if (shouldSendData()) {
-                console.log('🔄 Sending data after accumulating events...');
-                sendSessionSummary();
+            // Send data after each click on important elements
+            if (isImportantElement(target) || shouldSendData()) {
+                console.log('�� Sending data after click...');
+                sendSessionSummary().catch(console.error);
             }
         });
 
@@ -614,7 +614,7 @@ function getYandexCounterId() {
     // Modify sendSessionSummary to add logging
     async function sendSessionSummary() {
         if (!sessionData || !isSessionActive) {
-            console.log('No session data to send or session not active');
+            console.log('❌ No session data to send or session not active');
             return;
         }
 
@@ -640,37 +640,66 @@ function getYandexCounterId() {
             scroll_depth_max: sessionData.user_behavior.scroll_depth_percentages ? 
                 Math.max(...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0,
             scroll_count: sessionData.scroll_chunks.length,
+            scroll_chunks: sessionData.scroll_chunks,
             
             // Click data
             click_count: sessionData.cta_clicks.length,
-            click_elements: sessionData.cta_clicks.map(click => ({
-                element: click.element,
-                timestamp: click.timestamp
-            })),
+            clicks: sessionData.cta_clicks,
             
             // Hover data
             hover_count: sessionData.hover_events.length,
-            hover_elements: sessionData.hover_events.map(hover => ({
-                element: hover.element,
-                duration: hover.duration
-            }))
+            hovers: sessionData.hover_events
         };
 
-        console.log('📊 Preparing to send session summary:', summary);
+        console.log('📊 Sending session data:', summary);
 
         try {
-            const response = await sendDataWithFallback(summary);
-            console.log('✅ Session data sent successfully:', response);
-            
-            // Clear events after successful send
-            sessionData.scroll_chunks = [];
-            sessionData.hover_events = [];
-            sessionData.cta_clicks = [];
-            
-            return response;
+            // Try JSONP first
+            try {
+                console.log('📡 Attempting JSONP request...');
+                const response = await sendDataJSONP(summary);
+                console.log('✅ JSONP request successful:', response);
+                return response;
+            } catch (jsonpError) {
+                console.warn('⚠️ JSONP failed, trying direct POST...', jsonpError);
+                
+                // Try direct POST request
+                const response = await fetch(config.endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(summary)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                console.log('✅ POST request successful:', result);
+                return result;
+            }
         } catch (error) {
-            console.error('❌ Failed to send session data:', error);
-            addToFailedQueue(summary);
+            console.error('❌ Failed to send data:', error);
+            
+            // Try beacon API as last resort
+            if (navigator.sendBeacon) {
+                try {
+                    const blob = new Blob([JSON.stringify(summary)], {
+                        type: 'application/json'
+                    });
+                    const success = navigator.sendBeacon(config.endpoint, blob);
+                    if (success) {
+                        console.log('✅ Data sent via beacon API');
+                        return { success: true, method: 'beacon' };
+                    }
+                } catch (beaconError) {
+                    console.error('❌ Beacon API failed:', beaconError);
+                }
+            }
+            
+            throw error;
         }
     }
 
@@ -991,6 +1020,17 @@ function getYandexCounterId() {
             sessionData.hover_events.length + 
             sessionData.cta_clicks.length;
             
-        return totalEvents >= 10; // Send after 10 events total
+        const shouldSend = totalEvents >= 5; // Уменьшил до 5 событий
+        
+        if (shouldSend) {
+            console.log('📈 Accumulated enough events:', {
+                scrolls: sessionData.scroll_chunks.length,
+                hovers: sessionData.hover_events.length,
+                clicks: sessionData.cta_clicks.length,
+                total: totalEvents
+            });
+        }
+        
+        return shouldSend;
     }
 })(window); 
