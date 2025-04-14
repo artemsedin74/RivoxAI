@@ -703,7 +703,7 @@ function getYandexCounterId() {
     }
 
     // JSONP data sending implementation with improved error handling
-    function sendDataJSONP(data, callback) {
+    function sendDataJSONP(data) {
         return new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.async = true;
@@ -711,14 +711,26 @@ function getYandexCounterId() {
             // Create unique callback name
             const callbackName = 'rivoxCallback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
             
+            // Prepare data for sending
+            const sendData = {
+                ...data,
+                timestamp: new Date().toISOString(),
+                origin: window.location.origin
+            };
+            
             // Create URL with parameters
             const params = new URLSearchParams();
-            params.append('data', JSON.stringify(data));
+            params.append('data', encodeURIComponent(JSON.stringify(sendData)));
             params.append('callback', callbackName);
             params.append('origin', window.location.origin);
             params.append('_', Date.now()); // Cache buster
             
             const endpoint = getEndpointUrl();
+            if (!endpoint) {
+                reject(new Error('Invalid endpoint URL'));
+                return;
+            }
+            
             script.src = `${endpoint}?${params.toString()}`;
             
             // Set timeout
@@ -730,7 +742,11 @@ function getYandexCounterId() {
             // Setup callback
             window[callbackName] = (response) => {
                 cleanup();
-                resolve(response);
+                if (response && response.status === 'success') {
+                    resolve(response);
+                } else {
+                    reject(new Error('Server returned error: ' + JSON.stringify(response)));
+                }
             };
             
             // Error handling
@@ -742,7 +758,9 @@ function getYandexCounterId() {
             // Cleanup function
             function cleanup() {
                 clearTimeout(timeoutId);
-                document.head.removeChild(script);
+                if (script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
                 delete window[callbackName];
             }
             
@@ -753,36 +771,24 @@ function getYandexCounterId() {
 
     // Main data sending function with retry logic
     async function sendData(data, retryCount = 0) {
+        const maxRetries = config.maxRetries || 3;
+        const retryDelay = config.retryDelay || 1000;
+
         try {
             // Try JSONP first
             return await sendDataJSONP(data);
         } catch (jsonpError) {
             console.warn('JSONP request failed:', jsonpError);
             
-            // Fall back to fetch with retry logic
-            try {
-                const response = await fetch(getEndpointUrl(), {
-                    method: 'POST',
-                    mode: 'cors',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(data)
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                return await response.json();
-            } catch (fetchError) {
-                if (retryCount < config.maxRetries) {
-                    console.warn(`Retry attempt ${retryCount + 1} of ${config.maxRetries}`);
-                    await new Promise(resolve => setTimeout(resolve, config.retryDelay));
-                    return sendData(data, retryCount + 1);
-                }
-                throw new Error(`Failed to send data after ${config.maxRetries} retries`);
+            if (retryCount >= maxRetries) {
+                throw new Error(`Failed to send data after ${maxRetries} retries`);
             }
+            
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, retryDelay * Math.pow(2, retryCount)));
+            
+            // Retry with incremented counter
+            return sendData(data, retryCount + 1);
         }
     }
 
@@ -795,13 +801,13 @@ function getYandexCounterId() {
 
         const summary = {
             ...sessionData,
-            timestamp: Date.now(),
+            timestamp: new Date().toISOString(),
             sdk_version: SDK_VERSION,
             user_behavior: {
                 ...sessionData.user_behavior,
                 active_duration: sessionData.active_duration,
                 total_duration: Date.now() - sessionData.start_time,
-                interaction_density: sessionData.user_behavior.total_interactions / (sessionData.active_duration / 1000)
+                interaction_density: calculateInteractionDensity()
             }
         };
 
@@ -813,7 +819,33 @@ function getYandexCounterId() {
             return response;
         } catch (error) {
             console.error('Failed to send session summary:', error);
+            // Store failed request for retry
+            storeFailedRequest(summary);
             throw error;
+        }
+    }
+
+    // Helper function to calculate interaction density
+    function calculateInteractionDensity() {
+        if (!sessionData.active_duration) return 0;
+        return sessionData.user_behavior.total_interactions / (sessionData.active_duration / 1000);
+    }
+
+    // Store failed request for later retry
+    function storeFailedRequest(data) {
+        try {
+            const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
+            failedRequests.push({
+                timestamp: Date.now(),
+                data: data
+            });
+            // Keep only last 10 failed requests
+            if (failedRequests.length > 10) {
+                failedRequests.shift();
+            }
+            localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
+        } catch (e) {
+            console.warn('Failed to store failed request:', e);
         }
     }
 
