@@ -277,17 +277,32 @@ let Logger = {
     }
 
     // Send queued data
-    function sendQueuedData() {
+    async function sendQueuedData() {
         if (queuedData.length === 0) return;
 
         const dataToSend = queuedData;
         queuedData = [];
 
-        sendDataJSONP(dataToSend).catch(error => {
+        try {
+            const response = await fetch(config.endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Origin': window.location.origin
+                },
+                body: JSON.stringify(dataToSend)
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            Logger.info('✅ Queued data sent successfully');
+        } catch (error) {
             Logger.error('Failed to send queued data:', error);
             // Return failed items to queue
             queuedData = [...dataToSend, ...queuedData];
-        });
+        }
     }
 
     // Get current session duration
