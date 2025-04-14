@@ -404,214 +404,62 @@ function getYandexCounterId() {
 
     // Enhanced event listeners setup
     function setupEventListeners() {
-        console.log('Setting up event listeners...');
-        
-        // Scroll tracking with heatmap
-        let lastScrollY = window.scrollY;
-        window.addEventListener('scroll', throttle(() => {
-            const currentScrollY = window.scrollY;
-            const scrollDelta = Math.abs(currentScrollY - lastScrollY);
-            
-            if (scrollDelta >= config.scrollChunkSize) {
-                console.log('Scroll event captured:', {
-                    position: currentScrollY,
-                    delta: scrollDelta
-                });
-                
-                sessionData.scroll_chunks.push({
-                    timestamp: Date.now(),
-                    position: currentScrollY,
-                    delta: scrollDelta,
-                    viewport_height: window.innerHeight,
-                    document_height: document.documentElement.scrollHeight
-                });
-                lastScrollY = currentScrollY;
+        try {
+            if (!sessionData) {
+                console.warn('Session data not initialized');
+                return;
             }
-        }, 100));
 
-        // Hover tracking
-        if (config.mlFeatures.trackHoverEvents) {
-            console.log('Setting up hover tracking...');
-            document.addEventListener('mouseover', throttle((e) => {
-                const target = e.target;
-                if (isImportantElement(target)) {
-                    console.log('Hover event captured:', {
-                        element: getElementPath(target)
-                    });
-                    
-                    sessionData.hover_events.push({
-                        timestamp: Date.now(),
-                        element: getElementPath(target),
-                        duration: 0
-                    });
+            console.log('Setting up event listeners...');
+
+            // Инициализируем массивы для хранения данных
+            sessionData.scroll_chunks = sessionData.scroll_chunks || [];
+            sessionData.cta_clicks = sessionData.cta_clicks || [];
+            sessionData.form_interactions = sessionData.form_interactions || [];
+
+            // Добавляем обработчики с throttle
+            let scrollTimeout = null;
+            window.addEventListener('scroll', (event) => {
+                if (scrollTimeout) {
+                    clearTimeout(scrollTimeout);
                 }
-            }, 100));
+                scrollTimeout = setTimeout(() => handleScroll(event), 150);
+            }, { passive: true });
 
-            document.addEventListener('mouseout', throttle((e) => {
-                const target = e.target;
-                if (isImportantElement(target)) {
-                    const lastHover = sessionData.hover_events[sessionData.hover_events.length - 1];
-                    if (lastHover) {
-                        lastHover.duration = Date.now() - lastHover.timestamp;
-                        console.log('Hover duration updated:', lastHover.duration);
+            // Добавляем обработчик кликов
+            document.addEventListener('click', handleClick, { passive: true });
+
+            // Добавляем обработчик отправки форм
+            document.addEventListener('submit', (event) => {
+                try {
+                    if (!sessionData || !sessionData.form_interactions) return;
+                    
+                    const form = event.target;
+                    if (!form) return;
+
+                    const formData = {
+                        timestamp: Date.now(),
+                        type: 'submit',
+                        action: form.action || '',
+                        method: form.method || 'get',
+                        id: form.id || '',
+                        classes: Array.from(form.classList || []).join(' ')
+                    };
+                    
+                    sessionData.form_interactions.push(formData);
+
+                    if (config.debug) {
+                        console.log('Form submit:', formData);
                     }
+                } catch (error) {
+                    console.warn('Error in form submit handler:', error);
                 }
-            }, 100));
+            }, { passive: true });
+
+            console.log('Event listeners setup complete');
+        } catch (error) {
+            console.error('Error in setupEventListeners:', error);
         }
-
-        // Form interaction tracking
-        if (config.mlFeatures.trackFormInteractions) {
-            console.log('Setting up form interaction tracking...');
-            document.addEventListener('focus', (e) => {
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-                    console.log('Form focus event captured:', {
-                        element: getElementPath(e.target)
-                    });
-                    
-                    sessionData.form_interactions.push({
-                        timestamp: Date.now(),
-                        type: 'focus',
-                        element: getElementPath(e.target)
-                    });
-                }
-            }, true);
-
-            document.addEventListener('blur', (e) => {
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-                    console.log('Form blur event captured:', {
-                        element: getElementPath(e.target)
-                    });
-                    
-                    sessionData.form_interactions.push({
-                        timestamp: Date.now(),
-                        type: 'blur',
-                        element: getElementPath(e.target),
-                        value: e.target.value
-                    });
-                }
-            }, true);
-        }
-
-        // CTA click tracking
-        if (config.mlFeatures.trackCTAClicks) {
-            console.log('Setting up CTA click tracking...');
-            document.addEventListener('click', (e) => {
-                const target = e.target;
-                if (isCTAElement(target)) {
-                    console.log('CTA click event captured:', {
-                        element: getElementPath(target),
-                        text: target.textContent.trim()
-                    });
-                    
-                    sessionData.cta_clicks.push({
-                        timestamp: Date.now(),
-                        element: getElementPath(target),
-                        text: target.textContent.trim()
-                    });
-                }
-            }, true);
-        }
-
-        // Modal interaction tracking
-        if (config.mlFeatures.trackModalInteractions) {
-            console.log('Setting up modal interaction tracking...');
-            document.addEventListener('click', (e) => {
-                const target = e.target;
-                if (isModalElement(target)) {
-                    console.log('Modal interaction event captured:', {
-                        element: getElementPath(target)
-                    });
-                    
-                    sessionData.modal_interactions.push({
-                        timestamp: Date.now(),
-                        type: 'open',
-                        element: getElementPath(target)
-                    });
-                }
-            }, true);
-        }
-
-        // SPA navigation tracking
-        if (config.mlFeatures.analyzeUserPaths) {
-            console.log('Setting up SPA navigation tracking...');
-            const pushState = history.pushState;
-            history.pushState = function() {
-                pushState.apply(history, arguments);
-                trackNavigation();
-            };
-
-            window.addEventListener('popstate', trackNavigation);
-        }
-
-        // Add enhanced mouse movement tracking
-        let mousePositions = [];
-        let lastMouseMoveTime = Date.now();
-        
-        document.addEventListener('mousemove', throttle((e) => {
-            const now = Date.now();
-            mousePositions.push({
-                x: e.clientX,
-                y: e.clientY,
-                timestamp: now,
-                timeSinceLastMove: now - lastMouseMoveTime
-            });
-            
-            // Keep only last 100 positions
-            if (mousePositions.length > 100) {
-                mousePositions = mousePositions.slice(-100);
-            }
-            
-            sessionData.user_behavior.mouse_movement_heatmap = generateHeatmapData(mousePositions);
-            lastMouseMoveTime = now;
-        }, 100));
-
-        // Track scroll depth percentage
-        let maxScrollDepth = 0;
-        window.addEventListener('scroll', throttle(() => {
-            const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-            const scrolled = window.scrollY;
-            const scrollDepthPercentage = (scrolled / scrollHeight) * 100;
-            
-            if (scrollDepthPercentage > maxScrollDepth) {
-                maxScrollDepth = scrollDepthPercentage;
-                sessionData.user_behavior.scroll_depth_percentages.push({
-                    depth: maxScrollDepth,
-                    timestamp: Date.now()
-                });
-            }
-        }, 100));
-
-        // Track time between clicks
-        let lastClickTime = Date.now();
-        document.addEventListener('click', (e) => {
-            const now = Date.now();
-            sessionData.user_behavior.time_between_clicks.push({
-                timeDelta: now - lastClickTime,
-                timestamp: now,
-                element: getElementPath(e.target)
-            });
-            lastClickTime = now;
-            
-            // Update total interactions
-            sessionData.user_behavior.total_interactions++;
-            if (!sessionData.user_behavior.time_to_first_interaction) {
-                sessionData.user_behavior.time_to_first_interaction = now - sessionData.start_time;
-            }
-        });
-
-        // Track interaction frequency
-        setInterval(() => {
-            const now = Date.now();
-            const last5Seconds = sessionData.user_behavior.time_between_clicks
-                .filter(click => now - click.timestamp < 5000).length;
-                
-            sessionData.user_behavior.interaction_frequency.push({
-                timestamp: now,
-                interactions_per_5sec: last5Seconds
-            });
-        }, 5000);
-
-        console.log('Event listeners setup complete');
     }
 
     // ML features setup
@@ -2222,5 +2070,67 @@ function getYandexCounterId() {
             console.error('Failed to initialize RIVOX SDK:', error);
         });
     })();
+
+    // Обновляем функцию для отслеживания скролла
+    function handleScroll(event) {
+        try {
+            if (!sessionData || !sessionData.scroll_chunks) return;
+            
+            const scrollPosition = window.scrollY || window.pageYOffset;
+            const documentHeight = Math.max(
+                document.body.scrollHeight,
+                document.documentElement.scrollHeight,
+                document.body.offsetHeight,
+                document.documentElement.offsetHeight,
+                document.body.clientHeight,
+                document.documentElement.clientHeight
+            );
+            
+            sessionData.scroll_chunks.push({
+                position: scrollPosition,
+                document_height: documentHeight,
+                timestamp: Date.now(),
+                delta: scrollPosition - (sessionData.scroll_chunks[sessionData.scroll_chunks.length - 1]?.position || 0)
+            });
+
+            if (config.debug) {
+                console.log('Scroll event:', { position: scrollPosition, documentHeight });
+            }
+        } catch (error) {
+            console.warn('Error in scroll handler:', error);
+        }
+    }
+
+    // Обновляем функцию для отслеживания кликов
+    function handleClick(event) {
+        try {
+            if (!sessionData || !sessionData.cta_clicks) return;
+            
+            const target = event.target;
+            if (!target) return;
+
+            const clickData = {
+                timestamp: Date.now(),
+                element: target.tagName.toLowerCase(),
+                classes: Array.from(target.classList || []).join(' '),
+                id: target.id || '',
+                text: (target.textContent || '').trim().substring(0, 100),
+                href: target.href || target.closest('a')?.href || '',
+                path: getElementPath(target),
+                position: {
+                    x: event.clientX,
+                    y: event.clientY
+                }
+            };
+            
+            sessionData.cta_clicks.push(clickData);
+
+            if (config.debug) {
+                console.log('Click event:', clickData);
+            }
+        } catch (error) {
+            console.warn('Error in click handler:', error);
+        }
+    }
 
 })(window); 
