@@ -24,7 +24,7 @@ function getYandexCounterId() {
 
     // Configuration
     const config = {
-        endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
+        endpoint: 'https://functions.yandexcloud.net/d4enh3kioa70v319cqre',
         debug: true,
         sessionTimeout: 30 * 60 * 1000, // 30 минут
         scrollChunkSize: 100,
