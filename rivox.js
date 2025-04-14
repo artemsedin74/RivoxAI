@@ -728,42 +728,77 @@ function getYandexCounterId() {
             };
 
             async function attemptSend() {
-                // Try sendBeacon first for better reliability during page unload
-                const beaconUrl = `${getEndpointUrl()}?data=${encodeURIComponent(JSON.stringify(summary))}`;
-                if (navigator.sendBeacon && navigator.sendBeacon(beaconUrl)) {
-                    return true;
-                }
-
-                // Fallback to JSONP if sendBeacon fails
-                return new Promise((resolve, reject) => {
-                    const script = document.createElement('script');
-                    const callbackName = 'rivoxCallback_' + Math.random().toString(36).substr(2, 9);
-                    
-                    window[callbackName] = function(response) {
-                        cleanup();
-                        resolve(true);
+                try {
+                    // Format data for Google Apps Script
+                    const payload = {
+                        type: 'session_data',
+                        client_id: summary.client_id || '',
+                        session_id: summary.session_id || '',
+                        client_token: summary.data_token || 'default-client',
+                        data: JSON.stringify(summary)
                     };
 
-                    function cleanup() {
-                        if (script.parentNode) script.parentNode.removeChild(script);
-                        delete window[callbackName];
+                    // Use fetch instead of sendBeacon for better error handling
+                    const response = await fetch(getEndpointUrl(), {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok && response.status !== 0) { // status 0 is normal for no-cors
+                        throw new Error(`HTTP error! status: ${response.status}`);
                     }
 
-                    script.onerror = function() {
-                        cleanup();
-                        reject(new Error('Failed to load JSONP script'));
-                    };
+                    if (config.debug) {
+                        console.log('✓ Session data sent successfully');
+                    }
+                    return true;
 
-                    const url = `${getEndpointUrl()}?data=${encodeURIComponent(JSON.stringify(summary))}&callback=${callbackName}`;
-                    script.src = url;
-                    document.head.appendChild(script);
+                } catch (error) {
+                    console.warn('Send attempt failed:', error);
+                    
+                    // Fallback to JSONP if fetch fails
+                    return new Promise((resolve, reject) => {
+                        const script = document.createElement('script');
+                        const callbackName = 'rivoxCallback_' + Math.random().toString(36).substr(2, 9);
+                        
+                        window[callbackName] = function(response) {
+                            cleanup();
+                            resolve(true);
+                        };
 
-                    // Set timeout
-                    setTimeout(() => {
-                        cleanup();
-                        reject(new Error('JSONP request timed out'));
-                    }, 10000);
-                });
+                        function cleanup() {
+                            if (script.parentNode) script.parentNode.removeChild(script);
+                            delete window[callbackName];
+                        }
+
+                        script.onerror = function() {
+                            cleanup();
+                            reject(new Error('Failed to load JSONP script'));
+                        };
+
+                        const params = new URLSearchParams({
+                            type: 'session_data',
+                            client_id: summary.client_id || '',
+                            session_id: summary.session_id || '',
+                            client_token: summary.data_token || 'default-client',
+                            data: JSON.stringify(summary),
+                            callback: callbackName
+                        });
+
+                        script.src = `${getEndpointUrl()}?${params.toString()}`;
+                        document.head.appendChild(script);
+
+                        // Set timeout
+                        setTimeout(() => {
+                            cleanup();
+                            reject(new Error('JSONP request timed out'));
+                        }, 10000);
+                    });
+                }
             }
 
             // Try sending with retries
@@ -773,9 +808,6 @@ function getYandexCounterId() {
             while (attempts < maxAttempts) {
                 try {
                     await attemptSend();
-                    if (config.debug) {
-                        console.log('✓ Session data sent successfully');
-                    }
                     return true;
                 } catch (error) {
                     attempts++;
@@ -784,9 +816,10 @@ function getYandexCounterId() {
                         return false;
                     }
                     // Wait before retry
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempts)); // Увеличиваем время ожидания с каждой попыткой
                 }
             }
+
         } catch (error) {
             console.warn('Error in sendSessionSummary:', error);
             return false;
