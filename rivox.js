@@ -992,7 +992,7 @@ function getYandexCounterId() {
 
     // Modify sendDataWithFallback to add logging
     async function sendDataWithFallback(data) {
-        Logger.debug('�� Attempting to send data:', {
+        Logger.debug('Attempting to send data:', {
             endpoint: getEndpointUrl(),
             dataSize: JSON.stringify(data).length,
             timestamp: new Date().toISOString()
@@ -1097,6 +1097,9 @@ function getYandexCounterId() {
 
         // Override reachGoal to capture goals
         window[`yaCounter${counterId}`].reachGoal = function(goalName, params) {
+            // Log the call immediately
+            Logger.info(`🎯 Metrika reachGoal intercepted: ${goalName}`, params || {});
+            
             // Call original function first
             const result = originalReachGoal.apply(this, arguments);
 
