@@ -192,6 +192,22 @@ function getYandexCounterId() {
                 user_segment: null,
                 conversion_probability: null,
                 funnel_analysis: {}
+            },
+            // Добавляем информацию об устройстве
+            device_info: {
+                user_agent: navigator.userAgent,
+                platform: navigator.platform,
+                vendor: navigator.vendor,
+                language: navigator.language,
+                connection_type: navigator.connection ? navigator.connection.effectiveType : null,
+                is_mobile: /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+                is_tablet: /(tablet|ipad|playbook|silk)|(android(?!.*mobile))/i.test(navigator.userAgent.toLowerCase()),
+                screen_size: {
+                    width: window.screen.width,
+                    height: window.screen.height,
+                    colorDepth: window.screen.colorDepth,
+                    pixelRatio: window.devicePixelRatio
+                }
             }
         };
 
@@ -837,7 +853,19 @@ function getYandexCounterId() {
             domain: window.location.hostname,
             path: window.location.pathname,
             timestamp: new Date().toISOString(),
-            sdk_version: '4.6.3'
+            sdk_version: '4.6.3',
+            // Добавляем обновленную информацию об устройстве
+            device_info: {
+                ...sessionData.device_info,
+                is_mobile: /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+                is_tablet: /(tablet|ipad|playbook|silk)|(android(?!.*mobile))/i.test(navigator.userAgent.toLowerCase()),
+                screen_size: {
+                    width: window.screen.width,
+                    height: window.screen.height,
+                    colorDepth: window.screen.colorDepth,
+                    pixelRatio: window.devicePixelRatio
+                }
+            }
         };
 
         try {
