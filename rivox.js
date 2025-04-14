@@ -982,41 +982,42 @@ function getYandexCounterId() {
         });
         
         try {
-            // Try JSONP first
-            console.log('📡 Trying JSONP request...');
-            const response = await sendDataJSONP(data);
-            console.log('✅ JSONP request successful:', response);
-            return response;
-        } catch (error) {
-            console.warn('⚠️ JSONP failed, trying direct POST...', error);
+            // Try JSONP first for GET requests
+            if (JSON.stringify(data).length < 2000) { // URL length limit
+                console.log('📡 Trying JSONP request...');
+                const response = await sendDataJSONP(data);
+                console.log('✅ JSONP request successful:', response);
+                return response;
+            }
             
-            try {
-                // Try direct POST with credentials
-                const response = await fetch(getEndpointUrl(), {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Origin': window.location.origin
-                    },
-                    body: JSON.stringify({
-                        ...data,
-                        token: config.token,
-                        origin: window.location.origin
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                console.log('✅ POST request successful:', result);
-                return result;
-            } catch (postError) {
-                console.error('❌ POST request failed:', postError);
-                
-                // Last resort: try navigator.sendBeacon
+            // For larger payloads, try POST
+            console.log('📡 Payload too large for JSONP, trying POST...');
+            const response = await fetch(getEndpointUrl(), {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Origin': window.location.origin
+                },
+                body: JSON.stringify({
+                    ...data,
+                    token: config.token,
+                    origin: window.location.origin
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            console.log('✅ POST request successful:', result);
+            return result;
+        } catch (error) {
+            console.error('❌ Request failed:', error);
+            
+            // Last resort: try navigator.sendBeacon
+            if (navigator.sendBeacon) {
                 const beaconData = new Blob([JSON.stringify({
                     ...data,
                     token: config.token,
@@ -1029,9 +1030,11 @@ function getYandexCounterId() {
                     console.log('✅ Data sent via beacon API');
                     return { success: true, method: 'beacon' };
                 }
-                
-                throw new Error('All send methods failed');
             }
+            
+            // If all methods fail, add to retry queue
+            addToFailedQueue(data);
+            throw new Error('All send methods failed');
         }
     }
 
