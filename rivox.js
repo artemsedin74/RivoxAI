@@ -563,51 +563,56 @@ function getYandexCounterId() {
     // Send data using JSONP
     function sendDataJSONP(data) {
         return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            const callbackName = 'rivox_callback_' + Date.now();
-            
-            window[callbackName] = function(response) {
-                console.log('📥 JSONP response received:', response);
-                delete window[callbackName];
-                document.body.removeChild(script);
-                resolve(response);
-            };
-
-            script.onerror = (error) => {
-                console.error('❌ JSONP script error:', error);
-                delete window[callbackName];
-                document.body.removeChild(script);
-                reject(new Error('JSONP request failed'));
-            };
-
-            // Ensure all required fields are present
-            const sendData = {
-                ...data,
-                client_token: config.token,
-                timestamp: data.timestamp || new Date().toISOString(),
-                sdk_version: SDK_VERSION
-            };
-
-            const params = new URLSearchParams({
-                callback: callbackName,
-                data: JSON.stringify(sendData),
-                token: config.token
-            });
-
-            const url = `${config.endpoint}?${params.toString()}`;
-            console.log('📤 JSONP request URL:', url);
-            script.src = url;
-            document.body.appendChild(script);
-
-            // Set timeout
-            setTimeout(() => {
-                if (window[callbackName]) {
-                    console.error('⏱️ JSONP request timeout');
-                    delete window[callbackName];
+            try {
+                const callbackName = 'rivox_callback_' + Date.now();
+                const script = document.createElement('script');
+                const endpoint = getEndpointUrl();
+                
+                // Add origin to data for CORS
+                data.origin = window.location.origin;
+                
+                // Create URL with parameters
+                const params = new URLSearchParams({
+                    callback: callbackName,
+                    data: JSON.stringify(data),
+                    token: config.token,
+                    origin: window.location.origin
+                });
+                
+                script.src = `${endpoint}?${params.toString()}`;
+                
+                // Setup callback
+                window[callbackName] = function(response) {
+                    console.log('📥 JSONP response received:', response);
                     document.body.removeChild(script);
-                    reject(new Error('JSONP request timeout'));
-                }
-            }, 10000);
+                    delete window[callbackName];
+                    resolve(response);
+                };
+                
+                // Setup error handling
+                script.onerror = () => {
+                    document.body.removeChild(script);
+                    delete window[callbackName];
+                    reject(new Error('JSONP request failed'));
+                };
+                
+                // Setup timeout
+                const timeout = setTimeout(() => {
+                    if (window[callbackName]) {
+                        document.body.removeChild(script);
+                        delete window[callbackName];
+                        reject(new Error('JSONP request timeout'));
+                    }
+                }, 5000);
+                
+                // Append script to document
+                document.body.appendChild(script);
+                console.log('📡 JSONP request sent to:', script.src);
+                
+            } catch (error) {
+                console.error('❌ Error in sendDataJSONP:', error);
+                reject(error);
+            }
         });
     }
 
@@ -970,44 +975,63 @@ function getYandexCounterId() {
 
     // Modify sendDataWithFallback to add logging
     async function sendDataWithFallback(data) {
-        // Add client timestamp if not present
-        if (!data.timestamp) {
-            data.timestamp = new Date().toISOString();
-        }
-
-        // Ensure data_token is present
-        data.data_token = config.token;
-
         console.log('🔄 Attempting to send data:', {
-            token: config.token,
-            endpoint: config.endpoint,
+            endpoint: getEndpointUrl(),
             dataSize: JSON.stringify(data).length,
-            timestamp: data.timestamp
+            timestamp: new Date().toISOString()
         });
-
+        
         try {
+            // Try JSONP first
             console.log('📡 Trying JSONP request...');
             const response = await sendDataJSONP(data);
             console.log('✅ JSONP request successful:', response);
             return response;
         } catch (error) {
-            console.warn('⚠️ JSONP failed, trying beacon API...', error);
+            console.warn('⚠️ JSONP failed, trying direct POST...', error);
             
-            if (navigator.sendBeacon) {
-                try {
-                    const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
-                    const success = navigator.sendBeacon(config.endpoint, blob);
-                    if (success) {
-                        console.log('✅ Data sent via beacon API');
-                        return { success: true, method: 'beacon' };
-                    }
-                } catch (error) {
-                    console.error('❌ Beacon API failed:', error);
+            try {
+                // Try direct POST with credentials
+                const response = await fetch(getEndpointUrl(), {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Origin': window.location.origin
+                    },
+                    body: JSON.stringify({
+                        ...data,
+                        token: config.token,
+                        origin: window.location.origin
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
+                
+                const result = await response.json();
+                console.log('✅ POST request successful:', result);
+                return result;
+            } catch (postError) {
+                console.error('❌ POST request failed:', postError);
+                
+                // Last resort: try navigator.sendBeacon
+                const beaconData = new Blob([JSON.stringify({
+                    ...data,
+                    token: config.token,
+                    origin: window.location.origin
+                })], {
+                    type: 'application/json'
+                });
+                
+                if (navigator.sendBeacon(getEndpointUrl(), beaconData)) {
+                    console.log('✅ Data sent via beacon API');
+                    return { success: true, method: 'beacon' };
+                }
+                
+                throw new Error('All send methods failed');
             }
-            
-            console.error('❌ All send methods failed');
-            throw new Error('All send methods failed');
         }
     }
 
