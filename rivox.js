@@ -1368,11 +1368,29 @@ let Logger = {
                     conversion_data: sessionData.conversion_data
                 });
 
+                // Ensure arrays exist
+                if (!sessionData.metrika_goals) {
+                    sessionData.metrika_goals = [];
+                }
+                if (!sessionData.conversion_data) {
+                    sessionData.conversion_data = {
+                        goals_reached: [],
+                        ecommerce_data: [],
+                        last_goal_timestamp: null,
+                        conversion_path: []
+                    };
+                }
+                if (!sessionData.conversion_data.goals_reached) {
+                    sessionData.conversion_data.goals_reached = [];
+                }
+                if (!sessionData.conversion_data.conversion_path) {
+                    sessionData.conversion_data.conversion_path = [];
+                }
+
+                // Add goal to arrays
                 sessionData.metrika_goals.push(goalData);
                 sessionData.conversion_data.goals_reached.push(goalData);
                 sessionData.conversion_data.last_goal_timestamp = Date.now();
-
-                // Update conversion path
                 sessionData.conversion_data.conversion_path.push({
                     type: 'goal',
                     name: goalName,
