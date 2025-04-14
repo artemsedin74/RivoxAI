@@ -271,6 +271,9 @@ function getYandexCounterId() {
         const initDelay = parseInt(script.dataset.initDelay) || config.initDelay;
         const sendDelay = parseInt(script.dataset.sendDelay) || config.sendDelay;
 
+        // Update config with token
+        config.token = token;
+
         if (config.debug) {
             console.log('RIVOX SDK Configuration:', {
                 token,
@@ -557,9 +560,15 @@ function getYandexCounterId() {
                 reject(new Error('JSONP request failed'));
             };
 
+            // Add data_token to the data object
+            const dataToSend = {
+                ...data,
+                data_token: config.token
+            };
+
             const params = new URLSearchParams({
                 callback: callbackName,
-                data: JSON.stringify(data),
+                data: JSON.stringify(dataToSend),
                 token: config.token
             });
 
