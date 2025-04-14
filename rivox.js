@@ -508,6 +508,15 @@ let Logger = {
                     percent: scrollPercent.toFixed(2) + '%'
                 });
                 
+                // Ensure arrays exist
+                if (!sessionData.scroll_chunks) {
+                    sessionData.scroll_chunks = [];
+                }
+                if (!sessionData.user_behavior.scroll_depth_percentages) {
+                    sessionData.user_behavior.scroll_depth_percentages = [];
+                }
+                
+                // Add scroll data
                 sessionData.scroll_chunks.push({
                     timestamp: Date.now(),
                     position: currentScrollY,
@@ -518,13 +527,16 @@ let Logger = {
                 });
 
                 // Update scroll depth percentages
-                if (!sessionData.user_behavior.scroll_depth_percentages) {
-                    sessionData.user_behavior.scroll_depth_percentages = [];
-                }
                 sessionData.user_behavior.scroll_depth_percentages.push({
                     depth: scrollPercent,
                     timestamp: Date.now()
                 });
+                
+                // Update max scroll depth
+                sessionData.scroll_depth_max = Math.max(
+                    sessionData.scroll_depth_max || 0,
+                    scrollPercent
+                );
                 
                 lastScrollY = currentScrollY;
             }
@@ -673,6 +685,74 @@ let Logger = {
             if (shouldSendData()) {
                 Logger.info('Accumulated enough events, sending data');
                 sendDataGuaranteed('events_threshold').catch(Logger.error);
+            }
+        });
+
+        // Mouse movement tracking
+        let mouseMoveTimeout;
+        let mousePoints = new Map(); // Используем Map для оптимизации
+
+        document.addEventListener('mousemove', throttle((e) => {
+            updateActivity();
+            
+            const x = Math.floor(e.clientX / 10) * 10; // группируем по 10px
+            const y = Math.floor(e.clientY / 10) * 10;
+            const key = `${x},${y}`;
+            
+            mousePoints.set(key, (mousePoints.get(key) || 0) + 1);
+            
+            // Очищаем предыдущий таймаут
+            if (mouseMoveTimeout) {
+                clearTimeout(mouseMoveTimeout);
+            }
+            
+            // Сохраняем данные каждые 5 секунд
+            mouseMoveTimeout = setTimeout(() => {
+                if (!sessionData.user_behavior.mouse_movement_heatmap) {
+                    sessionData.user_behavior.mouse_movement_heatmap = [];
+                }
+                
+                mousePoints.forEach((count, key) => {
+                    const [x, y] = key.split(',').map(Number);
+                    sessionData.user_behavior.mouse_movement_heatmap.push({
+                        x,
+                        y,
+                        count,
+                        timestamp: Date.now()
+                    });
+                });
+                
+                mousePoints.clear();
+            }, 5000);
+        }, 100));
+
+        // Form tracking
+        document.addEventListener('submit', (e) => {
+            // Проверяем, что форма существует и не пустая
+            if (!e.target || !e.target.elements) return;
+            
+            if (!sessionData.form_interactions) {
+                sessionData.form_interactions = [];
+            }
+            
+            const formData = {
+                timestamp: Date.now(),
+                form_id: e.target.id || e.target.name || 'unknown',
+                fields: Array.from(e.target.elements)
+                    .filter(el => el.name) // Фильтруем только элементы с именем
+                    .map(el => ({
+                        name: el.name,
+                        type: el.type,
+                        value: el.value
+                    }))
+            };
+            
+            sessionData.form_interactions.push(formData);
+            
+            // Проверяем условия отправки данных
+            if (shouldSendData()) {
+                Logger.info('Sending data after form submission');
+                sendSessionSummary();
             }
         });
 
@@ -1611,56 +1691,77 @@ let Logger = {
     // ---- New ML Features Function ----
     function updateMLFeatures() {
         if (!sessionData || !sessionData.ml_features) return;
-
+        
         const now = Date.now();
         const timeOnSite = now - sessionData.start_time;
-        const timeOnSiteMinutes = Math.max(1, timeOnSite) / 60000; // Avoid division by zero, use minutes
         
-        // Сигналы интереса
-        sessionData.ml_features.interest_signals = [
+        // Добавляем новые признаки только если они не существуют
+        if (!sessionData.ml_features.interest_signals) {
+            sessionData.ml_features.interest_signals = [];
+        }
+        
+        // Добавляем новые признаки с проверкой на существование
+        const newSignals = [
             {
                 type: 'time_on_site',
-                value: parseFloat((timeOnSite / 1000).toFixed(2)), // в секундах
+                value: parseFloat((timeOnSite / 1000).toFixed(2)),
                 timestamp: now
             },
             {
                 type: 'scroll_depth',
-                value: parseFloat(sessionData.user_behavior.scroll_depth_percentages ? 
-                    Math.max(0, ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0).toFixed(2),
+                value: sessionData.user_behavior.scroll_depth_percentages ? 
+                    Math.max(0, ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0,
                 timestamp: now
             },
             {
                 type: 'interaction_rate',
-                value: parseFloat((sessionData.user_behavior.total_interactions / timeOnSiteMinutes).toFixed(2)), // в минуту
+                value: parseFloat((sessionData.user_behavior.total_interactions / (timeOnSite / 60000)).toFixed(2)),
                 timestamp: now
             }
         ];
+        
+        // Добавляем только новые сигналы
+        newSignals.forEach(signal => {
+            if (!sessionData.ml_features.interest_signals.some(s => s.type === signal.type)) {
+                sessionData.ml_features.interest_signals.push(signal);
+            }
+        });
 
-        // Паттерны поведения
+        // Обновляем паттерны поведения
+        if (!sessionData.ml_features.behavior_patterns) {
+            sessionData.ml_features.behavior_patterns = [];
+        }
+
+        // Рассчитываем среднюю длительность наведения
         const totalHoverDuration = sessionData.hover_events.reduce((sum, h) => sum + h.duration, 0);
         const avgHoverDuration = totalHoverDuration / (sessionData.hover_events.length || 1);
 
+        // Обновляем паттерны
         sessionData.ml_features.behavior_patterns = [
             {
                 type: 'scroll_speed',
-                value: parseFloat((sessionData.scroll_chunks.length / timeOnSiteMinutes).toFixed(2)) // скроллов в минуту
+                value: parseFloat((sessionData.scroll_chunks.length / (timeOnSite / 60000)).toFixed(2))
             },
             {
                 type: 'click_frequency',
-                value: parseFloat((sessionData.cta_clicks.length / timeOnSiteMinutes).toFixed(2)) // кликов в минуту
+                value: parseFloat((sessionData.cta_clicks.length / (timeOnSite / 60000)).toFixed(2))
             },
             {
                 type: 'hover_duration_avg',
-                value: parseFloat(avgHoverDuration.toFixed(0)) // средняя длительность наведения
+                value: parseFloat(avgHoverDuration.toFixed(0))
             }
         ];
 
-        // Анализ воронки
+        // Обновляем анализ воронки
+        if (!sessionData.ml_features.funnel_analysis) {
+            sessionData.ml_features.funnel_analysis = {};
+        }
+
         sessionData.ml_features.funnel_analysis = {
-            page_views: sessionData.page_history.length,
-            product_views: sessionData.page_history.filter(p => 
+            page_views: sessionData.page_views?.length || 0,
+            product_views: sessionData.page_views?.filter(p => 
                 p.url.includes('/catalog/') || p.url.includes('/product/')
-            ).length,
+            ).length || 0,
             cart_interactions: sessionData.cta_clicks.filter(c => 
                 c.element && (
                     c.element.toLowerCase().includes('cart') || 
@@ -1676,7 +1777,6 @@ let Logger = {
                 )
             ).length
         };
-        Logger.debug('ML features updated:', sessionData.ml_features);
     }
     // ---- End of New ML Features Function ----
 })(window); 
