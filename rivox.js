@@ -739,91 +739,74 @@ function getYandexCounterId() {
 
     function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
-            // Generate a unique callback name with only alphanumeric characters
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substring(2, 10);
-            const callbackName = `rivoxCallback${timestamp}${random}`;
-
-            let timeoutId;
-            let scriptElement;
-
-            // Prepare data for transmission
-            const preparedData = {
-                ...data,
-                client_domain: window.location.hostname,
-                client_url: window.location.href,
-                timestamp: new Date().toISOString()
-            };
-
-            // Create URL parameters
-            const params = new URLSearchParams();
-            params.append('data', JSON.stringify(preparedData));
-            params.append('callback', callbackName);
-            params.append('origin', window.location.origin);
-            params.append('t', timestamp); // cache buster
-
-            // Setup cleanup function
-            const cleanup = () => {
-                if (timeoutId) {
-                    clearTimeout(timeoutId);
-                }
-                if (scriptElement && scriptElement.parentNode) {
-                    scriptElement.parentNode.removeChild(scriptElement);
-                }
-                delete window[callbackName];
-            };
-
-            // Handle success callback
-            window[callbackName] = (response) => {
-                cleanup();
-                if (response && response.status === 'success') {
-                    if (config.debug) {
-                        console.log('JSONP response received:', response);
-                    }
-                    resolve(response);
-                } else {
-                    reject(new Error(response?.message || 'Invalid server response'));
-                }
-            };
-
-            // Create script element
-            scriptElement = document.createElement('script');
-            scriptElement.type = 'text/javascript';
-            scriptElement.async = true;
-
-            // Handle load error
-            scriptElement.onerror = () => {
-                cleanup();
-                reject(new Error('Failed to load script'));
-            };
-
-            // Set shorter timeout (3 seconds)
-            timeoutId = setTimeout(() => {
-                cleanup();
-                reject(new Error('Request timeout'));
-            }, 3000);
-
-            // Log request details
-            if (config.debug) {
-                console.log('JSONP request:', {
-                    url: endpoint,
-                    callbackName,
-                    dataSize: JSON.stringify(preparedData).length,
-                    timestamp: new Date().toISOString()
-                });
-            }
-
-            // Construct and validate URL
             try {
-                const url = new URL(endpoint);
-                url.search = params.toString();
-                scriptElement.src = url.toString();
-                
-                // Append script to document
-                document.head.appendChild(scriptElement);
+                // Generate unique callback name
+                const timestamp = Date.now();
+                const random = Math.random().toString(36).substring(2, 10);
+                const callbackName = `rivoxCallback${timestamp}${random}`;
+
+                // Create URL with parameters
+                const params = new URLSearchParams();
+                params.append('data', encodeURIComponent(JSON.stringify(data)));
+                params.append('callback', callbackName);
+                params.append('origin', window.location.origin);
+                params.append('_', timestamp); // Cache buster
+
+                // Construct full URL
+                const url = `${endpoint}?${params.toString()}`;
+
+                // Log request details in debug mode
+                if (config.debug) {
+                    console.log('JSONP request:', {
+                        url: url.substring(0, 100) + '...',
+                        callbackName,
+                        dataSize: JSON.stringify(data).length
+                    });
+                }
+
+                // Create script element
+                const script = document.createElement('script');
+                script.type = 'text/javascript';
+                script.async = true;
+                script.src = url;
+
+                // Setup cleanup function
+                const cleanup = () => {
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    delete window[callbackName];
+                    clearTimeout(timeoutId);
+                };
+
+                // Setup timeout
+                const timeoutId = setTimeout(() => {
+                    cleanup();
+                    reject(new Error('JSONP request timeout'));
+                }, 3000); // 3 second timeout
+
+                // Setup success callback
+                window[callbackName] = (response) => {
+                    cleanup();
+                    if (response.status === 'success') {
+                        if (config.debug) {
+                            console.log('JSONP response:', response);
+                        }
+                        resolve(response);
+                    } else {
+                        reject(new Error(response.message || 'Unknown error'));
+                    }
+                };
+
+                // Handle script load error
+                script.onerror = () => {
+                    cleanup();
+                    reject(new Error('Failed to load JSONP script'));
+                };
+
+                // Add script to document
+                document.body.appendChild(script);
+
             } catch (error) {
-                cleanup();
-                reject(new Error(`Invalid endpoint URL: ${error.message}`));
+                reject(new Error(`JSONP request failed: ${error.message}`));
             }
         });
     }
