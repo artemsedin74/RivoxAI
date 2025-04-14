@@ -21,7 +21,7 @@ function getYandexCounterId() {
     'use strict';
 
     const SDK_VERSION = '4.6.3';
-    
+
     // Configuration
     const config = {
         endpoint: 'https://script.google.com/macros/s/AKfycbyEhRvGnzup0KiZCpvZkw_e0Sl5vCImBMEmQjH5omz96qmlYlXhxmqupKBHsXSIKtnW/exec',
@@ -43,9 +43,10 @@ function getYandexCounterId() {
         allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop'],
         initDelay: 300,
         sendDelay: 300000, // Send data every 5 minutes
-        retryDelay: 60000, // Retry failed requests every minute
+        retryDelay: 120000, // Retry every 2 minutes
         maxRetries: 3,
-        maxQueueSize: 10
+        maxQueueSize: 10,
+        deduplicationWindow: 60000 // 1 minute window for deduplication
     };
 
     // Session data
@@ -58,6 +59,32 @@ function getYandexCounterId() {
     // Add failed queue
     const failedQueue = [];
     let retryTimer = null;
+
+    // Add sent data tracking
+    const sentData = new Set();
+    
+    function getDataHash(data) {
+        return `${data.session_id}_${data.timestamp}`;
+    }
+
+    function isDuplicate(data) {
+        const hash = getDataHash(data);
+        if (sentData.has(hash)) {
+            return true;
+        }
+        
+        // Clean up old hashes
+        const now = Date.now();
+        for (const oldHash of sentData) {
+            const [, timestamp] = oldHash.split('_');
+            if (now - Number(timestamp) > config.deduplicationWindow) {
+                sentData.delete(oldHash);
+            }
+        }
+        
+        sentData.add(hash);
+        return false;
+    }
 
     // Update last activity time
     function updateActivity() {
@@ -85,20 +112,20 @@ function getYandexCounterId() {
         }
 
         sessionData = {
-            client_id: generateClientId(),
-            session_id: generateSessionId(),
-            start_time: Date.now(),
-            last_activity: Date.now(),
+        client_id: generateClientId(),
+        session_id: generateSessionId(),
+        start_time: Date.now(),
+        last_activity: Date.now(),
             page_views: [{
                 timestamp: Date.now(),
                 url: window.location.href,
                 referrer: document.referrer
             }],
-            scroll_chunks: [],
-            hover_events: [],
-            form_interactions: [],
-            cta_clicks: [],
-            modal_interactions: [],
+        scroll_chunks: [],
+        hover_events: [],
+        form_interactions: [],
+        cta_clicks: [],
+        modal_interactions: [],
             utm_data: extractUTMData(),
             metrika_goals: [],
             conversion_data: {
@@ -124,14 +151,14 @@ function getYandexCounterId() {
                     height: window.innerHeight
                 }
             },
-            ml_features: {
-                interest_signals: [],
-                behavior_patterns: [],
-                user_segment: null,
-                conversion_probability: null,
-                funnel_analysis: {}
-            }
-        };
+        ml_features: {
+            interest_signals: [],
+            behavior_patterns: [],
+            user_segment: null,
+            conversion_probability: null,
+            funnel_analysis: {}
+        }
+    };
 
         isSessionActive = true;
         console.log('New session started:', sessionData.session_id);
@@ -549,7 +576,7 @@ function getYandexCounterId() {
 
     // Modify sendSessionSummary to use queueing
     async function sendSessionSummary() {
-        if (!sessionData) return;
+        if (!sessionData || !isSessionActive) return;
 
         const summary = {
             ...sessionData,
@@ -560,8 +587,15 @@ function getYandexCounterId() {
             sdk_version: SDK_VERSION
         };
 
+        // Check for duplicates
+        if (isDuplicate(summary)) {
+            Logger.log('Skipping duplicate data send');
+            return;
+        }
+
         try {
             await sendDataWithFallback(summary);
+            Logger.success('Session data sent successfully');
         } catch (error) {
             Logger.warn('Adding failed request to retry queue');
             addToFailedQueue(summary);
@@ -804,8 +838,14 @@ function getYandexCounterId() {
             return;
         }
 
-        const item = failedQueue[0]; // Get first item but don't remove yet
+        const item = failedQueue[0];
         
+        // Skip if duplicate
+        if (isDuplicate(item.data)) {
+            failedQueue.shift();
+            return;
+        }
+
         if (item.attempts >= config.maxRetries) {
             Logger.warn(`Dropping data after ${config.maxRetries} failed attempts`, item.data);
             failedQueue.shift();
@@ -814,40 +854,47 @@ function getYandexCounterId() {
 
         try {
             await sendDataWithFallback(item.data);
-            failedQueue.shift(); // Remove only after successful send
+            failedQueue.shift();
             Logger.success('Successfully sent queued data');
         } catch (error) {
             item.attempts++;
             Logger.warn(`Retry attempt ${item.attempts} failed`, error);
+            
+            // Move to end of queue if more retries available
+            if (item.attempts < config.maxRetries) {
+                failedQueue.push(failedQueue.shift());
+            }
         }
     }
 
     async function sendDataWithFallback(data) {
+        // Add client timestamp if not present
+        if (!data.timestamp) {
+            data.timestamp = new Date().toISOString();
+        }
+
         try {
-            // First try JSONP
             Logger.log('Attempting JSONP request...');
             await sendDataJSONP(data);
             Logger.success('Data sent via JSONP');
             return;
         } catch (error) {
             Logger.warn('JSONP failed, trying beacon API...', error);
-        }
-
-        // Try beacon API
-        if (navigator.sendBeacon) {
-            try {
-                const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
-                const success = navigator.sendBeacon(config.endpoint, blob);
-                if (success) {
-                    Logger.success('Data sent via beacon API');
-                    return;
+            
+            if (navigator.sendBeacon) {
+                try {
+                    const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+                    const success = navigator.sendBeacon(config.endpoint, blob);
+                    if (success) {
+                        Logger.success('Data sent via beacon API');
+                        return;
+                    }
+                } catch (error) {
+                    Logger.warn('Beacon API failed', error);
                 }
-            } catch (error) {
-                Logger.warn('Beacon API failed', error);
             }
+            
+            throw new Error('All send methods failed');
         }
-
-        // If both methods fail, throw error to trigger queue
-        throw new Error('All send methods failed');
     }
 })(window); 
