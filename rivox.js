@@ -740,42 +740,34 @@ function getYandexCounterId() {
     function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
             try {
-                // Generate unique callback name
+                // Generate simple callback name
                 const timestamp = Date.now();
-                const random = Math.random().toString(36).substring(2, 10);
-                const callbackName = `rivoxCallback${timestamp}${random}`;
+                const callbackName = `rivoxCallback${timestamp}`;
 
-                // Prepare data for transmission
+                // Prepare minimal data
                 const preparedData = {
                     ...data,
-                    client_domain: window.location.hostname,
-                    client_url: window.location.href,
                     timestamp: new Date().toISOString()
                 };
 
-                // Create URL with parameters
+                // Create URL with minimal parameters
                 const params = new URLSearchParams();
                 params.append('data', JSON.stringify(preparedData));
                 params.append('callback', callbackName);
-                params.append('origin', window.location.origin);
-                params.append('t', timestamp); // Cache buster
 
-                // Construct full URL
+                // Construct URL
                 const url = `${endpoint}?${params.toString()}`;
 
-                // Log request details in debug mode
-                if (config.debug) {
-                    console.log('JSONP request:', {
-                        url: url.substring(0, 100) + '...',
-                        callbackName,
-                        dataSize: JSON.stringify(preparedData).length
-                    });
-                }
+                // Log full request details
+                console.log('Sending JSONP request:', {
+                    url: url,
+                    data: preparedData,
+                    callback: callbackName
+                });
 
                 // Create script element
                 const script = document.createElement('script');
                 script.type = 'text/javascript';
-                script.async = true;
                 script.src = url;
 
                 // Setup cleanup function
@@ -785,36 +777,35 @@ function getYandexCounterId() {
                     clearTimeout(timeoutId);
                 };
 
-                // Setup timeout
+                // Setup timeout (increased to 10 seconds)
                 const timeoutId = setTimeout(() => {
                     cleanup();
-                    reject(new Error('JSONP request timeout'));
-                }, 3000); // 3 second timeout
+                    reject(new Error('Request timeout'));
+                }, 10000);
 
                 // Setup success callback
                 window[callbackName] = (response) => {
                     cleanup();
+                    console.log('JSONP response received:', response);
                     if (response && response.status === 'success') {
-                        if (config.debug) {
-                            console.log('JSONP response:', response);
-                        }
                         resolve(response);
                     } else {
-                        reject(new Error(response?.message || 'Invalid server response'));
+                        reject(new Error(response?.message || 'Invalid response'));
                     }
                 };
 
                 // Handle script load error
                 script.onerror = () => {
                     cleanup();
-                    reject(new Error('Failed to load script'));
+                    reject(new Error('Script load failed'));
                 };
 
                 // Add script to document
                 document.head.appendChild(script);
 
             } catch (error) {
-                reject(new Error(`JSONP request failed: ${error.message}`));
+                console.error('JSONP error:', error);
+                reject(error);
             }
         });
     }
