@@ -714,43 +714,7 @@ function getYandexCounterId() {
     }
 
     // JSONP data sending implementation with improved error handling
-    async function sendData(data) {
-        const maxRetries = 3;
-        const retryDelay = (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000);
-        
-        let lastError;
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-            try {
-                const endpoint = getEndpointUrl();
-                if (!endpoint) {
-                    throw new Error('Invalid endpoint URL');
-                }
-
-                if (attempt > 0) {
-                    console.log(`Retry attempt ${attempt} of ${maxRetries - 1}...`);
-                    await new Promise(resolve => setTimeout(resolve, retryDelay(attempt)));
-                }
-
-                // Use only JSONP
-                const response = await sendDataJSONP(data, endpoint);
-                if (response && response.status === 'success') {
-                    return response;
-                }
-                throw new Error(response?.message || 'Invalid server response');
-
-            } catch (error) {
-                lastError = error;
-                console.warn(`Send attempt ${attempt + 1} failed:`, error.message);
-                
-                if (attempt === maxRetries - 1) {
-                    storeFailedRequest(data);
-                    throw new Error(`Failed to send data after ${maxRetries} retries: ${lastError.message}`);
-                }
-            }
-        }
-    }
-
-    function sendDataJSONP(data, endpoint) {
+    function sendDataJSONP(data) {
         return new Promise((resolve, reject) => {
             const callbackName = `rivoxCallback_${Date.now()}`;
             const params = new URLSearchParams();
@@ -760,6 +724,7 @@ function getYandexCounterId() {
             params.append('callback', callbackName);
             params.append('_', Date.now()); // cache buster
 
+            const endpoint = getEndpointUrl();
             const fullUrl = `${endpoint}?${params.toString()}`;
             
             console.log(`RIVOX: Sending JSONP request to ${endpoint}`);
@@ -769,41 +734,66 @@ function getYandexCounterId() {
                 callback: callbackName
             });
 
-            let timeoutId = setTimeout(() => {
-                cleanup();
-                reject(new Error('JSONP request timeout (5s)'));
-            }, 5000);
-
-            function cleanup() {
-                if (script && script.parentNode) {
-                    script.parentNode.removeChild(script);
-                }
-                delete window[callbackName];
-                clearTimeout(timeoutId);
-            }
-
+            // Create callback before script
             window[callbackName] = function(response) {
                 cleanup();
                 if (response.error) {
                     console.error('RIVOX: Server returned error:', response.error);
                     reject(new Error(response.error));
                 } else {
-                    console.log('RIVOX: Request successful');
+                    console.log('RIVOX: Request successful:', response);
                     resolve(response);
                 }
             };
 
+            let timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error('JSONP request timeout (10s)'));
+            }, 10000); // Increased timeout to 10s
+
+            function cleanup() {
+                if (script && script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                if (window[callbackName]) {
+                    delete window[callbackName];
+                }
+                clearTimeout(timeoutId);
+            }
+
             const script = document.createElement('script');
             script.async = true;
-            script.src = fullUrl;
             script.onerror = (error) => {
                 console.error('RIVOX: Script load error:', error);
                 cleanup();
                 reject(new Error('Failed to load JSONP script'));
             };
+            script.src = fullUrl;
 
             document.head.appendChild(script);
         });
+    }
+
+    async function sendData(data) {
+        const maxRetries = 3;
+        const retryDelay = (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000);
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`RIVOX: Send attempt ${attempt} of ${maxRetries}`);
+                const response = await sendDataJSONP(data);
+                return response;
+            } catch (error) {
+                console.error(`RIVOX: Send attempt ${attempt} failed:`, error.message);
+                
+                if (attempt === maxRetries) {
+                    throw new Error(`Failed to send data after ${maxRetries} retries: ${error.message}`);
+                }
+
+                console.log(`RIVOX: Retry attempt ${attempt} of ${maxRetries - 1}...`);
+                await new Promise(resolve => setTimeout(resolve, retryDelay(attempt)));
+            }
+        }
     }
 
     // Send session summary with improved error handling
