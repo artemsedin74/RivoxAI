@@ -728,100 +728,97 @@ function getYandexCounterId() {
             };
 
             async function attemptSend() {
-                try {
-                    // Format data for Google Apps Script
-                    const payload = {
-                        type: 'session_data',
-                        client_id: summary.client_id || '',
-                        session_id: summary.session_id || '',
-                        client_token: summary.data_token || 'default-client',
-                        data: JSON.stringify(summary)
-                    };
-
-                    // Use fetch instead of sendBeacon for better error handling
-                    const response = await fetch(getEndpointUrl(), {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!response.ok && response.status !== 0) { // status 0 is normal for no-cors
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-
-                    if (config.debug) {
-                        console.log('✓ Session data sent successfully');
-                    }
-                    return true;
-
-                } catch (error) {
-                    console.warn('Send attempt failed:', error);
-                    
-                    // Fallback to JSONP if fetch fails
-                    return new Promise((resolve, reject) => {
-                        const script = document.createElement('script');
-                        const callbackName = 'rivoxCallback_' + Math.random().toString(36).substr(2, 9);
+                return new Promise((resolve, reject) => {
+                    try {
+                        // Create a unique callback name
+                        const callbackName = 'rivoxCallback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
                         
+                        // Setup callback
                         window[callbackName] = function(response) {
                             cleanup();
-                            resolve(true);
+                            if (response && response.status === 'success') {
+                                resolve(true);
+                            } else {
+                                reject(new Error('Server returned error: ' + JSON.stringify(response)));
+                            }
                         };
 
+                        // Cleanup function
                         function cleanup() {
                             if (script.parentNode) script.parentNode.removeChild(script);
                             delete window[callbackName];
                         }
 
+                        // Create script element
+                        const script = document.createElement('script');
+                        script.async = true;
+
+                        // Handle script load error
                         script.onerror = function() {
                             cleanup();
                             reject(new Error('Failed to load JSONP script'));
                         };
 
+                        // Prepare data
                         const params = new URLSearchParams({
+                            callback: callbackName,
                             type: 'session_data',
                             client_id: summary.client_id || '',
                             session_id: summary.session_id || '',
                             client_token: summary.data_token || 'default-client',
-                            data: JSON.stringify(summary),
-                            callback: callbackName
+                            timestamp: new Date().toISOString()
                         });
 
+                        // Add data as a separate parameter to avoid URL length issues
+                        params.append('data', JSON.stringify(summary));
+
+                        // Set script source
                         script.src = `${getEndpointUrl()}?${params.toString()}`;
+                        
+                        // Add script to document
                         document.head.appendChild(script);
 
                         // Set timeout
                         setTimeout(() => {
                             cleanup();
-                            reject(new Error('JSONP request timed out'));
+                            reject(new Error('Request timeout'));
                         }, 10000);
-                    });
-                }
+
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
             }
 
-            // Try sending with retries
+            // Try sending with retries and exponential backoff
             let attempts = 0;
             const maxAttempts = 3;
+            const baseDelay = 1000; // 1 second
 
             while (attempts < maxAttempts) {
                 try {
                     await attemptSend();
+                    if (config.debug) {
+                        console.log(`✓ Session data sent successfully (attempt ${attempts + 1})`);
+                    }
                     return true;
                 } catch (error) {
                     attempts++;
+                    console.warn(`Attempt ${attempts} failed:`, error);
+                    
                     if (attempts === maxAttempts) {
-                        console.warn('Failed to send session data after', maxAttempts, 'attempts:', error);
+                        console.error('Failed to send session data after', maxAttempts, 'attempts');
                         return false;
                     }
-                    // Wait before retry
-                    await new Promise(resolve => setTimeout(resolve, 1000 * attempts)); // Увеличиваем время ожидания с каждой попыткой
+                    
+                    // Exponential backoff
+                    const delay = baseDelay * Math.pow(2, attempts - 1);
+                    await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
 
         } catch (error) {
-            console.warn('Error in sendSessionSummary:', error);
+            console.error('Error in sendSessionSummary:', error);
             return false;
         }
     }
