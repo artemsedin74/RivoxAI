@@ -676,19 +676,33 @@ function getYandexCounterId() {
                 
                 // Создаем элемент script
                 const script = document.createElement('script');
+                script.async = true;
                 
                 // Создаем URL с параметрами
-                const params = new URLSearchParams({
-                    data: JSON.stringify(data),
-                    callback: callbackName
-                });
+                const params = new URLSearchParams();
                 
-                script.src = `${config.endpoint}?${params.toString()}`;
+                // Add data as a separate parameter
+                params.append('data', JSON.stringify(data));
+                params.append('callback', callbackName);
+                params.append('origin', window.location.origin);
+                params.append('_', Date.now()); // Cache buster
+                
+                // Set script source with all parameters
+                const url = `${config.endpoint}?${params.toString()}`;
+                script.src = url;
+                
+                if (config.debug) {
+                    console.log('JSONP Request URL:', url);
+                }
                 
                 // Устанавливаем обработчики
                 window[callbackName] = function(response) {
                     cleanup();
-                    resolve(response);
+                    if (response && response.status === 'success') {
+                        resolve(response);
+                    } else {
+                        reject(new Error('Server returned error response: ' + JSON.stringify(response)));
+                    }
                 };
                 
                 // Функция очистки
@@ -700,7 +714,7 @@ function getYandexCounterId() {
                 // Обработка ошибок
                 script.onerror = function() {
                     cleanup();
-                    reject(new Error('Failed to load script'));
+                    reject(new Error('Failed to load JSONP script'));
                 };
                 
                 // Добавляем скрипт на страницу
@@ -709,7 +723,7 @@ function getYandexCounterId() {
                 // Таймаут
                 setTimeout(() => {
                     cleanup();
-                    reject(new Error('Request timeout'));
+                    reject(new Error('JSONP request timeout'));
                 }, 10000);
                 
             } catch (error) {
