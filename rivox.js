@@ -705,98 +705,110 @@ function getYandexCounterId() {
     // JSONP data sending implementation with improved error handling
     function sendDataJSONP(data, endpoint) {
         return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
             const callbackName = `rivoxCallback${Date.now()}${Math.random().toString(36).substr(2)}`;
+            let timeoutId;
             
             // Create URL with parameters
-            const params = new URLSearchParams();
-            params.append('data', encodeURIComponent(JSON.stringify(data)));
-            params.append('callback', callbackName);
-            params.append('origin', window.location.origin);
-            params.append('_', Date.now()); // Cache buster
-            
-            // Build full URL with proper encoding
-            const url = `${endpoint}?${params.toString()}`;
-            
-            // Set script attributes for better loading
+            const params = new URLSearchParams({
+                data: JSON.stringify(data),
+                callback: callbackName,
+                origin: window.location.origin,
+                t: Date.now() // cache buster
+            });
+
+            // Create script element
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
             script.async = true;
-            script.onerror = () => {
-                cleanup();
-                reject(new Error('Failed to load JSONP script'));
-            };
-            script.onload = () => {
-                // Start timeout only after script is loaded
-                timeoutId = setTimeout(() => {
-                    cleanup();
-                    reject(new Error('JSONP request timeout - no callback'));
-                }, 10000);
-            };
-            
-            // Setup cleanup function
-            let timeoutId;
+            script.src = `${endpoint}?${params.toString()}`;
+
+            // Setup cleanup
             const cleanup = () => {
-                if (script.parentNode) {
-                    script.parentNode.removeChild(script);
-                }
-                if (window[callbackName]) {
-                    delete window[callbackName];
-                }
-                if (timeoutId) {
-                    clearTimeout(timeoutId);
-                }
+                if (timeoutId) clearTimeout(timeoutId);
+                if (script.parentNode) script.parentNode.removeChild(script);
+                delete window[callbackName];
             };
-            
-            // Handle success callback
+
+            // Handle success
             window[callbackName] = (response) => {
                 cleanup();
-                if (response.status === 'error') {
-                    reject(new Error(response.message || 'Server returned error'));
-                } else {
+                if (response && response.status === 'success') {
                     resolve(response);
+                } else {
+                    reject(new Error(response?.message || 'Invalid response'));
                 }
             };
-            
+
+            // Handle errors
+            script.onerror = () => {
+                cleanup();
+                reject(new Error('Script failed to load'));
+            };
+
+            // Set timeout
+            timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error('Request timeout'));
+            }, 10000);
+
             // Log request details
-            if (config.debug) {
-                console.log('JSONP request:', {
-                    url: url.substring(0, 100) + '...',
-                    callbackName,
-                    dataSize: JSON.stringify(data).length,
-                    timestamp: new Date().toISOString()
-                });
-            }
-            
-            // Set script source and append to document
-            script.src = url;
+            console.log('JSONP request:', {
+                url: script.src.substring(0, 100) + '...',
+                callbackName,
+                dataSize: JSON.stringify(data).length
+            });
+
+            // Append script to document
             document.head.appendChild(script);
         });
     }
 
     // Main data sending function with retry logic
     async function sendData(data) {
-        let attempt = 0;
-        const maxRetries = config.maxRetries || 3;
+        const maxRetries = 3;
+        const retryDelay = (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000);
         
-        const retryDelay = (attempt) => {
-            // Exponential backoff: 1s, 2s, 4s, 8s, etc. up to 30s
-            return Math.min(1000 * Math.pow(2, attempt), 30000);
-        };
-        
-        while (attempt <= maxRetries) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                if (attempt > 0) {
-                    console.log(`Retry attempt ${attempt} of ${maxRetries}...`);
-                    await new Promise(resolve => setTimeout(resolve, retryDelay(attempt)));
+                const endpoint = getEndpointUrl();
+                if (!endpoint) {
+                    throw new Error('Invalid endpoint URL');
                 }
                 
-                return await sendDataJSONP(data, config.endpoint);
+                if (attempt > 1) {
+                    console.log(`Retry attempt ${attempt} of ${maxRetries}...`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay(attempt - 1)));
+                }
+
+                // Try fetch first (CORS)
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        mode: 'cors',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Origin': window.location.origin
+                        },
+                        body: JSON.stringify(data)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    if (result.status === 'success') {
+                        return result;
+                    }
+                    throw new Error(result.message || 'Server error');
+                } catch (fetchError) {
+                    console.log('Fetch failed, falling back to JSONP:', fetchError);
+                    // If fetch fails, try JSONP as fallback
+                    return await sendDataJSONP(data, endpoint);
+                }
             } catch (error) {
-                attempt++;
                 console.warn(`Send attempt ${attempt} failed:`, error.message);
-                
-                if (attempt > maxRetries) {
-                    // Store failed request for later retry
-                    storeFailedRequest(data);
+                if (attempt === maxRetries) {
                     throw new Error(`Failed to send data after ${maxRetries} retries`);
                 }
             }
