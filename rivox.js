@@ -40,8 +40,8 @@ function getYandexCounterId() {
         }
     }
 
-    Logger.warn('Yandex.Metrika counter ID not found after checking multiple sources.');
-    return null; // Return null if not found
+    Logger.debug('Yandex.Metrika counter ID not found after checking multiple sources.');
+    return null;
 }
 
 // Define a placeholder Logger globally first
@@ -49,7 +49,7 @@ let Logger = {
     setLevel: () => {},
     debug: () => {},
     info: () => {},
-    warn: console.warn, // Use console directly for warnings/errors initially
+    warn: console.warn,
     error: console.error
 };
 
@@ -187,21 +187,21 @@ let Logger = {
         }
 
         sessionData = {
-            client_id: generateClientId(),
+        client_id: generateClientId(),
             client_token: config.token,
-            session_id: generateSessionId(),
-            start_time: Date.now(),
-            last_activity: Date.now(),
+        session_id: generateSessionId(),
+        start_time: Date.now(),
+        last_activity: Date.now(),
             page_views: [{
                 timestamp: Date.now(),
                 url: window.location.href,
                 referrer: document.referrer
             }],
-            scroll_chunks: [],
-            hover_events: [],
-            form_interactions: [],
-            cta_clicks: [],
-            modal_interactions: [],
+        scroll_chunks: [],
+        hover_events: [],
+        form_interactions: [],
+        cta_clicks: [],
+        modal_interactions: [],
             utm_data: extractUTMData(),
             metrika_goals: [],
             conversion_data: {
@@ -227,14 +227,14 @@ let Logger = {
                     height: window.innerHeight
                 }
             },
-            ml_features: {
-                interest_signals: [],
-                behavior_patterns: [],
-                user_segment: null,
-                conversion_probability: null,
-                funnel_analysis: {}
-            }
-        };
+        ml_features: {
+            interest_signals: [],
+            behavior_patterns: [],
+            user_segment: null,
+            conversion_probability: null,
+            funnel_analysis: {}
+        }
+    };
 
         isSessionActive = true;
         Logger.info('New session started:', sessionData.session_id);
@@ -380,13 +380,45 @@ let Logger = {
     }
 
     function waitForMetrika(callback) {
-        if (typeof ym !== 'undefined' && typeof ym.a !== 'undefined') {
-            Logger.info('Metrika is ready');
-            callback();
-        } else {
-            Logger.info('Waiting for Metrika...');
-            setTimeout(() => waitForMetrika(callback), 100);
+        let attempts = 0;
+        const maxAttempts = 50;
+        
+        function check() {
+            attempts++;
+            
+            // Проверяем все возможные варианты существования Метрики
+            if (typeof ym !== 'undefined' && typeof ym.a !== 'undefined') {
+                Logger.info('Metrika ready (ym object)');
+                callback();
+                return;
+            }
+
+            if (window.Ya && window.Ya.Metrika) {
+                Logger.info('Metrika ready (Ya.Metrika)');
+                callback();
+                return;
+            }
+
+            // Ищем счетчик через объекты window
+            for (const key in window) {
+                if (key.startsWith('yaCounter')) {
+                    Logger.info('Metrika ready (counter object)');
+                    callback();
+                    return;
+                }
+            }
+
+            if (attempts >= maxAttempts) {
+                Logger.info('Proceeding without waiting for Metrika');
+                callback();
+                return;
+            }
+
+            Logger.debug(`Waiting for Metrika (attempt ${attempts}/${maxAttempts})...`);
+            setTimeout(check, 100);
         }
+        
+        check();
     }
 
     // Initialize SDK
@@ -404,34 +436,22 @@ let Logger = {
         if (!userConfig) return;
 
         // Wait for Metrika to be ready
-        try {
-            await new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => reject(new Error('Metrika timeout')), 5000);
-                waitForMetrika(() => {
-                    clearTimeout(timeout);
-                    resolve();
-                });
-            });
-        } catch (error) {
-            Logger.warn('Failed to wait for Metrika:', error);
-        }
+        await new Promise(resolve => {
+            waitForMetrika(resolve);
+        });
 
-        // Try to restore previous session
-        const savedSession = loadSessionFromStorage();
-        
-        // Wait for client id before proceeding
+        // Get client ID
         const clientId = await generateClientId();
         if (!clientId) {
-            Logger.error('Could not initialize RIVOX SDK: Failed to get Yandex.Metrika client ID');
-            return;
+            Logger.warn('Proceeding with initialization despite missing client ID');
+        } else {
+            Logger.info('RIVOX SDK initialized with client ID:', clientId);
         }
 
-        Logger.info('RIVOX SDK initialized with client ID:', clientId);
-
         // Initialize or restore session data
-        sessionData = savedSession || createSessionData(clientId);
+        sessionData = loadSessionFromStorage() || createSessionData(clientId);
         
-        if (!savedSession) {
+        if (!loadSessionFromStorage()) {
             // This is a new session
             isSessionActive = true;
             setupEventListeners();
@@ -565,10 +585,10 @@ let Logger = {
         let hoverStartTime;
         let hoveredElement;
 
-        document.addEventListener('mouseover', throttle((e) => {
+            document.addEventListener('mouseover', throttle((e) => {
             updateActivity();
-            const target = e.target;
-            if (isImportantElement(target)) {
+                const target = e.target;
+                if (isImportantElement(target)) {
                 hoverStartTime = Date.now();
                 hoveredElement = target;
                 
@@ -582,11 +602,11 @@ let Logger = {
                 Logger.info('Sending data after accumulating events');
                 sendSessionSummary();
             }
-        }, 100));
+            }, 100));
 
-        document.addEventListener('mouseout', throttle((e) => {
+            document.addEventListener('mouseout', throttle((e) => {
             updateActivity();
-            const target = e.target;
+                const target = e.target;
             if (isImportantElement(target) && hoverStartTime && target === hoveredElement) {
                 const hoverDuration = Date.now() - hoverStartTime;
                 
@@ -596,7 +616,7 @@ let Logger = {
                 });
                 
                 sessionData.hover_events.push({
-                    timestamp: Date.now(),
+                        timestamp: Date.now(),
                     element: getElementPath(target),
                     duration: hoverDuration,
                     start_time: hoverStartTime
@@ -608,7 +628,7 @@ let Logger = {
         }, 100));
 
         // Click tracking
-        document.addEventListener('click', (e) => {
+            document.addEventListener('click', (e) => {
             updateActivity();
             
             // Найдем ближайший важный элемент
@@ -633,7 +653,7 @@ let Logger = {
             const scrollY = window.pageYOffset || document.documentElement.scrollTop;
 
             const clickData = {
-                timestamp: Date.now(),
+                        timestamp: Date.now(),
                 element: getElementPath(clickTarget),
                 element_text: (clickTarget.textContent || clickTarget.value || '').trim(),
                 position: {
@@ -671,7 +691,7 @@ let Logger = {
             ];
             if (lastClick) {
                 sessionData.user_behavior.time_between_clicks.push({
-                    timestamp: Date.now(),
+                        timestamp: Date.now(),
                     delta: Date.now() - lastClick.timestamp
                 });
             } else {
@@ -906,8 +926,8 @@ let Logger = {
                 try {
                     Logger.info(`Attempting POST request (attempt ${retryCount + 1}/${maxRetries})...`);
                     const response = await fetch(config.endpoint, {
-                        method: 'POST',
-                        headers: {
+                method: 'POST',
+                headers: {
                             'Content-Type': 'application/json',
                             'Origin': window.location.origin
                         },
@@ -985,7 +1005,7 @@ let Logger = {
 
     function generateClientId() {
         return new Promise((resolve) => {
-            // First try to get from backup
+            // 1. Сначала пробуем получить из бэкапа
             const backupId = localStorage.getItem('_ym_client_id_backup');
             if (backupId) {
                 Logger.info('Using backed up Yandex.Metrika client ID:', backupId);
@@ -993,7 +1013,7 @@ let Logger = {
                 return;
             }
 
-            // Then try to get from Yandex.Metrika cookies
+            // 2. Пробуем получить из куки Метрики
             const ymUid = getCookie('_ym_uid');
             if (ymUid) {
                 Logger.info('Using Yandex.Metrika cookie ID:', ymUid);
@@ -1006,34 +1026,24 @@ let Logger = {
                 return;
             }
 
-            // Finally try to get directly from Metrika
+            // 3. Пробуем получить напрямую из Метрики
             const getFromMetrika = (attempts = 0, maxAttempts = 5) => {
                 if (attempts >= maxAttempts) {
-                    Logger.error('Failed to get Yandex.Metrika client ID after', maxAttempts, 'attempts');
-                    resolve(null);
+                    // Если не удалось получить ID, используем временный
+                    const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2);
+                    Logger.info('Using temporary client ID:', tempId);
+                    resolve(tempId);
                     return;
                 }
 
-                // Get counter id
-                let counterId = null;
-                
-                // Try different methods to get counter ID
-                if (window.ymCounterId) {
-                    counterId = window.ymCounterId;
-                } else {
-                    const counterObjects = Object.keys(window).filter(key => key.startsWith('yaCounter'));
-                    if (counterObjects.length > 0) {
-                        counterId = counterObjects[0].replace('yaCounter', '');
-                    }
-                }
+                // Получаем ID счетчика
+                let counterId = getYandexCounterId();
 
                 if (!counterId) {
-                    Logger.info('Counter ID not found, retrying...');
                     setTimeout(() => getFromMetrika(attempts + 1), 1000);
                     return;
                 }
 
-                // Try to get client ID
                 try {
                     ym(counterId, 'getClientID', function(clientID) {
                         if (clientID) {
@@ -1045,12 +1055,10 @@ let Logger = {
                             }
                             resolve(clientID);
                         } else {
-                            Logger.info('No client ID returned, retrying...');
                             setTimeout(() => getFromMetrika(attempts + 1), 1000);
                         }
                     });
                 } catch (e) {
-                    Logger.error('Error getting client ID:', e);
                     setTimeout(() => getFromMetrika(attempts + 1), 1000);
                 }
             };
@@ -1288,73 +1296,59 @@ let Logger = {
 
     // Modify sendDataWithFallback to add logging
     async function sendDataWithFallback(data) {
-        Logger.debug('Attempting to send data:', {
-            endpoint: getEndpointUrl(),
-            dataSize: JSON.stringify(data).length,
-            timestamp: new Date().toISOString()
-        });
-        
-        // Prepare data with token and origin
         const preparedData = {
             ...data,
-            token: config.token,
-            origin: window.location.origin
+            token: config.token
         };
 
-        // Try POST first as it's more reliable
+        // Пробуем основной метод - POST
         try {
-            Logger.debug('📡 Trying POST request...');
             const response = await fetch(getEndpointUrl(), {
                 method: 'POST',
-                mode: 'cors',
-                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Origin': window.location.origin,
-                    'Accept': 'application/json'
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(preparedData)
             });
             
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            if (response.ok) {
+                Logger.info('✅ Data sent successfully via POST');
+                return { success: true, method: 'post' };
             }
-            
-            const result = await response.json();
-            Logger.info('✅ POST request successful:', result);
-            return result;
         } catch (error) {
-            Logger.warn('⚠️ POST failed, trying JSONP...', error);
-            
-            // For small payloads, try JSONP
-            if (JSON.stringify(preparedData).length < 2000) {
-                try {
-                    Logger.debug('📡 Trying JSONP request...');
-                    const response = await sendDataJSONP(preparedData);
-                    Logger.info('✅ JSONP request successful:', response);
-                    return response;
-                } catch (jsonpError) {
-                    Logger.error('❌ JSONP failed:', jsonpError);
-                }
-            }
-            
-            // Last resort: try navigator.sendBeacon
-            if (navigator.sendBeacon) {
-                const beaconData = new Blob([JSON.stringify(preparedData)], {
+            Logger.debug('POST failed, trying alternative methods');
+        }
+
+        // Пробуем beacon API
+        if (navigator.sendBeacon) {
+            try {
+                const blob = new Blob([JSON.stringify(preparedData)], {
                     type: 'application/json'
                 });
                 
-                if (navigator.sendBeacon(getEndpointUrl(), beaconData)) {
+                if (navigator.sendBeacon(getEndpointUrl(), blob)) {
                     Logger.info('✅ Data sent via beacon API');
                     return { success: true, method: 'beacon' };
                 }
+            } catch (error) {
+                Logger.debug('Beacon failed, trying JSONP');
             }
-            
-            // If all methods fail, add to retry queue
-            Logger.error('❌ All send methods failed, adding to retry queue');
-            addToFailedQueue(preparedData);
-            throw new Error('All send methods failed');
         }
+
+        // Для маленьких данных пробуем JSONP
+        if (JSON.stringify(preparedData).length < 1500) {
+            try {
+                const result = await sendDataJSONP(preparedData);
+                Logger.info('✅ Data sent via JSONP');
+                return { success: true, method: 'jsonp' };
+            } catch (error) {
+                Logger.debug('JSONP failed, adding to queue');
+            }
+        }
+
+        // Если все методы не сработали, добавляем в очередь
+        addToFailedQueue(preparedData);
+        return { queued: true };
     }
 
     function shouldSendData() {
