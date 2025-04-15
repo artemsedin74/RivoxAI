@@ -60,7 +60,7 @@ let Logger = {
 
     // Configuration
     const config = {
-        endpoint: 'https://functions.yandexcloud.net/d4enh3kioa70v319cqre',
+        endpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app',
         debug: true,
         sessionTimeout: 30 * 60 * 1000, // 30 минут
         scrollChunkSize: 50, // уменьшаем с 100 до 50 пикселей
