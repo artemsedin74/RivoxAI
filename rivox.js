@@ -1354,29 +1354,34 @@ let Logger = {
     function shouldSendData() {
         if (!sessionData) return false;
         
-        const totalEvents = 
-            sessionData.scroll_chunks.length + 
-            sessionData.hover_events.length + 
-            sessionData.cta_clicks.length;
-            
-        // Отправляем если:
-        // 1. Накопилось достаточно событий
-        if (totalEvents >= 25) return true; // увеличили с 15 до 25
-        
-        // 2. Прошло значительное время
+        // 1. Всегда отправляем при конверсиях/важных событиях
+        if (
+            sessionData.metrika_goals.length > 0 || // Есть цели
+            sessionData.form_interactions.length > 0 // Есть заполнения форм
+        ) {
+            Logger.debug('Sending data due to conversion events');
+            return true;
+        }
+
+        // 2. Проверка минимального времени на сайте
         const timeOnSite = Date.now() - sessionData.start_time;
-        if (timeOnSite >= 180000) return true; // увеличили до 3 минут
-        
-        // 3. Глубокий скролл
-        const maxScroll = sessionData.user_behavior.scroll_depth_percentages ? 
-            Math.max(0, ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0;
-        if (maxScroll > 80) return true;
-        
-        // 4. Есть важные события
-        if (sessionData.metrika_goals.length > 0) return true;
-        if (sessionData.cta_clicks.length >= 3) return true;
-        
-        return false;
+        if (timeOnSite < 25000) { // меньше 25 секунд
+            Logger.debug('Session too short (<25s), skipping data send');
+            return false;
+        }
+
+        // 3. Для сессий дольше 25 секунд отправляем при накоплении данных
+        const shouldSend = (
+            sessionData.scroll_chunks.length >= 5 || // Хотя бы немного скроллили
+            timeOnSite >= 60000 || // 1 минута на сайте
+            sessionData.cta_clicks.length > 0 // Хотя бы один клик
+        );
+
+        if (shouldSend) {
+            Logger.debug('Sending data: session longer than 25s and has enough events');
+        }
+
+        return shouldSend;
     }
 
     // Yandex.Metrika goal tracking
