@@ -453,26 +453,26 @@ let Logger = {
         if (savedSession) {
             Logger.info('Restoring previous session');
             sessionData = savedSession;
-            
-            // Ensure all required arrays exist
-            sessionData.page_history = sessionData.page_history || [];
-            sessionData.scroll_chunks = sessionData.scroll_chunks || [];
-            sessionData.hover_events = sessionData.hover_events || [];
-            sessionData.form_interactions = sessionData.form_interactions || [];
-            sessionData.cta_clicks = sessionData.cta_clicks || [];
-            sessionData.metrika_goals = sessionData.metrika_goals || [];
-            
-            // Add current page to history
-            sessionData.page_history.push({
-                timestamp: Date.now(),
-                url: window.location.href,
-                referrer: document.referrer,
-                time_spent: 0
-            });
         } else {
             Logger.info('Creating new session');
             sessionData = createSessionData(clientId);
         }
+        
+        // Ensure all required arrays exist
+        sessionData.page_history = sessionData.page_history || [];
+        sessionData.scroll_chunks = sessionData.scroll_chunks || [];
+        sessionData.hover_events = sessionData.hover_events || [];
+        sessionData.form_interactions = sessionData.form_interactions || [];
+        sessionData.cta_clicks = sessionData.cta_clicks || [];
+        sessionData.metrika_goals = sessionData.metrika_goals || [];
+        
+        // Add current page to history
+        sessionData.page_history.push({
+            timestamp: Date.now(),
+            url: window.location.href,
+            referrer: document.referrer,
+            time_spent: 0
+        });
         
         isSessionActive = true;
         setupEventListeners();
