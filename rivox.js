@@ -1098,8 +1098,16 @@ let Logger = {
     // Expose public API
     window.RIVOX = {
         init: init,
-        sendSessionSummary,
-        config
+        sendSessionSummary: sendSessionSummary,
+        config: config,
+        getSessionData: () => sessionData,
+        sendDataGuaranteed: sendDataGuaranteed,
+        start: () => {
+            Logger.info("🟢 RIVOX tracking started manually");
+            if (!isSessionActive) {
+                startNewSession();
+            }
+        }
     };
 
     // Initialize when Metrika is ready
@@ -1122,7 +1130,11 @@ let Logger = {
 
     // Auto-initialize after DOM is loaded
     document.addEventListener('DOMContentLoaded', function() {
-        setTimeout(window.RIVOX.init, config.initDelay);
+        setTimeout(() => {
+            if (!isSessionActive) {
+                window.RIVOX.init();
+            }
+        }, config.initDelay);
     });
 
     Logger.info('SDK loaded successfully');
@@ -1822,5 +1834,9 @@ let Logger = {
                 }
             }, 5000); // Повторная попытка через 5 секунд
         }
+    }
+
+    function generateRequestId() {
+        return Date.now().toString(36) + Math.random().toString(36).substring(2);
     }
 })(window); 
