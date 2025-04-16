@@ -316,10 +316,12 @@ let Logger = {
         // Нормализуем домен (убираем www. если есть)
         const normalizedHostname = hostname.replace(/^www\./, '');
         
-        // Проверяем домен
+        // Проверяем домен и его поддомены
         const isAllowed = config.allowedDomains.some(domain => {
             const normalizedDomain = domain.replace(/^www\./, '');
-            return normalizedHostname === normalizedDomain;
+            // Проверяем точное совпадение или поддомен
+            return normalizedHostname === normalizedDomain || 
+                   normalizedHostname.endsWith('.' + normalizedDomain);
         });
 
         if (config.debug) {
@@ -425,8 +427,8 @@ let Logger = {
     async function init() {
         const currentDomain = window.location.hostname;
         if (!isAllowedDomain(currentDomain)) {
-            Logger.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
-            // Убираем return, чтобы SDK продолжал работать
+            Logger.error(`Domain ${currentDomain} is not allowed. SDK initialization aborted.`);
+            return; // Прерываем инициализацию для неразрешенных доменов
         }
         
         Logger.info('RIVOX SDK initializing...');
