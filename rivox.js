@@ -454,7 +454,7 @@ let Logger = {
         if (!loadSessionFromStorage()) {
             // This is a new session
             isSessionActive = true;
-            setupEventListeners();
+        setupEventListeners();
             saveSessionToStorage();
         } else {
             // Update existing session
