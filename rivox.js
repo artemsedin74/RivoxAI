@@ -363,7 +363,7 @@ let Logger = {
 
         // Update config with token
         config.token = token;
-
+        
         if (config.debug) {
             Logger.debug('RIVOX SDK Configuration:', {
                 token,
@@ -852,8 +852,15 @@ let Logger = {
             Logger.info('ℹ️ No goals found in session data');
         }
         
+        // Ensure client_token is set
+        if (!sessionData.client_token && config.token) {
+            sessionData.client_token = config.token;
+            Logger.debug('Added client_token to session data');
+        }
+        
         const summary = {
             client_id: sessionData.client_id,
+            client_token: sessionData.client_token || config.token,
             session_id: sessionData.session_id,
             goals_count: sessionData.metrika_goals?.length || 0,
             goals: sessionData.metrika_goals || [],
@@ -1182,6 +1189,12 @@ let Logger = {
 
     // Modify sendDataWithFallback to add logging
     async function sendDataWithFallback(data) {
+        // Ensure client_token is set
+        if (!data.client_token && config.token) {
+            data.client_token = config.token;
+            Logger.debug('Added client_token to request data');
+        }
+
         const maxRetries = 3;
         const baseDelay = 1000; // 1 second
         let lastError = null;
@@ -1430,6 +1443,11 @@ let Logger = {
                 const parsed = JSON.parse(saved);
                 // Only restore if session is recent (last 30 minutes)
                 if (Date.now() - parsed.last_activity < config.sessionTimeout) {
+                    // Ensure client_token is set
+                    if (!parsed.client_token && config.token) {
+                        parsed.client_token = config.token;
+                        Logger.debug('Added client_token to restored session');
+                    }
                     Logger.info('Restoring previous session');
                     return parsed;
                 }
@@ -1448,11 +1466,10 @@ let Logger = {
             session_id: generateSessionId(),
             start_time: Date.now(),
             last_activity: Date.now(),
-            page_history: [{
+            page_views: [{
                 timestamp: Date.now(),
                 url: window.location.href,
-                referrer: document.referrer,
-                time_spent: 0
+                referrer: document.referrer
             }],
             scroll_chunks: [],
             hover_events: [],
