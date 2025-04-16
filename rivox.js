@@ -363,7 +363,7 @@ let Logger = {
 
         // Update config with token
         config.token = token;
-        
+
         if (config.debug) {
             Logger.debug('RIVOX SDK Configuration:', {
                 token,
@@ -842,33 +842,140 @@ let Logger = {
             return;
         }
 
-        Logger.info('📤 Preparing to send session data...');
+        Logger.info('Preparing to send session data...');
         
-        // Проверяем наличие целей
-        const hasGoals = sessionData.metrika_goals && sessionData.metrika_goals.length > 0;
-        if (hasGoals) {
-            Logger.info(`✅ Found ${sessionData.metrika_goals.length} goals in session data`);
-        } else {
-            Logger.info('ℹ️ No goals found in session data');
-        }
-        
-        // Ensure client_token is set
-        if (!sessionData.client_token && config.token) {
-            sessionData.client_token = config.token;
-            Logger.debug('Added client_token to session data');
-        }
-        
-        const summary = {
+        // Добавляем подробное логирование данных сессии
+        Logger.info('Current session data:', {
             client_id: sessionData.client_id,
-            client_token: sessionData.client_token || config.token,
             session_id: sessionData.session_id,
             goals_count: sessionData.metrika_goals?.length || 0,
             goals: sessionData.metrika_goals || [],
             conversion_data: sessionData.conversion_data || {}
+        });
+
+        // Проверяем и логируем состояние целей
+        if (sessionData.metrika_goals && sessionData.metrika_goals.length > 0) {
+            Logger.info('Goals found in session data:', sessionData.metrika_goals);
+        } else {
+            Logger.warn('No goals found in session data');
+        }
+
+        // Update ML features before sending
+        updateMLFeatures();
+
+        // Prepare data for sending
+        const summary = {
+            client_id: sessionData.client_id,
+            client_token: config.token,
+            session_id: sessionData.session_id,
+            timestamp: new Date().toISOString(),
+            sdk_version: SDK_VERSION,
+            
+            // Page info
+            page_url: window.location.href,
+            domain: window.location.hostname,
+            path: window.location.pathname,
+            
+            // Session metrics
+            session_duration: Date.now() - sessionData.start_time,
+            time_to_first_interaction: sessionData.user_behavior.time_to_first_interaction,
+            total_interactions: sessionData.user_behavior.total_interactions,
+            
+            // Scroll data
+            scroll_depth_max: sessionData.user_behavior.scroll_depth_percentages ? 
+                Math.max(...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0,
+            scroll_count: sessionData.scroll_chunks.length,
+            scroll_chunks: sessionData.scroll_chunks,
+            
+            // Click data
+            click_count: sessionData.cta_clicks.length,
+            clicks: sessionData.cta_clicks,
+            
+            // Hover data
+            hover_count: sessionData.hover_events.length,
+            hovers: sessionData.hover_events,
+
+            // UTM Data
+            utm_data: sessionData.utm_data,
+
+            // Metrika Goals and Conversion Data
+            metrika_goals: sessionData.metrika_goals || [],
+            conversion_data: sessionData.conversion_data || {},
+            
+            // User Behavior
+            user_behavior: sessionData.user_behavior,
+
+            // ML Features
+            ml_features: sessionData.ml_features
         };
-        
-        Logger.info('📦 Data to be sent:', summary);
-        return sendDataWithFallback(summary);
+
+        // Проверяем и логируем данные перед отправкой
+        Logger.info('Data to be sent:', {
+            goals_count: summary.metrika_goals.length,
+            goals: summary.metrika_goals,
+            conversion_data: summary.conversion_data
+        });
+
+        let retryCount = 0;
+        const maxRetries = 3;
+        const retryDelay = 1000; // 1 second
+
+        while (retryCount < maxRetries) {
+            try {
+                // Try direct POST first
+                try {
+                    Logger.info(`Attempting POST request (attempt ${retryCount + 1}/${maxRetries})...`);
+                    const response = await fetch(config.endpoint, {
+                method: 'POST',
+                headers: {
+                            'Content-Type': 'application/json',
+                            'Origin': window.location.origin
+                        },
+                        body: JSON.stringify(summary)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    Logger.info('✅ POST request successful:', result);
+                    return result;
+                } catch (error) {
+                    Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
+                    
+                    // If we're out of retries, try beacon API as last resort
+                    if (retryCount === maxRetries - 1 && navigator.sendBeacon) {
+                        try {
+                            Logger.info('Trying beacon API as last resort...');
+                            const blob = new Blob([JSON.stringify(summary)], {
+                                type: 'application/json'
+                            });
+                            const success = navigator.sendBeacon(config.endpoint, blob);
+                            if (success) {
+                                Logger.info('✅ Data sent via beacon API');
+                                return { success: true, method: 'beacon' };
+                            }
+                        } catch (beaconError) {
+                            Logger.error('Beacon API failed:', beaconError);
+                        }
+                    }
+                    
+                    // Wait before retry
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    retryCount++;
+                }
+            } catch (error) {
+                Logger.error(`Failed to send data (attempt ${retryCount + 1}/${maxRetries}):`, error);
+                if (retryCount === maxRetries - 1) {
+                    throw error;
+                }
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+                retryCount++;
+            }
+        }
+
+        throw new Error(`Failed to send data after ${maxRetries} attempts`);
     }
 
     // Start periodic sending
@@ -1098,16 +1205,8 @@ let Logger = {
     // Expose public API
     window.RIVOX = {
         init: init,
-        sendSessionSummary: sendSessionSummary,
-        config: config,
-        getSessionData: () => sessionData,
-        sendDataGuaranteed: sendDataGuaranteed,
-        start: () => {
-            Logger.info("🟢 RIVOX tracking started manually");
-            if (!isSessionActive) {
-                startNewSession();
-            }
-        }
+        sendSessionSummary,
+        config
     };
 
     // Initialize when Metrika is ready
@@ -1130,11 +1229,7 @@ let Logger = {
 
     // Auto-initialize after DOM is loaded
     document.addEventListener('DOMContentLoaded', function() {
-        setTimeout(() => {
-            if (!isSessionActive) {
-                window.RIVOX.init();
-            }
-        }, config.initDelay);
+        setTimeout(window.RIVOX.init, config.initDelay);
     });
 
     Logger.info('SDK loaded successfully');
@@ -1200,164 +1295,60 @@ let Logger = {
     }
 
     // Modify sendDataWithFallback to add logging
-    async function sendDataWithFallback(data, reason = 'unknown') {
-        const requestId = generateRequestId();
-        let attemptCount = 0;
-        let lastError = null;
-        
-        Logger.info(`📤 Starting data send attempt (${requestId}) for reason: ${reason}`);
-        
-        // Helper function to validate response
-        const validateResponse = async (response) => {
-            try {
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    const json = await response.json();
-                    return { success: true, data: json };
-                }
-                const text = await response.text();
-                return { success: true, data: { message: text } };
-            } catch (error) {
-                return { success: false, error: 'Failed to parse response' };
-            }
+    async function sendDataWithFallback(data) {
+        const preparedData = {
+            ...data,
+            token: config.token
         };
-        
-        // Try POST with exponential backoff
-        while (attemptCount < 3) {
-            attemptCount++;
-            const delay = Math.min(1000 * Math.pow(2, attemptCount - 1), 10000);
+
+        // Пробуем основной метод - POST
+        try {
+            const response = await fetch(getEndpointUrl(), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(preparedData)
+            });
             
+            if (response.ok) {
+                Logger.info('✅ Data sent successfully via POST');
+                return { success: true, method: 'post' };
+            }
+        } catch (error) {
+            Logger.debug('POST failed, trying alternative methods');
+        }
+
+        // Пробуем beacon API
+        if (navigator.sendBeacon) {
             try {
-                Logger.info(`🔄 Attempt ${attemptCount}/3 (${requestId}) - POST request`);
-                
-                const response = await fetch(config.endpoint, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${config.token}`,
-                        'X-Request-ID': requestId,
-                        'Origin': window.location.origin
-                    },
-                    body: JSON.stringify({
-                        ...data,
-                        request_id: requestId,
-                        attempt_count: attemptCount,
-                        reason: reason
-                    })
+                const blob = new Blob([JSON.stringify(preparedData)], {
+                    type: 'application/json'
                 });
                 
-                const { success, data: responseData, error } = await validateResponse(response);
-                
-                if (success) {
-                    Logger.info(`✅ POST request successful (${requestId})`, responseData);
-                    return { success: true, method: 'POST', attempts: attemptCount, data: responseData };
+                if (navigator.sendBeacon(getEndpointUrl(), blob)) {
+                    Logger.info('✅ Data sent via beacon API');
+                    return { success: true, method: 'beacon' };
                 }
-                
-                if (response.status === 500) {
-                    lastError = { status: 500, message: 'Server error' };
-                    Logger.warn(`⚠️ Server error (${requestId}), retrying in ${delay}ms`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                    continue;
-                }
-                
-                if (response.status >= 400 && response.status < 500) {
-                    lastError = { status: response.status, message: error || 'Client error' };
-                    Logger.error(`❌ Client error (${requestId}): ${response.status}`);
-                    break;
-                }
-                
             } catch (error) {
-                lastError = error;
-                Logger.error(`❌ Network error (${requestId}):`, error);
-                if (attemptCount < 3) {
-                    Logger.info(`⏳ Retrying in ${delay}ms`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
+                Logger.debug('Beacon failed, trying JSONP');
             }
         }
-        
-        // Try GET as fallback
-        try {
-            Logger.info(`🔄 Trying GET fallback (${requestId})`);
-            
-            const params = new URLSearchParams({
-                ...data,
-                request_id: requestId,
-                attempt_count: attemptCount,
-                reason: reason
-            });
-            
-            const response = await fetch(`${config.endpoint}?${params}`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${config.token}`,
-                    'X-Request-ID': requestId,
-                    'Origin': window.location.origin
-                }
-            });
-            
-            const { success, data: responseData } = await validateResponse(response);
-            
-            if (success) {
-                Logger.info(`✅ GET request successful (${requestId})`, responseData);
-                return { success: true, method: 'GET', attempts: attemptCount, data: responseData };
+
+        // Для маленьких данных пробуем JSONP
+        if (JSON.stringify(preparedData).length < 1500) {
+            try {
+                const result = await sendDataJSONP(preparedData);
+                Logger.info('✅ Data sent via JSONP');
+                return { success: true, method: 'jsonp' };
+            } catch (error) {
+                Logger.debug('JSONP failed, adding to queue');
             }
-        } catch (error) {
-            lastError = error;
-            Logger.error(`❌ GET fallback failed (${requestId}):`, error);
         }
-        
-        // Try Beacon API as last resort
-        try {
-            Logger.info(`🔄 Trying Beacon API (${requestId})`);
-            
-            const beaconData = {
-                ...data,
-                request_id: requestId,
-                attempt_count: attemptCount,
-                reason: reason,
-                method: 'beacon'
-            };
-            
-            const success = navigator.sendBeacon(config.endpoint, JSON.stringify(beaconData));
-            
-            if (success) {
-                Logger.info(`✅ Beacon API successful (${requestId})`);
-                return { success: true, method: 'beacon', attempts: attemptCount };
-            }
-        } catch (error) {
-            lastError = error;
-            Logger.error(`❌ Beacon API failed (${requestId}):`, error);
-        }
-        
-        // Store in localStorage as final fallback
-        try {
-            Logger.info(`💾 Storing in localStorage (${requestId})`);
-            
-            const failedRequests = JSON.parse(localStorage.getItem('rivox_failed_requests') || '[]');
-            const requestData = {
-                ...data,
-                request_id: requestId,
-                attempt_count: attemptCount,
-                reason: reason,
-                timestamp: Date.now(),
-                last_error: lastError
-            };
-            
-            // Keep only last 100 failed requests
-            if (failedRequests.length >= 100) {
-                failedRequests.shift();
-            }
-            
-            failedRequests.push(requestData);
-            localStorage.setItem('rivox_failed_requests', JSON.stringify(failedRequests));
-            
-            Logger.info(`✅ Stored in localStorage (${requestId})`);
-            return { success: true, method: 'localStorage', attempts: attemptCount };
-        } catch (error) {
-            Logger.error(`❌ Failed to store in localStorage (${requestId}):`, error);
-            throw new Error('All data sending methods failed');
-        }
+
+        // Если все методы не сработали, добавляем в очередь
+        addToFailedQueue(preparedData);
+        return { queued: true };
     }
 
     function shouldSendData() {
@@ -1395,120 +1386,118 @@ let Logger = {
 
     // Yandex.Metrika goal tracking
     function setupMetrikaTracking(attempts = 0, maxAttempts = 5) {
-        try {
-            if (window.ym && window.ym.getCounterId) {
-                const counterId = window.ym.getCounterId();
-                if (counterId) {
-                    Logger.info(`✅ Found Metrika counter: ${counterId}`);
-                    
-                    // Сохраняем оригинальную функцию
-                    const originalReachGoal = window.ym.reachGoal;
-                    
-                    // Переопределяем reachGoal
-                    window.ym.reachGoal = function(goalName, params) {
-                        // Проверяем, не была ли цель уже отправлена
-                        const goalKey = `${goalName}_${JSON.stringify(params || {})}`;
-                        if (!sessionData.sentGoals || !sessionData.sentGoals[goalKey]) {
-                            Logger.info(`🎯 New goal intercepted: ${goalName}`, params || {});
-                            
-                            // Добавляем цель в сессию
-                            if (!sessionData.metrika_goals) {
-                                sessionData.metrika_goals = [];
-                            }
-                            
-                            const goalData = {
-                                name: goalName,
-                                params: params || {},
-                                timestamp: Date.now()
-                            };
-                            
-                            sessionData.metrika_goals.push(goalData);
-                            
-                            // Обновляем данные конверсии
-                            if (!sessionData.conversion_data) {
-                                sessionData.conversion_data = {
-                                    goals_reached: [],
-                                    ecommerce_data: [],
-                                    last_goal_timestamp: null,
-                                    conversion_path: []
-                                };
-                            }
-                            
-                            sessionData.conversion_data.goals_reached.push(goalData);
-                            sessionData.conversion_data.last_goal_timestamp = Date.now();
-                            
-                            // Добавляем в путь конверсии
-                            sessionData.conversion_data.conversion_path.push({
-                                type: 'goal',
-                                name: goalName,
-                                timestamp: Date.now(),
-                                params: params || {}
-                            });
-                            
-                            // Отмечаем цель как отправленную
-                            if (!sessionData.sentGoals) {
-                                sessionData.sentGoals = {};
-                            }
-                            sessionData.sentGoals[goalKey] = true;
-                            
-                            // Сохраняем сессию
-                            saveSessionToStorage();
-                            
-                            // Отправляем данные сразу при достижении важной цели
-                            if (isImportantGoal(goalName)) {
-                                sendDataGuaranteed('important_goal_reached');
-                            }
-                        } else {
-                            Logger.info(`ℹ️ Duplicate goal skipped: ${goalName}`);
-                        }
-                        
-                        // Вызываем оригинальную функцию
-                        return originalReachGoal.apply(this, arguments);
-                    };
-                    
-                    Logger.info('✅ Metrika tracking setup completed');
-                    return true;
-                }
-            }
-            
+        const counterId = getYandexCounterId();
+        Logger.info('Setting up Metrika tracking for counter:', counterId);
+        
+        if (!counterId) {
             if (attempts < maxAttempts) {
-                Logger.info(`⏳ Counter ID not found, retrying in 1s (attempt ${attempts + 1}/${maxAttempts})`);
+                Logger.info(`Counter ID not found, retrying in 1s (attempt ${attempts + 1}/${maxAttempts})`);
                 setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
-                return false;
+                return;
             }
-            
-            Logger.error('❌ Failed to setup Metrika tracking after max attempts');
-            return false;
-        } catch (error) {
-            Logger.error('❌ Error setting up Metrika tracking:', error);
-            return false;
+            Logger.warn('Failed to find Yandex.Metrika counter ID after max attempts');
+            return;
         }
-    }
 
-    function addGoalToSession(goalData) {
-        try {
-            if (!sessionData.metrika_goals) {
-                sessionData.metrika_goals = [];
+        // Check if counter object exists
+        if (!window[`yaCounter${counterId}`]) {
+            Logger.warn(`Counter object yaCounter${counterId} not found`);
+            if (attempts < maxAttempts) {
+                setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
+                return;
             }
-            
-            // Проверяем на дубликаты
-            const isDuplicate = sessionData.metrika_goals.some(goal => 
-                goal.name === goalData.name && 
-                JSON.stringify(goal.params) === JSON.stringify(goalData.params)
-            );
-            
-            if (!isDuplicate) {
-                sessionData.metrika_goals.push(goalData);
-                Logger.info(`✅ Goal added to session: ${goalData.name}`);
-                return true;
-            } else {
-                Logger.info(`ℹ️ Duplicate goal skipped: ${goalData.name}`);
-                return false;
-            }
-        } catch (error) {
-            Logger.error('❌ Error adding goal to session:', error);
-            return false;
+            return;
         }
+
+        // Store original reachGoal function
+        const originalReachGoal = window[`yaCounter${counterId}`].reachGoal;
+        Logger.info('Original reachGoal function:', originalReachGoal);
+        
+        if (!originalReachGoal) {
+            Logger.warn('reachGoal function not found on counter object');
+            if (attempts < maxAttempts) {
+                setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
+                return;
+            }
+            return;
+        }
+
+        Logger.info('Successfully found Metrika counter and reachGoal function');
+
+        // Override reachGoal to capture goals
+        window[`yaCounter${counterId}`].reachGoal = function(goalName, params) {
+            // Log the call immediately
+            Logger.info(`🎯 Metrika reachGoal intercepted: ${goalName}`, params || {});
+            
+            // Call original function first
+            const result = originalReachGoal.apply(this, arguments);
+
+            // Track goal in our system
+            if (sessionData && sessionData.metrika_goals) {
+                const goalData = {
+                    name: goalName,
+                    params: params || {},
+                    timestamp: Date.now()
+                };
+
+                // Log before adding to session data
+                Logger.info('Adding goal to session data:', goalData);
+                Logger.info('Current session data:', {
+                    metrika_goals: sessionData.metrika_goals,
+                    conversion_data: sessionData.conversion_data
+                });
+
+                // Ensure arrays exist
+                if (!sessionData.metrika_goals) {
+                    sessionData.metrika_goals = [];
+                }
+                if (!sessionData.conversion_data) {
+                    sessionData.conversion_data = {
+                        goals_reached: [],
+                        ecommerce_data: [],
+                        last_goal_timestamp: null,
+                        conversion_path: []
+                    };
+                }
+                if (!sessionData.conversion_data.goals_reached) {
+                    sessionData.conversion_data.goals_reached = [];
+                }
+                if (!sessionData.conversion_data.conversion_path) {
+                    sessionData.conversion_data.conversion_path = [];
+                }
+
+                // Add goal to arrays
+                sessionData.metrika_goals.push(goalData);
+                sessionData.conversion_data.goals_reached.push(goalData);
+                sessionData.conversion_data.last_goal_timestamp = Date.now();
+                sessionData.conversion_data.conversion_path.push({
+                    type: 'goal',
+                    name: goalName,
+                    timestamp: Date.now()
+                });
+
+                // Log after adding to session data
+                Logger.info('Goal data added to session:', goalData);
+                Logger.info('Updated session data:', {
+                    metrika_goals: sessionData.metrika_goals,
+                    conversion_data: sessionData.conversion_data
+                });
+
+                // Send data after important goals
+                if (isImportantGoal(goalName)) {
+                    Logger.info(`Important goal reached (${goalName}), sending data...`);
+                    sendSessionSummary().catch(error => 
+                        Logger.error('Failed to send data after goal:', error)
+                    );
+                }
+            } else {
+                Logger.error('Session data or metrika_goals not initialized');
+            }
+
+            return result;
+        };
+
+        Logger.info('✅ Metrika tracking setup completed');
     }
 
     // Important goals that should trigger immediate data send
@@ -1542,11 +1531,6 @@ let Logger = {
                 const parsed = JSON.parse(saved);
                 // Only restore if session is recent (last 30 minutes)
                 if (Date.now() - parsed.last_activity < config.sessionTimeout) {
-                    // Ensure client_token is set
-                    if (!parsed.client_token && config.token) {
-                        parsed.client_token = config.token;
-                        Logger.debug('Added client_token to restored session');
-                    }
                     Logger.info('Restoring previous session');
                     return parsed;
                 }
@@ -1565,10 +1549,11 @@ let Logger = {
             session_id: generateSessionId(),
             start_time: Date.now(),
             last_activity: Date.now(),
-            page_views: [{
+            page_history: [{
                 timestamp: Date.now(),
                 url: window.location.href,
-                referrer: document.referrer
+                referrer: document.referrer,
+                time_spent: 0
             }],
             scroll_chunks: [],
             hover_events: [],
@@ -1664,7 +1649,6 @@ let Logger = {
             // --- End of Duplicate Check ---
 
             // Try to send data
-            sendData(summary)
             sendDataWithFallback(summary)
                 .then(() => {
                     Logger.info(`Data sent successfully (${reason})`);
@@ -1794,49 +1778,4 @@ let Logger = {
         };
     }
     // ---- End of New ML Features Function ----
-
-    async function sendData(data) {
-        if (!config.token) {
-            Logger.error('❌ Token not configured');
-            return;
-        }
-
-        try {
-            const result = await sendDataWithFallback(data);
-            if (result.success) {
-                Logger.info('✅ Data sent successfully');
-                return;
-            }
-        } catch (error) {
-            Logger.error('❌ All sending methods failed:', error);
-            
-            // Сохраняем данные для повторной отправки
-            const failedData = {
-                ...data,
-                timestamp: Date.now(),
-                error: error.message
-            };
-            
-            const failedDataStr = JSON.stringify(failedData);
-            localStorage.setItem('rivox_failed_data', failedDataStr);
-            
-            // Планируем повторную отправку
-            setTimeout(() => {
-                const storedData = localStorage.getItem('rivox_failed_data');
-                if (storedData) {
-                    try {
-                        const parsedData = JSON.parse(storedData);
-                        sendData(parsedData);
-                        localStorage.removeItem('rivox_failed_data');
-                    } catch (e) {
-                        Logger.error('❌ Failed to retry sending data:', e);
-                    }
-                }
-            }, 5000); // Повторная попытка через 5 секунд
-        }
-    }
-
-    function generateRequestId() {
-        return Date.now().toString(36) + Math.random().toString(36).substring(2);
-    }
 })(window); 
