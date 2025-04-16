@@ -426,7 +426,7 @@ let Logger = {
         const currentDomain = window.location.hostname;
         if (!isAllowedDomain(currentDomain)) {
             Logger.warn(`Domain ${currentDomain} not found in the list of allowed domains`);
-            return;
+            // Убираем return, чтобы SDK продолжал работать
         }
         
         Logger.info('RIVOX SDK initializing...');
@@ -449,25 +449,34 @@ let Logger = {
         }
 
         // Initialize or restore session data
-        sessionData = loadSessionFromStorage() || createSessionData(clientId);
-        
-        if (!loadSessionFromStorage()) {
-            // This is a new session
-            isSessionActive = true;
-            setupEventListeners();
-            saveSessionToStorage();
-        } else {
-            // Update existing session
+        const savedSession = loadSessionFromStorage();
+        if (savedSession) {
+            Logger.info('Restoring previous session');
+            sessionData = savedSession;
+            
+            // Ensure all required arrays exist
+            sessionData.page_history = sessionData.page_history || [];
+            sessionData.scroll_chunks = sessionData.scroll_chunks || [];
+            sessionData.hover_events = sessionData.hover_events || [];
+            sessionData.form_interactions = sessionData.form_interactions || [];
+            sessionData.cta_clicks = sessionData.cta_clicks || [];
+            sessionData.metrika_goals = sessionData.metrika_goals || [];
+            
+            // Add current page to history
             sessionData.page_history.push({
                 timestamp: Date.now(),
                 url: window.location.href,
                 referrer: document.referrer,
                 time_spent: 0
             });
-            isSessionActive = true;
-            setupEventListeners();
-            saveSessionToStorage();
+        } else {
+            Logger.info('Creating new session');
+            sessionData = createSessionData(clientId);
         }
+        
+        isSessionActive = true;
+        setupEventListeners();
+        saveSessionToStorage();
 
         // Start activity tracking
         document.addEventListener('mousemove', updateActivity);
@@ -494,10 +503,9 @@ let Logger = {
                 isSessionActive = false;
                 sendDataGuaranteed('session_timeout');
             }
-        }, 60000); // Check every minute
+        }, 60000);
 
         setupMetrikaTracking();
-
         Logger.info('✅ RIVOX SDK initialization completed');
     }
 
