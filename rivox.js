@@ -454,7 +454,7 @@ let Logger = {
         if (!loadSessionFromStorage()) {
             // This is a new session
             isSessionActive = true;
-        setupEventListeners();
+            setupEventListeners();
             saveSessionToStorage();
         } else {
             // Update existing session
@@ -1198,97 +1198,146 @@ let Logger = {
         const maxRetries = 3;
         const baseDelay = 1000; // 1 second
         let lastError = null;
+        let attemptCount = 0;
+
+        // Add request ID for tracking
+        const requestId = Math.random().toString(36).substring(7);
+        Logger.info(`🚀 Starting data send attempt (ID: ${requestId})`);
+
+        // Function to handle response validation
+        const validateResponse = async (response, method) => {
+            const contentType = response.headers.get('content-type');
+            let errorDetails = '';
+            
+            try {
+                if (contentType && contentType.includes('application/json')) {
+                    errorDetails = JSON.stringify(await response.json());
+                } else {
+                    errorDetails = await response.text();
+                }
+            } catch (e) {
+                errorDetails = `Failed to parse response: ${e.message}`;
+            }
+
+            if (!response.ok) {
+                throw new Error(`${method} failed (${response.status}): ${errorDetails}`);
+            }
+            
+            return response;
+        };
 
         // Попытка отправки через POST с экспоненциальной задержкой
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            attemptCount++;
             try {
                 const delay = baseDelay * Math.pow(2, attempt - 1);
                 if (attempt > 1) {
-                    Logger.info(`⏳ Waiting ${delay}ms before retry ${attempt}/${maxRetries}...`);
+                    Logger.info(`⏳ [${requestId}] Waiting ${delay}ms before retry ${attempt}/${maxRetries}...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
 
+                Logger.debug(`📤 [${requestId}] Attempting POST (try ${attempt}/${maxRetries})`);
                 const response = await fetch(config.endpoint, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${config.token}`
+                        'Authorization': `Bearer ${config.token}`,
+                        'X-Request-ID': requestId
                     },
                     body: JSON.stringify(data)
                 });
 
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`Server error: ${response.status} - ${errorText}`);
-                }
-
-                Logger.info('✅ Data sent successfully via POST');
-                return { success: true };
+                await validateResponse(response, 'POST');
+                Logger.info(`✅ [${requestId}] Data sent successfully via POST`);
+                return { success: true, method: 'POST', attempts: attemptCount };
             } catch (error) {
                 lastError = error;
-                Logger.error(`❌ POST attempt ${attempt}/${maxRetries} failed:`, error.message);
+                Logger.error(`❌ [${requestId}] POST attempt ${attempt}/${maxRetries} failed:`, error.message);
                 
-                // Если это последняя попытка, пробуем альтернативные методы
-                if (attempt === maxRetries) {
-                    // Пробуем GET запрос
-                    try {
-                        const params = new URLSearchParams();
-                        Object.entries(data).forEach(([key, value]) => {
-                            params.append(key, JSON.stringify(value));
-                        });
-
-                        const getResponse = await fetch(`${config.endpoint}?${params.toString()}`, {
-                            method: 'GET',
-                            headers: {
-                                'Authorization': `Bearer ${config.token}`
-                            }
-                        });
-
-                        if (!getResponse.ok) {
-                            throw new Error(`GET request failed: ${getResponse.status}`);
-                        }
-
-                        Logger.info('✅ Data sent successfully via GET');
-                        return { success: true };
-                    } catch (getError) {
-                        Logger.error('❌ GET request failed:', getError.message);
-                        
-                        // Пробуем beacon API
-                        if (navigator.sendBeacon) {
-                            try {
-                                const blob = new Blob([JSON.stringify(data)], {
-                                    type: 'application/json'
-                                });
-                                
-                                if (navigator.sendBeacon(config.endpoint, blob)) {
-                                    Logger.info('✅ Data sent via beacon API');
-                                    return { success: true };
-                                }
-                            } catch (beaconError) {
-                                Logger.error('❌ Beacon API failed:', beaconError.message);
-                            }
-                        }
-                        
-                        // Если все методы не сработали, сохраняем в localStorage
-                        try {
-                            const storedData = localStorage.getItem('rivox_pending_data') || '[]';
-                            const pendingData = JSON.parse(storedData);
-                            pendingData.push({
-                                ...data,
-                                timestamp: Date.now(),
-                                retryCount: 0,
-                                lastError: lastError.message
-                            });
-                            localStorage.setItem('rivox_pending_data', JSON.stringify(pendingData));
-                            
-                            Logger.info('✅ Data stored in localStorage for later sending');
-                            return { success: true };
-                        } catch (storageError) {
-                            Logger.error('❌ Failed to store data in localStorage:', storageError.message);
-                            throw new Error('All sending methods failed');
-                        }
-                    }
+                // Check if we should retry based on error type
+                if (error.message.includes('network') || error.message.includes('5')) {
+                    continue; // Retry for network errors or 5xx responses
                 }
+                
+                // Break early for 4xx errors except 429 (rate limit)
+                if (error.message.includes('4') && !error.message.includes('429')) {
+                    break;
+                }
+            }
+        }
+
+        // Try GET request if POST failed
+        try {
+            Logger.debug(`📤 [${requestId}] Attempting GET fallback`);
+            const params = new URLSearchParams();
+            Object.entries(data).forEach(([key, value]) => {
+                params.append(key, typeof value === 'object' ? JSON.stringify(value) : value);
+            });
+
+            const getResponse = await fetch(`${config.endpoint}?${params.toString()}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${config.token}`,
+                    'X-Request-ID': requestId
+                }
+            });
+
+            await validateResponse(getResponse, 'GET');
+            Logger.info(`✅ [${requestId}] Data sent successfully via GET`);
+            return { success: true, method: 'GET', attempts: attemptCount + 1 };
+        } catch (getError) {
+            Logger.error(`❌ [${requestId}] GET request failed:`, getError.message);
+            lastError = getError;
+            
+            // Try beacon API
+            if (navigator.sendBeacon) {
+                try {
+                    Logger.debug(`📤 [${requestId}] Attempting Beacon API fallback`);
+                    const headers = {
+                        'Authorization': `Bearer ${config.token}`,
+                        'X-Request-ID': requestId
+                    };
+                    
+                    const blob = new Blob([JSON.stringify({ data, headers })], {
+                        type: 'application/json'
+                    });
+                    
+                    if (navigator.sendBeacon(config.endpoint, blob)) {
+                        Logger.info(`✅ [${requestId}] Data sent via beacon API`);
+                        return { success: true, method: 'beacon', attempts: attemptCount + 2 };
+                    }
+                } catch (beaconError) {
+                    Logger.error(`❌ [${requestId}] Beacon API failed:`, beaconError.message);
+                    lastError = beaconError;
+                }
+            }
+            
+            // Store in localStorage as last resort
+            try {
+                Logger.debug(`📤 [${requestId}] Storing in localStorage`);
+                const storedData = localStorage.getItem('rivox_pending_data') || '[]';
+                const pendingData = JSON.parse(storedData);
+                
+                // Remove old entries if queue is too large
+                while (pendingData.length >= config.maxQueueSize) {
+                    pendingData.shift();
+                }
+                
+                pendingData.push({
+                    ...data,
+                    requestId,
+                    timestamp: Date.now(),
+                    retryCount: 0,
+                    lastError: lastError.message,
+                    attempts: attemptCount + 2
+                });
+                
+                localStorage.setItem('rivox_pending_data', JSON.stringify(pendingData));
+                Logger.info(`✅ [${requestId}] Data stored in localStorage for later sending`);
+                return { success: true, method: 'localStorage', attempts: attemptCount + 3 };
+            } catch (storageError) {
+                Logger.error(`❌ [${requestId}] Failed to store in localStorage:`, storageError.message);
+                throw new Error(`All sending methods failed for request ${requestId}: ${lastError.message}`);
             }
         }
     }
@@ -1345,7 +1394,11 @@ let Logger = {
                             Logger.info(`🎯 New goal intercepted: ${goalName}`, params || {});
                             
                             // Добавляем цель в сессию
-                            addGoalToSession({
+                            if (!sessionData.metrika_goals) {
+                                sessionData.metrika_goals = [];
+                            }
+                            
+                            sessionData.metrika_goals.push({
                                 name: goalName,
                                 params: params || {},
                                 timestamp: Date.now()
@@ -1565,6 +1618,7 @@ let Logger = {
             // --- End of Duplicate Check ---
 
             // Try to send data
+            sendData(summary)
             sendDataWithFallback(summary)
                 .then(() => {
                     Logger.info(`Data sent successfully (${reason})`);
