@@ -1312,6 +1312,9 @@ let Logger = {
             origin: window.location.origin
         };
 
+        const dataSize = JSON.stringify(preparedData).length;
+        Logger.info(`📦 Data size: ${(dataSize / 1024 / 1024).toFixed(2)}MB`);
+
         // Пробуем основной метод - POST
         try {
             const response = await fetch(getEndpointUrl(), {
@@ -1365,6 +1368,15 @@ let Logger = {
 
     function shouldSendData() {
         if (!sessionData) return false;
+        
+        // Логируем структуру данных
+        Logger.info('Session data structure:', {
+            metrika_goals_count: sessionData.metrika_goals?.length || 0,
+            form_interactions_count: sessionData.form_interactions?.length || 0,
+            scroll_chunks_count: sessionData.scroll_chunks?.length || 0,
+            cta_clicks_count: sessionData.cta_clicks?.length || 0,
+            page_history_count: sessionData.page_history?.length || 0
+        });
         
         // 1. Всегда отправляем при конверсиях/важных событиях
         if (
