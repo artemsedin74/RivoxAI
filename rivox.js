@@ -1567,12 +1567,14 @@ let Logger = {
 
     // Enhanced session data structure
     function createSessionData(clientId) {
+        const browserInfo = getBrowserInfo();
         return {
             client_id: clientId,
             client_token: config.token,
             session_id: generateSessionId(),
             start_time: Date.now(),
             last_activity: Date.now(),
+            device_info: browserInfo,
             page_history: [{
                 timestamp: Date.now(),
                 url: window.location.href,
@@ -1617,6 +1619,40 @@ let Logger = {
                 funnel_analysis: {}
             }
         };
+    }
+
+    // Get browser and device info
+    function getBrowserInfo() {
+        const ua = navigator.userAgent;
+        const browserData = {
+            device_type: 'desktop',
+            browser: 'unknown',
+            platform: navigator.platform
+        };
+
+        // Determine device type
+        if (/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(ua)) {
+            browserData.device_type = 'tablet';
+        } else if (/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(ua)) {
+            browserData.device_type = 'mobile';
+        }
+
+        // Determine browser
+        if (ua.indexOf("Chrome") > -1) {
+            browserData.browser = "Chrome";
+        } else if (ua.indexOf("Safari") > -1) {
+            browserData.browser = "Safari";
+        } else if (ua.indexOf("Firefox") > -1) {
+            browserData.browser = "Firefox";
+        } else if (ua.indexOf("MSIE") > -1 || ua.indexOf("Trident/") > -1) {
+            browserData.browser = "IE";
+        } else if (ua.indexOf("Edge") > -1) {
+            browserData.browser = "Edge";
+        } else if (ua.indexOf("Opera") > -1 || ua.indexOf("OPR") > -1) {
+            browserData.browser = "Opera";
+        }
+
+        return browserData;
     }
 
     // Update page history on navigation
