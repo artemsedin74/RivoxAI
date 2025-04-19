@@ -76,7 +76,7 @@ let Logger = {
         maxFormDuration: 300000,
         minClickGap: 100,
         maxClickGap: 10000,
-        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop', 'inoxhub.ru', 'www.inoxhub.ru'],
+        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop', 'inoxhub.ru'],
         initDelay: 300,
         sendDelay: 300000, // 5 минут
         retryDelay: 120000, // 2 минуты
@@ -1308,7 +1308,8 @@ let Logger = {
     async function sendDataWithFallback(data) {
         const preparedData = {
             ...data,
-            token: config.token
+            token: config.token,
+            origin: window.location.origin
         };
 
         // Пробуем основной метод - POST
@@ -1316,7 +1317,8 @@ let Logger = {
             const response = await fetch(getEndpointUrl(), {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Origin': window.location.origin
                 },
                 body: JSON.stringify(preparedData)
             });
