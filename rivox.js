@@ -60,9 +60,8 @@ let Logger = {
 
     // Configuration
     const config = {
-        // Обновленные эндпоинты с исправленным путем
         endpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app/api/collect',
-        apiEndpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app/api/collect',
+        apiEndpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app/api/collect', // Добавлено для совместимости
         debug: true,
         sessionTimeout: 30 * 60 * 1000, // 30 минут
         scrollChunkSize: 10, // Уменьшено с 25 для более частого отслеживания
@@ -85,6 +84,7 @@ let Logger = {
         maxRetries: 3,
         maxQueueSize: 10,
         deduplicationWindow: 60000, // 1 минута
+        beaconSupport: true,
 
         // ML-оптимизированные параметры с улучшенными порогами
         formInteractionThreshold: 1, 
