@@ -60,8 +60,9 @@ let Logger = {
 
     // Configuration
     const config = {
-        endpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app',
-        apiEndpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app', // Добавлено для совместимости
+        // Обновленные эндпоинты с исправленным путем
+        endpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app/api/collect',
+        apiEndpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app/api/collect',
         debug: true,
         sessionTimeout: 30 * 60 * 1000, // 30 минут
         scrollChunkSize: 10, // Уменьшено с 25 для более частого отслеживания
