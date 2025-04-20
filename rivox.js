@@ -1,1852 +1,902 @@
 /**
- * RIVOX SDK - Client-side tracking and analytics
- * Version: 4.6.3
+ * RIVOX SDK - Улучшенный модуль отправки данных
+ * Version: 1.0.0
+ * 
+ * Улучшения:
+ * 1. Защита от сетевых сбоев с прогрессивной стратегией повторов
+ * 2. Сжатие данных перед отправкой для экономии трафика
+ * 3. Расширенная валидация данных перед отправкой
+ * 4. Контроль длительности запросов и автоматическое сокращение объема данных
  */
-// RIVOX SDK v4.6.3
-// Enhanced version with ML data collection capabilities
-
-// Utility functions for Yandex.Metrika
-function isYandexMetrikaReady() {
-    return typeof ym !== 'undefined' || typeof Ya !== 'undefined' || !!window.yaCounter;
-}
-
-// Updated function to be more robust
-function getYandexCounterId() {
-    // 1. Check explicitly set variable
-    if (window.ymCounterId) return window.ymCounterId;
-    
-    // 2. Look for yaCounter object and extract ID
-    for (const key in window) {
-        if (key.startsWith('yaCounter')) {
-            const counterId = key.replace('yaCounter', '');
-            if (counterId && !isNaN(Number(counterId))) {
-                Logger.debug('Found counter ID via yaCounter object:', counterId);
-                return counterId;
-            }
-        }
-    }
-    
-    // 3. Look for ym object and its counters
-    if (typeof ym !== 'undefined') {
-        try {
-            // Try common internal properties
-            const counters = ym.a || ym.counters || ym.__counters || []; 
-            if (counters.length > 0 && counters[0] && counters[0].id) {
-                 Logger.debug('Found counter ID via ym internal property:', counters[0].id);
-                 return counters[0].id;
-            }
-        } catch (e) {
-            Logger.warn('Error checking ym internal properties:', e);
-        }
-    }
-
-    Logger.debug('Yandex.Metrika counter ID not found after checking multiple sources.');
-    return null;
-}
-
-// Define a placeholder Logger globally first
-let Logger = {
-    setLevel: () => {},
-    debug: () => {},
-    info: () => {},
-    warn: console.warn,
-    error: console.error
-};
 
 (function(window) {
     'use strict';
-
-    const SDK_VERSION = '4.6.3';
-
-    // Configuration
-    const config = {
-        endpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app',
-        debug: true,
-        sessionTimeout: 30 * 60 * 1000, // 30 минут
-        scrollChunkSize: 50, // уменьшаем с 100 до 50 пикселей
-        minInteractionGap: 500,
-        maxInactiveTime: 300000,
-        minScrollSpeed: 0.1,
-        maxScrollSpeed: 10,
-        viewportGridSize: 10,
-        minHoverDuration: 100,
-        maxHoverDuration: 30000,
-        interactionTimeWindow: 5000,
-        minFormDuration: 1000,
-        maxFormDuration: 300000,
-        minClickGap: 100,
-        maxClickGap: 10000,
-        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop', 'inoxhub.ru'],
-        initDelay: 300,
-        sendDelay: 300000, // 5 минут
-        retryDelay: 120000, // 2 минуты
-        maxRetries: 3,
-        maxQueueSize: 10,
-        deduplicationWindow: 60000 // 1 минута
-    };
-
-    // Re-define the global Logger with full functionality inside the IIFE
-    Logger = {
-        LEVELS: {
-            DEBUG: 0,
-            INFO: 1,
-            WARN: 2,
-            ERROR: 3
-        },
-        level: 1, // Default to INFO level
-        
-        setLevel: function(level) {
-            this.level = level;
-        },
-        
-        debug: function(msg, data) {
-            if (this.level <= this.LEVELS.DEBUG && config.debug) {
-                console.log(`rivox.js [DEBUG]: ${msg}`, data || '');
-            }
-        },
-        
-        info: function(msg, data) {
-            if (this.level <= this.LEVELS.INFO && config.debug) { 
-                console.log(`rivox.js ℹ️: ${msg}`, data || '');
-            }
-        },
-        
-        warn: function(msg, data) {
-            if (this.level <= this.LEVELS.WARN) {
-                console.warn(`rivox.js ⚠️: ${msg}`, data || '');
-            }
-        },
-        
-        error: function(msg, error) {
-            if (this.level <= this.LEVELS.ERROR) {
-                console.error(`rivox.js ❌: ${msg}`, error || '');
-            }
-        }
-    };
-
-    // Session data
-    let sessionData = null;
-    let isSessionActive = false;
-    let lastActivityTime = Date.now();
-    let queuedData = [];
-    let sendTimer = null;
-
-    // Add failed queue
-    const failedQueue = [];
-    let retryTimer = null;
-
-    // Add sent data tracking
-    const sentData = new Set();
     
-    function getDataHash(data) {
-        return `${data.session_id}_${data.timestamp}`;
-    }
-
-    function isDuplicate(data) {
-        const hash = getDataHash(data);
-        if (sentData.has(hash)) {
-            return true;
-        }
-        
-        // Clean up old hashes
-        const now = Date.now();
-        for (const oldHash of sentData) {
-            const [, timestamp] = oldHash.split('_');
-            if (now - Number(timestamp) > config.deduplicationWindow) {
-                sentData.delete(oldHash);
-            }
-        }
-        
-        sentData.add(hash);
-        return false;
-    }
-
-    // Update last activity time
-    function updateActivity() {
-        const now = Date.now();
-        const timeSinceLastActivity = now - lastActivityTime;
-        
-        // If session was inactive and now active again
-        if (timeSinceLastActivity > config.maxInactiveTime) {
-            Logger.info('Session reactivated after inactivity');
-            startNewSession();
-            return;
-        }
-
-        lastActivityTime = now;
-        if (sessionData) {
-            sessionData.last_activity = now;
-            // Update session duration
-            sessionData.duration = now - sessionData.start_time;
-        }
-    }
-
-    // Start new session
-    function startNewSession() {
-        if (sessionData) {
-            // Send current session data before starting new
-            sendSessionSummary();
-        }
-
-        sessionData = {
-        client_id: generateClientId(),
-            client_token: config.token,
-        session_id: generateSessionId(),
-        start_time: Date.now(),
-        last_activity: Date.now(),
-            page_views: [{
-                timestamp: Date.now(),
-                url: window.location.href,
-                referrer: document.referrer
-            }],
-        scroll_chunks: [],
-        hover_events: [],
-        form_interactions: [],
-        cta_clicks: [],
-        modal_interactions: [],
-            utm_data: extractUTMData(),
-            metrika_goals: [],
-            conversion_data: {
-                goals_reached: [],
-                ecommerce_data: [],
-                last_goal_timestamp: null,
-                conversion_path: []
-            },
-            traffic_source: {
-                referrer: document.referrer,
-                landing_page: window.location.href,
-                entry_point: window.location.pathname
-            },
-            user_behavior: {
-                time_to_first_interaction: null,
-                total_interactions: 0,
-                interaction_frequency: [],
-                scroll_depth_percentages: [],
-                time_between_clicks: [],
-                mouse_movement_heatmap: [],
-                viewport_size: {
-                    width: window.innerWidth,
-                    height: window.innerHeight
-                }
-            },
-        ml_features: {
-            interest_signals: [],
-            behavior_patterns: [],
-            user_segment: null,
-            conversion_probability: null,
-            funnel_analysis: {}
-        }
+    // Константы и настройки
+    const SDK_VERSION = '1.0.0';
+    const MAX_SEND_RETRIES = 5;
+    const INITIAL_RETRY_DELAY = 1000; // 1 секунда
+    const MAX_RETRY_DELAY = 60000; // 1 минута
+    const MAX_REQUEST_DURATION = 30000; // 30 секунд
+    const MAX_DATA_SIZE = 5 * 1024 * 1024; // 5MB
+    const MAX_BEACON_SIZE = 64 * 1024; // 64KB
+    const REQUEST_TIMEOUT = 20000; // 20 секунд
+    const MAX_SEGMENT_SIZE = 50; // Максимальное число элементов в сегменте
+    const COMPRESSION_THRESHOLD = 1024; // Сжимать данные больше 1KB
+    
+    // Создаем локальный объект для логгирования, если глобальный не доступен
+    const Logger = window.Logger || {
+        debug: (...args) => console.debug('[Rivox]', ...args),
+        info: (...args) => console.info('[Rivox]', ...args),
+        warn: (...args) => console.warn('[Rivox]', ...args),
+        error: (...args) => console.error('[Rivox]', ...args)
     };
-
-        isSessionActive = true;
-        Logger.info('New session started:', sessionData.session_id);
-    }
-
-    // Extract UTM data
-    function extractUTMData() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const utmFields = ['source', 'medium', 'campaign', 'term', 'content'];
-        const utmData = {
-            traffic_type: 'direct',
-            landing_page_type: 'unknown',
-            referrer_domain: document.referrer ? new URL(document.referrer).hostname : ''
-        };
-
-        utmFields.forEach(field => {
-            const value = urlParams.get(`utm_${field}`);
-            if (value) {
-                utmData[field] = value;
-                if (field === 'medium') {
-                    utmData.traffic_type = value;
+    
+    /**
+     * Валидирует данные перед отправкой и исправляет распространенные проблемы
+     * @param {Object} data - Данные для валидации
+     * @returns {Object} Результат валидации {isValid, errors, data}
+     */
+    function validateData(data) {
+        const errors = [];
+        let validData = {...data};
+        
+        // Проверка на null/undefined
+        if (!data) {
+            return {
+                isValid: false,
+                errors: ['data_is_null_or_undefined'],
+                data: null
+            };
+        }
+        
+        // Проверка наличия обязательных полей
+        const requiredFields = ['client_id', 'session_id'];
+        for (const field of requiredFields) {
+            if (!data[field]) {
+                errors.push(`missing_${field}`);
+                
+                // Попытка исправления
+                if (field === 'client_id' && window.getClientId) {
+                    validData.client_id = window.getClientId();
+                    Logger.warn(`Автоматически добавлен client_id: ${validData.client_id}`);
+                } else if (field === 'session_id' && window.getSessionId) {
+                    validData.session_id = window.getSessionId();
+                    Logger.warn(`Автоматически добавлен session_id: ${validData.session_id}`);
                 }
             }
-        });
-
-        return utmData;
-    }
-
-    // Queue data for sending
-    function queueData(data) {
-        queuedData.push({
-            timestamp: new Date().toISOString(),
-            data: data
-        });
-
-        // If queue is getting large, send immediately
-        if (queuedData.length >= 5) {
-            sendQueuedData();
         }
-    }
-
-    // Send queued data
-    async function sendQueuedData() {
-        if (queuedData.length === 0) return;
-
-        const dataToSend = queuedData;
-        queuedData = [];
-
-        try {
-            const response = await fetch(config.endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Origin': window.location.origin
-                },
-                body: JSON.stringify(dataToSend)
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+        
+        // Проверка и коррекция временных меток
+        if (data.timestamp && typeof data.timestamp !== 'number') {
+            errors.push('invalid_timestamp_type');
+            // Исправление
+            if (typeof data.timestamp === 'string') {
+                try {
+                    validData.timestamp = new Date(data.timestamp).getTime();
+                } catch (e) {
+                    validData.timestamp = Date.now();
+                }
+            } else {
+                validData.timestamp = Date.now();
             }
-
-            Logger.info('✅ Queued data sent successfully');
-        } catch (error) {
-            Logger.error('Failed to send queued data:', error);
-            // Return failed items to queue
-            queuedData = [...dataToSend, ...queuedData];
         }
-    }
-
-    // Get current session duration
-    function getSessionDuration() {
-        return sessionData ? (lastActivityTime - sessionData.start_time) : 0;
-    }
-
-    function isAllowedDomain(hostname) {
-        if (!hostname) return false;
         
-        // Нормализуем домен (убираем www. если есть)
-        const normalizedHostname = hostname.replace(/^www\./, '');
+        // Проверка вложенных массивов
+        const arrayFields = ['metrika_goals', 'scroll_chunks', 'cta_clicks', 'hover_events', 'form_interactions'];
+        for (const field of arrayFields) {
+            if (data[field] !== undefined && !Array.isArray(data[field])) {
+                errors.push(`invalid_${field}_not_array`);
+                validData[field] = [];
+            }
+        }
         
-        // Проверяем домен и его поддомены
-        const isAllowed = config.allowedDomains.some(domain => {
-            const normalizedDomain = domain.replace(/^www\./, '');
-            // Проверяем точное совпадение или поддомен
-            return normalizedHostname === normalizedDomain || 
-                   normalizedHostname.endsWith('.' + normalizedDomain);
-        });
-
-        if (config.debug) {
-            Logger.debug('Checking domain:', {
-                original: hostname,
-                normalized: normalizedHostname,
-                allowed: isAllowed,
-                allowedDomains: config.allowedDomains
-            });
+        // Проверка наличия временной метки
+        if (!validData.timestamp) {
+            validData.timestamp = Date.now();
         }
-
-        return isAllowed;
-    }
-
-    // Get endpoint URL
-    function getEndpointUrl() {
-        if (config.debug) {
-            Logger.debug('Using endpoint:', config.endpoint);
+        
+        // Проверка наличия версии SDK
+        if (!validData.sdk_version) {
+            validData.sdk_version = SDK_VERSION;
         }
-        return config.endpoint;
-    }
-
-    // Load configuration from script data attributes
-    function loadConfig() {
-        const script = document.querySelector('script[data-token]');
-        if (!script) {
-            Logger.error('RIVOX SDK script tag with data-token not found');
-            return null;
+        
+        // Проверка размера данных (предупреждение, не ошибка)
+        const dataSize = JSON.stringify(validData).length;
+        if (dataSize > MAX_DATA_SIZE) {
+            errors.push('data_too_large');
+            Logger.warn(`Данные слишком большие (${Math.round(dataSize / 1024)} KB), будет применено сегментирование`);
         }
-
-        // Get token
-        const token = script.dataset.token;
-        if (!token) {
-            Logger.error('RIVOX SDK token not specified');
-            return null;
-        }
-
-        // Get optional delays
-        const initDelay = parseInt(script.dataset.initDelay) || config.initDelay;
-        const sendDelay = parseInt(script.dataset.sendDelay) || config.sendDelay;
-
-        // Update config with token
-        config.token = token;
-
-        if (config.debug) {
-            Logger.debug('RIVOX SDK Configuration:', {
-                token,
-                initDelay,
-                sendDelay
-            });
-        }
-
+        
         return {
-            token,
-            initDelay,
-            sendDelay
+            isValid: errors.length === 0,
+            errors,
+            data: validData
         };
     }
-
-    function waitForMetrika(callback) {
-        let attempts = 0;
-        const maxAttempts = 50;
+    
+    /**
+     * Сжимает данные для уменьшения размера передачи
+     * @param {Object} data - Данные для сжатия
+     * @returns {Object} Сжатые данные
+     */
+    function compressData(data) {
+        // Копируем, чтобы избежать мутаций исходного объекта
+        const compressedData = {...data};
         
-        function check() {
-            attempts++;
-            
-            // Проверяем все возможные варианты существования Метрики
-            if (typeof ym !== 'undefined' && typeof ym.a !== 'undefined') {
-                Logger.info('Metrika ready (ym object)');
-                callback();
-                return;
-            }
-
-            if (window.Ya && window.Ya.Metrika) {
-                Logger.info('Metrika ready (Ya.Metrika)');
-                callback();
-                return;
-            }
-
-            // Ищем счетчик через объекты window
-            for (const key in window) {
-                if (key.startsWith('yaCounter')) {
-                    Logger.info('Metrika ready (counter object)');
-                    callback();
-                    return;
-                }
-            }
-
-            if (attempts >= maxAttempts) {
-                Logger.info('Proceeding without waiting for Metrika');
-                callback();
-                return;
-            }
-
-            Logger.debug(`Waiting for Metrika (attempt ${attempts}/${maxAttempts})...`);
-            setTimeout(check, 100);
-        }
+        // Оптимизируем размер сообщения, сокращая данные
         
-        check();
-    }
-
-    // Initialize SDK
-    async function init() {
-        const currentDomain = window.location.hostname;
-        if (!isAllowedDomain(currentDomain)) {
-            Logger.error(`Domain ${currentDomain} is not allowed. SDK initialization aborted.`);
-            return; // Прерываем инициализацию для неразрешенных доменов
-        }
-        
-        Logger.info('RIVOX SDK initializing...');
-        
-        // Load configuration
-        const userConfig = loadConfig();
-        if (!userConfig) return;
-
-        // Wait for Metrika to be ready
-        await new Promise(resolve => {
-            waitForMetrika(resolve);
-        });
-
-        // Get client ID
-        const clientId = await generateClientId();
-        if (!clientId) {
-            Logger.warn('Proceeding with initialization despite missing client ID');
-        } else {
-            Logger.info('RIVOX SDK initialized with client ID:', clientId);
-        }
-
-        // Initialize or restore session data
-        const savedSession = loadSessionFromStorage();
-        if (savedSession) {
-            Logger.info('Restoring previous session');
-            sessionData = savedSession;
-        } else {
-            Logger.info('Creating new session');
-            sessionData = createSessionData(clientId);
-        }
-        
-        // Ensure all required arrays exist
-        sessionData.page_history = sessionData.page_history || [];
-        sessionData.scroll_chunks = sessionData.scroll_chunks || [];
-        sessionData.hover_events = sessionData.hover_events || [];
-        sessionData.form_interactions = sessionData.form_interactions || [];
-        sessionData.cta_clicks = sessionData.cta_clicks || [];
-        sessionData.metrika_goals = sessionData.metrika_goals || [];
-        
-        // Add current page to history
-        sessionData.page_history.push({
-            timestamp: Date.now(),
-            url: window.location.href,
-            referrer: document.referrer,
-            time_spent: 0
-        });
-        
-        isSessionActive = true;
-        setupEventListeners();
-        saveSessionToStorage();
-
-        // Start activity tracking
-        document.addEventListener('mousemove', updateActivity);
-        document.addEventListener('keydown', updateActivity);
-        document.addEventListener('scroll', updateActivity);
-        document.addEventListener('click', updateActivity);
-
-        // Start trackers with configured delay
-        setTimeout(() => {
-            if (typeof RIVOX.start === 'function') {
-                Logger.info("🟢 RIVOX tracking start");
-                RIVOX.start();
-            }
-        }, userConfig.initDelay);
-
-        // Set up periodic data sending
-        startPeriodicSending();
-
-        // Set up session timeout check
-        setInterval(() => {
-            const inactiveTime = Date.now() - lastActivityTime;
-            if (inactiveTime > config.sessionTimeout) {
-                Logger.info("⏹️ Session timeout due to inactivity");
-                isSessionActive = false;
-                sendDataGuaranteed('session_timeout');
-            }
-        }, 60000);
-
-        setupMetrikaTracking();
-        Logger.info('✅ RIVOX SDK initialization completed');
-    }
-
-    // Enhanced event listeners setup
-    function setupEventListeners() {
-        Logger.info('Setting up event listeners...');
-        
-        // Scroll tracking with heatmap
-        let lastScrollY = window.scrollY;
-        let scrollTimeout;
-        
-        window.addEventListener('scroll', throttle(() => {
-            updateActivity();
-            const currentScrollY = window.scrollY;
-            const scrollDelta = Math.abs(currentScrollY - lastScrollY);
-            
-            if (scrollDelta >= config.scrollChunkSize) {
-                const documentHeight = Math.max(
-                    document.body.scrollHeight,
-                    document.documentElement.scrollHeight
-                );
-                const viewportHeight = window.innerHeight;
-                const scrollPercent = (currentScrollY / (documentHeight - viewportHeight)) * 100;
-                
-                Logger.debug('Scroll event:', {
-                    position: currentScrollY,
-                    delta: scrollDelta,
-                    percent: scrollPercent.toFixed(2) + '%'
-                });
-                
-                // Ensure arrays exist
-                if (!sessionData.scroll_chunks) {
-                    sessionData.scroll_chunks = [];
-                }
-                if (!sessionData.user_behavior.scroll_depth_percentages) {
-                    sessionData.user_behavior.scroll_depth_percentages = [];
-                }
-                
-                // Add scroll data
-                sessionData.scroll_chunks.push({
-                    timestamp: Date.now(),
-                    position: currentScrollY,
-                    delta: scrollDelta,
-                    viewport_height: viewportHeight,
-                    document_height: documentHeight,
-                    percent: scrollPercent
-                });
-
-                // Update scroll depth percentages
-                sessionData.user_behavior.scroll_depth_percentages.push({
-                    depth: scrollPercent,
-                    timestamp: Date.now()
-                });
-                
-                // Update max scroll depth
-                sessionData.scroll_depth_max = Math.max(
-                    sessionData.scroll_depth_max || 0,
-                    scrollPercent
-                );
-                
-                lastScrollY = currentScrollY;
-            }
-
-            // Clear existing timeout
-            if (scrollTimeout) {
-                clearTimeout(scrollTimeout);
-            }
-
-            // Set new timeout
-            scrollTimeout = setTimeout(() => {
-                const maxScrollPercent = Math.max(
-                    ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)
-                );
-                Logger.debug('Max scroll depth:', maxScrollPercent.toFixed(2) + '%');
-            }, 1000);
-
-            // Check if we should send data
-            if (shouldSendData()) {
-                Logger.info('Sending data after accumulating events');
-                sendSessionSummary();
-            }
-        }, 100));
-
-        // Hover tracking
-        let hoverStartTime;
-        let hoveredElement;
-
-            document.addEventListener('mouseover', throttle((e) => {
-            updateActivity();
-                const target = e.target;
-                if (isImportantElement(target)) {
-                hoverStartTime = Date.now();
-                hoveredElement = target;
-                
-                Logger.debug('Hover event started:', {
-                    element: getElementPath(target)
-                });
-            }
-
-            // Check if we should send data
-            if (shouldSendData()) {
-                Logger.info('Sending data after accumulating events');
-                sendSessionSummary();
-            }
-            }, 100));
-
-            document.addEventListener('mouseout', throttle((e) => {
-            updateActivity();
-                const target = e.target;
-            if (isImportantElement(target) && hoverStartTime && target === hoveredElement) {
-                const hoverDuration = Date.now() - hoverStartTime;
-                
-                Logger.debug('Hover event completed:', {
-                    element: getElementPath(target),
-                    duration: hoverDuration + 'ms'
-                });
-                
-                sessionData.hover_events.push({
-                        timestamp: Date.now(),
-                    element: getElementPath(target),
-                    duration: hoverDuration,
-                    start_time: hoverStartTime
-                });
-
-                hoverStartTime = null;
-                hoveredElement = null;
-            }
-        }, 100));
-
-        // Click tracking
-            document.addEventListener('click', (e) => {
-            updateActivity();
-            
-            // Найдем ближайший важный элемент
-            let target = e.target;
-            let closestCTA = null;
-            
-            // Поищем ближайший CTA элемент вверх по DOM
-            while (target && target !== document) {
-                if (isCTAElement(target)) {
-                    closestCTA = target;
-                    break;
-                }
-                target = target.parentElement;
-            }
-
-            // Используем найденный CTA или исходный элемент
-            const clickTarget = closestCTA || e.target;
-            
-            // Получаем точные координаты относительно страницы
-            const rect = clickTarget.getBoundingClientRect();
-            const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
-            const scrollY = window.pageYOffset || document.documentElement.scrollTop;
-
-            const clickData = {
-                        timestamp: Date.now(),
-                element: getElementPath(clickTarget),
-                element_text: (clickTarget.textContent || clickTarget.value || '').trim(),
-                position: {
-                    x: Math.round(e.clientX + scrollX), // абсолютная позиция
-                    y: Math.round(e.clientY + scrollY),
-                    relative: {
-                        x: Math.round(e.clientX), // относительно viewport
-                        y: Math.round(e.clientY)
-                    },
-                    element: { // позиция элемента
-                        top: Math.round(rect.top + scrollY),
-                        left: Math.round(rect.left + scrollX),
-                        width: Math.round(rect.width),
-                        height: Math.round(rect.height)
-                    }
-                },
-                is_cta: isCTAElement(clickTarget)
-            };
-
-            Logger.debug('🖱️ Click event captured:', clickData);
-            
-            sessionData.cta_clicks.push(clickData);
-            sessionData.user_behavior.total_interactions++;
-            
-            if (!sessionData.user_behavior.time_to_first_interaction) {
-                sessionData.user_behavior.time_to_first_interaction = Date.now() - sessionData.start_time;
-            }
-
-            // Update time between clicks
-            if (!sessionData.user_behavior.time_between_clicks) {
-                sessionData.user_behavior.time_between_clicks = [];
-            }
-            const lastClick = sessionData.user_behavior.time_between_clicks[
-                sessionData.user_behavior.time_between_clicks.length - 1
-            ];
-            if (lastClick) {
-                sessionData.user_behavior.time_between_clicks.push({
-                        timestamp: Date.now(),
-                    delta: Date.now() - lastClick.timestamp
-                });
-            } else {
-                sessionData.user_behavior.time_between_clicks.push({
-                    timestamp: Date.now(),
-                    delta: 0
-                });
-            }
-
-            // Проверяем условия отправки вместо немедленной отправки
-            if (shouldSendData()) {
-                Logger.info('Accumulated enough events, sending data');
-                sendDataGuaranteed('events_threshold').catch(Logger.error);
-            }
-        });
-
-        // Mouse movement tracking
-        let mouseMoveTimeout;
-        let mousePoints = new Map(); // Используем Map для оптимизации
-
-        document.addEventListener('mousemove', throttle((e) => {
-            updateActivity();
-            
-            const x = Math.floor(e.clientX / 10) * 10; // группируем по 10px
-            const y = Math.floor(e.clientY / 10) * 10;
-            const key = `${x},${y}`;
-            
-            mousePoints.set(key, (mousePoints.get(key) || 0) + 1);
-            
-            // Очищаем предыдущий таймаут
-            if (mouseMoveTimeout) {
-                clearTimeout(mouseMoveTimeout);
-            }
-            
-            // Сохраняем данные каждые 5 секунд
-            mouseMoveTimeout = setTimeout(() => {
-                if (!sessionData.user_behavior.mouse_movement_heatmap) {
-                    sessionData.user_behavior.mouse_movement_heatmap = [];
-                }
-                
-                mousePoints.forEach((count, key) => {
-                    const [x, y] = key.split(',').map(Number);
-                    sessionData.user_behavior.mouse_movement_heatmap.push({
-                        x,
-                        y,
-                        count,
-                        timestamp: Date.now()
-                    });
-                });
-                
-                mousePoints.clear();
-            }, 5000);
-        }, 100));
-
-        // Form tracking
-        document.addEventListener('submit', (e) => {
-            // Проверяем, что форма существует и не пустая
-            if (!e.target || !e.target.elements) return;
-            
-            if (!sessionData.form_interactions) {
-                sessionData.form_interactions = [];
-            }
-            
-            const formData = {
-                timestamp: Date.now(),
-                form_id: e.target.id || e.target.name || 'unknown',
-                fields: Array.from(e.target.elements)
-                    .filter(el => el.name) // Фильтруем только элементы с именем
-                    .map(el => ({
-                        name: el.name,
-                        type: el.type,
-                        value: el.value
-                    }))
-            };
-            
-            sessionData.form_interactions.push(formData);
-            
-            // Проверяем условия отправки данных
-            if (shouldSendData()) {
-                Logger.info('Sending data after form submission');
-                sendSessionSummary();
-            }
-        });
-
-        Logger.info('Event listeners setup complete');
-    }
-
-    // Send data using JSONP
-    function sendDataJSONP(data) {
-        return new Promise((resolve, reject) => {
-            try {
-                const callbackName = 'rivox_callback_' + Date.now();
-                const script = document.createElement('script');
-                const endpoint = getEndpointUrl();
-                
-                // Add origin to data for CORS
-                data.origin = window.location.origin;
-                
-                // Create URL with parameters
-                const params = new URLSearchParams({
-                    callback: callbackName,
-                    data: JSON.stringify(data),
-                    token: config.token,
-                    origin: window.location.origin
-                });
-                
-                script.src = `${endpoint}?${params.toString()}`;
-                
-                // Setup callback
-                window[callbackName] = function(response) {
-                    Logger.debug('JSONP response received:', response);
-                    document.body.removeChild(script);
-                    delete window[callbackName];
-                    resolve(response);
-                };
-                
-                // Setup error handling
-                script.onerror = () => {
-                    document.body.removeChild(script);
-                    delete window[callbackName];
-                    reject(new Error('JSONP request failed'));
-                };
-                
-                // Setup timeout
-                const timeout = setTimeout(() => {
-                    if (window[callbackName]) {
-                        document.body.removeChild(script);
-                        delete window[callbackName];
-                        reject(new Error('JSONP request timeout'));
-                    }
-                }, 5000);
-                
-                // Append script to document
-                document.body.appendChild(script);
-                Logger.debug('📡 JSONP request sent to:', script.src);
-                
-            } catch (error) {
-                Logger.error('❌ Error in sendDataJSONP:', error);
-                reject(error);
-            }
-        });
-    }
-
-    // Modify sendSessionSummary to add logging
-    async function sendSessionSummary() {
-        if (!sessionData || !isSessionActive) {
-            Logger.warn('No session data to send or session not active');
-            return;
-        }
-
-        Logger.info('Preparing to send session data...');
-        
-        // Update final duration before sending
-        const now = Date.now();
-        sessionData.duration = now - sessionData.start_time;
-        sessionData.end_time = new Date(now).toISOString();
-        
-        // Добавляем подробное логирование данных сессии
-        Logger.info('Current session data:', {
-            client_id: sessionData.client_id,
-            session_id: sessionData.session_id,
-            goals_count: sessionData.metrika_goals?.length || 0,
-            goals: sessionData.metrika_goals || [],
-            conversion_data: sessionData.conversion_data || {},
-            duration: sessionData.duration
-        });
-
-        // Проверяем и логируем состояние целей
-        if (sessionData.metrika_goals && sessionData.metrika_goals.length > 0) {
-            Logger.info('Goals found in session data:', sessionData.metrika_goals);
-        } else {
-            Logger.warn('No goals found in session data');
-        }
-
-        // Update ML features before sending
-        updateMLFeatures();
-
-        // Prepare data for sending
-        const summary = {
-            client_id: sessionData.client_id,
-            client_token: config.token,
-            session_id: sessionData.session_id,
-            timestamp: new Date().toISOString(),
-            sdk_version: SDK_VERSION,
-            
-            // Page info
-            page_url: window.location.href,
-            domain: window.location.hostname,
-            path: window.location.pathname,
-            
-            // Session metrics
-            session_duration: Date.now() - sessionData.start_time,
-            time_to_first_interaction: sessionData.user_behavior.time_to_first_interaction,
-            total_interactions: sessionData.user_behavior.total_interactions,
-            
-            // Scroll data
-            scroll_depth_max: sessionData.user_behavior.scroll_depth_percentages ? 
-                Math.max(...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0,
-            scroll_count: sessionData.scroll_chunks.length,
-            scroll_chunks: sessionData.scroll_chunks,
-            
-            // Click data
-            click_count: sessionData.cta_clicks.length,
-            clicks: sessionData.cta_clicks,
-            
-            // Hover data
-            hover_count: sessionData.hover_events.length,
-            hovers: sessionData.hover_events,
-
-            // UTM Data
-            utm_data: sessionData.utm_data,
-
-            // Metrika Goals and Conversion Data
-            metrika_goals: sessionData.metrika_goals || [],
-            conversion_data: sessionData.conversion_data || {},
-            
-            // User Behavior
-            user_behavior: sessionData.user_behavior,
-
-            // ML Features
-            ml_features: sessionData.ml_features
+        // 1. Преобразуем названия полей в короткие коды для экономии трафика
+        const fieldMapping = {
+            client_id: 'cid',
+            session_id: 'sid',
+            timestamp: 'ts',
+            sdk_version: 'sv',
+            metrika_goals: 'mg',
+            scroll_chunks: 'sc',
+            cta_clicks: 'cc',
+            hover_events: 'he',
+            form_interactions: 'fi',
+            user_behavior: 'ub',
+            ml_features: 'ml'
         };
-
-        // Проверяем и логируем данные перед отправкой
-        Logger.info('Data to be sent:', {
-            goals_count: summary.metrika_goals.length,
-            goals: summary.metrika_goals,
-            conversion_data: summary.conversion_data
-        });
-
-        let retryCount = 0;
-        const maxRetries = 3;
-        const retryDelay = 1000; // 1 second
-
-        while (retryCount < maxRetries) {
-            try {
-                // Try direct POST first
-                try {
-                    Logger.info(`Attempting POST request (attempt ${retryCount + 1}/${maxRetries})...`);
-                    const response = await fetch(config.endpoint, {
-                method: 'POST',
-                headers: {
-                            'Content-Type': 'application/json',
-                            'Origin': window.location.origin
-                        },
-                        body: JSON.stringify(summary)
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-
-                    const result = await response.json();
-                    Logger.info('✅ POST request successful:', result);
-                    return result;
-                } catch (error) {
-                    Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
-                    
-                    // If we're out of retries, try beacon API as last resort
-                    if (retryCount === maxRetries - 1 && navigator.sendBeacon) {
-                        try {
-                            Logger.info('Trying beacon API as last resort...');
-                            const blob = new Blob([JSON.stringify(summary)], {
-                                type: 'application/json'
-                            });
-                            const success = navigator.sendBeacon(config.endpoint, blob);
-                            if (success) {
-                                Logger.info('✅ Data sent via beacon API');
-                                return { success: true, method: 'beacon' };
-                            }
-                        } catch (beaconError) {
-                            Logger.error('Beacon API failed:', beaconError);
-                        }
-                    }
-                    
-                    // Wait before retry
-                    await new Promise(resolve => setTimeout(resolve, retryDelay));
-                    retryCount++;
-                }
-            } catch (error) {
-                Logger.error(`Failed to send data (attempt ${retryCount + 1}/${maxRetries}):`, error);
-                if (retryCount === maxRetries - 1) {
-                    throw error;
-                }
-                await new Promise(resolve => setTimeout(resolve, retryDelay));
-                retryCount++;
-            }
-        }
-
-        throw new Error(`Failed to send data after ${maxRetries} attempts`);
-    }
-
-    // Start periodic sending
-    function startPeriodicSending() {
-        if (sendTimer) {
-            clearInterval(sendTimer);
-        }
-
-        sendTimer = setInterval(() => {
-            if (isSessionActive) {
-                sendQueuedData();
-            }
-        }, config.sendDelay);
-    }
-
-    // Helper functions
-    function throttle(fn, delay) {
-        let lastCall = 0;
-        return function(...args) {
-            const now = Date.now();
-            if (now - lastCall >= delay) {
-                lastCall = now;
-                return fn.apply(this, args);
-            }
-        };
-    }
-
-    function generateClientId() {
-        return new Promise((resolve) => {
-            // 1. Сначала пробуем получить из бэкапа
-            const backupId = localStorage.getItem('_ym_client_id_backup');
-            if (backupId) {
-                Logger.info('Using backed up Yandex.Metrika client ID:', backupId);
-                resolve(backupId);
-                return;
-            }
-
-            // 2. Пробуем получить из куки Метрики
-            const ymUid = getCookie('_ym_uid');
-            if (ymUid) {
-                Logger.info('Using Yandex.Metrika cookie ID:', ymUid);
-                try {
-                    localStorage.setItem('_ym_client_id_backup', ymUid);
-                } catch (e) {
-                    Logger.warn('Could not save client ID to localStorage:', e);
-                }
-                resolve(ymUid);
-                return;
-            }
-
-            // 3. Пробуем получить напрямую из Метрики
-            const getFromMetrika = (attempts = 0, maxAttempts = 5) => {
-                if (attempts >= maxAttempts) {
-                    // Если не удалось получить ID, используем временный
-                    const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2);
-                    Logger.info('Using temporary client ID:', tempId);
-                    resolve(tempId);
-                    return;
-                }
-
-                // Получаем ID счетчика
-                let counterId = getYandexCounterId();
-
-                if (!counterId) {
-                    setTimeout(() => getFromMetrika(attempts + 1), 1000);
-                    return;
-                }
-
-                try {
-                    ym(counterId, 'getClientID', function(clientID) {
-                        if (clientID) {
-                            Logger.info('Got client ID from Yandex.Metrika:', clientID);
-                            try {
-                                localStorage.setItem('_ym_client_id_backup', clientID);
-                            } catch (e) {
-                                Logger.warn('Could not save client ID to localStorage:', e);
-                            }
-                            resolve(clientID);
-                        } else {
-                            setTimeout(() => getFromMetrika(attempts + 1), 1000);
-                        }
-                    });
-                } catch (e) {
-                    setTimeout(() => getFromMetrika(attempts + 1), 1000);
-                }
-            };
-
-            getFromMetrika();
-        });
-    }
-
-    function getCookie(name) {
-        const matches = document.cookie.match(new RegExp(
-            "(?:^|; )" + name.replace(/([\.$?*|{}\(\)\[\]\\\/\+^])/g, '\\$1') + "=([^;]*)"
-        ));
-        return matches ? decodeURIComponent(matches[1]) : null;
-    }
-
-    function generateSessionId() {
-        return Date.now().toString(36) + Math.random().toString(36).substr(2);
-    }
-
-    function getElementPath(element) {
-        if (!element) return '';
         
-        const path = [];
-        let currentElement = element;
-        
-        while (currentElement) {
-            let selector = currentElement.tagName ? currentElement.tagName.toLowerCase() : '';
-            if (currentElement.id) {
-                selector += `#${currentElement.id}`;
-            } else if (currentElement.className && typeof currentElement.className === 'string') {
-                selector += `.${currentElement.className.split(' ').join('.')}`;
-            }
-            path.unshift(selector);
-            currentElement = currentElement.parentElement;
-        }
-        return path.join(' > ');
-    }
-
-    function isImportantElement(element) {
-        if (!element) return false;
-        
-        // Расширенный список важных тегов
-        const importantTags = [
-            'A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 
-            'LABEL', 'FORM', 'IMG', 'VIDEO', 'IFRAME'
-        ];
-        
-        // Важные классы и атрибуты
-        const importantClasses = [
-            'btn', 'button', 'link', 'cta', 'card', 
-            'product', 'price', 'buy', 'cart', 'checkout',
-            'modal', 'popup', 'form', 'submit', 'order'
-        ];
-
-        // Важные data-атрибуты
-        const importantDataAttrs = [
-            'data-rivox-important',
-            'data-product',
-            'data-sku',
-            'data-price',
-            'data-category'
-        ];
-
-        return (
-            importantTags.includes(element.tagName) ||
-            (element.className && typeof element.className === 'string' && importantClasses.some(cls => 
-                element.className.toLowerCase().includes(cls)
-            )) ||
-            importantDataAttrs.some(attr => element.hasAttribute(attr))
-        );
-    }
-
-    function isCTAElement(element) {
-        if (!element) return false;
-
-        // CTA теги
-        const ctaTags = [
-            'A', 'BUTTON', 'INPUT[type="submit"]', 'INPUT[type="button"]',
-            'IMG[data-product-id]', // Картинки товаров
-            'DIV.price_matrix_block', // Блоки с ценами
-            'DIV.buy_block' // Блоки покупки
-        ];
-        
-        // CTA классы
-        const ctaClasses = [
-            'btn', 'button', 'cta', 'buy', 'add-to-cart', 'checkout',
-            'order', 'submit', 'callback', 'contact', 'phone',
-            'price', 'price_matrix_block', 'buy_block',
-            'product-item', 'product-card', 'product-detail',
-            'add_to_cart', 'quick_buy', 'fast_order'
-        ];
-
-        // CTA текст
-        const ctaTexts = [
-            'купить', 'заказать', 'добавить', 'корзин', 'оформить',
-            'позвонить', 'заказать звонок', 'отправить', 'оставить заявку',
-            'в 1 клик', 'быстрый заказ', 'быстрая покупка'
-        ];
-
-        // Проверяем элемент и его родителей
-        let currentElement = element;
-        while (currentElement && currentElement !== document) {
-            // Проверка по тегу
-            const isCtaTag = ctaTags.some(tag => {
-                const [tagName, type] = tag.split('[type="');
-                if (type) {
-                    return currentElement.tagName === tagName && currentElement.type === type.slice(0, -1);
-                }
-                if (tag.includes('.')) {
-                    const [tagNameOnly, className] = tag.split('.');
-                    return currentElement.tagName === tagNameOnly && 
-                           currentElement.className && 
-                           currentElement.className.includes(className);
-                }
-                return currentElement.tagName === tag;
-            });
-
-            // Проверка по классам
-            const hasCtaClass = currentElement.className && 
-                typeof currentElement.className === 'string' && 
-                ctaClasses.some(cls => currentElement.className.toLowerCase().includes(cls));
-
-            // Проверка по тексту
-            const elementText = (currentElement.textContent || currentElement.value || '').toLowerCase();
-            const hasCtaText = ctaTexts.some(text => elementText.includes(text));
-
-            // Проверка по data-атрибутам
-            const hasCtaAttr = currentElement.hasAttribute('data-rivox-cta') || 
-                              currentElement.hasAttribute('data-cta') ||
-                              currentElement.hasAttribute('data-buy') ||
-                              currentElement.hasAttribute('data-product-buy') ||
-                              currentElement.hasAttribute('data-product-id');
-
-            if (isCtaTag || hasCtaClass || hasCtaText || hasCtaAttr) {
-                return true;
-            }
-
-            currentElement = currentElement.parentElement;
-        }
-
-        return false;
-    }
-
-    // Expose public API
-    window.RIVOX = {
-        init: init,
-        sendSessionSummary,
-        getSessionData: () => sessionData,
-        config,
-        sendDataGuaranteed,
-        getSessionData: () => sessionData
-    };
-
-    // Initialize when Metrika is ready
-    (function waitForYaMetrika(attempts = 0, maxAttempts = 20) {
-        if (attempts >= maxAttempts) {
-            Logger.error('Failed to detect Yandex.Metrika after', maxAttempts, 'attempts');
-            return;
-        }
-
-        if (typeof ym === 'undefined' && typeof Ya === 'undefined' && !window.yaCounter) {
-            setTimeout(() => waitForYaMetrika(attempts + 1), 500);
-            return;
-        }
-
-        // Initialize SDK only after Metrika is detected
-        init().catch(error => {
-            Logger.error('Failed to initialize RIVOX SDK:', error);
-        });
-    })();
-
-    // Auto-initialize after DOM is loaded
-    document.addEventListener('DOMContentLoaded', function() {
-        setTimeout(window.RIVOX.init, config.initDelay);
-    });
-
-    Logger.info('SDK loaded successfully');
-
-    function addToFailedQueue(data) {
-        if (failedQueue.length >= config.maxQueueSize) {
-            failedQueue.shift(); // Remove oldest item if queue is full
-        }
-        failedQueue.push({
-            data,
-            attempts: 0,
-            timestamp: Date.now()
-        });
-        
-        // Start retry timer if not running
-        if (!retryTimer) {
-            startRetryTimer();
-        }
-    }
-
-    function startRetryTimer() {
-        if (retryTimer) {
-            clearInterval(retryTimer);
-        }
-        
-        retryTimer = setInterval(processFailedQueue, config.retryDelay);
-    }
-
-    async function processFailedQueue() {
-        if (failedQueue.length === 0) {
-            clearInterval(retryTimer);
-            retryTimer = null;
-            return;
-        }
-
-        const item = failedQueue[0];
-        
-        // Skip if duplicate
-        if (isDuplicate(item.data)) {
-            failedQueue.shift();
-            return;
-        }
-
-        if (item.attempts >= config.maxRetries) {
-            Logger.warn(`Dropping data after ${config.maxRetries} failed attempts`, item.data);
-            failedQueue.shift();
-            return;
-        }
-
-        try {
-            await sendDataWithFallback(item.data);
-            failedQueue.shift();
-            Logger.info('Successfully sent queued data');
-        } catch (error) {
-            item.attempts++;
-            Logger.warn(`Retry attempt ${item.attempts} failed`, error);
+        // Функция для рекурсивного переименования ключей объекта
+        const shortenKeys = (obj, mapping) => {
+            if (!obj || typeof obj !== 'object') return obj;
             
-            // Move to end of queue if more retries available
-            if (item.attempts < config.maxRetries) {
-                failedQueue.push(failedQueue.shift());
+            // Для массивов обрабатываем каждый элемент
+            if (Array.isArray(obj)) {
+                return obj.map(item => shortenKeys(item, mapping));
             }
-        }
-    }
-
-    // Modify sendDataWithFallback to add logging
-    async function sendDataWithFallback(data) {
-        const preparedData = {
-            ...data,
-            token: config.token,
-            origin: window.location.origin
-        };
-
-        const dataSize = JSON.stringify(preparedData).length;
-        Logger.info(`📦 Data size: ${(dataSize / 1024 / 1024).toFixed(2)}MB`);
-
-        // Пробуем основной метод - POST
-        try {
-            const response = await fetch(getEndpointUrl(), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Origin': window.location.origin
-                },
-                body: JSON.stringify(preparedData)
-            });
             
-            if (response.ok) {
-                Logger.info('✅ Data sent successfully via POST');
-                return { success: true, method: 'post' };
+            // Для объектов переименовываем ключи
+            const result = {};
+            for (const [key, value] of Object.entries(obj)) {
+                const shortKey = mapping[key] || key;
+                result[shortKey] = shortenKeys(value, mapping);
             }
-        } catch (error) {
-            Logger.debug('POST failed, trying alternative methods');
-        }
-
-        // Пробуем beacon API
-        if (navigator.sendBeacon) {
-            try {
-                const blob = new Blob([JSON.stringify(preparedData)], {
-                    type: 'application/json'
-                });
-                
-                if (navigator.sendBeacon(getEndpointUrl(), blob)) {
-                    Logger.info('✅ Data sent via beacon API');
-                    return { success: true, method: 'beacon' };
-                }
-            } catch (error) {
-                Logger.debug('Beacon failed, trying JSONP');
-            }
-        }
-
-        // Для маленьких данных пробуем JSONP
-        if (JSON.stringify(preparedData).length < 1500) {
-            try {
-                const result = await sendDataJSONP(preparedData);
-                Logger.info('✅ Data sent via JSONP');
-                return { success: true, method: 'jsonp' };
-            } catch (error) {
-                Logger.debug('JSONP failed, adding to queue');
-            }
-        }
-
-        // Если все методы не сработали, добавляем в очередь
-        addToFailedQueue(preparedData);
-        return { queued: true };
-    }
-
-    function shouldSendData() {
-        if (!sessionData) return false;
-        
-        // Логируем структуру данных
-        Logger.info('Session data structure:', {
-            metrika_goals_count: sessionData.metrika_goals?.length || 0,
-            form_interactions_count: sessionData.form_interactions?.length || 0,
-            scroll_chunks_count: sessionData.scroll_chunks?.length || 0,
-            cta_clicks_count: sessionData.cta_clicks?.length || 0,
-            page_history_count: sessionData.page_history?.length || 0
-        });
-        
-        // 1. Всегда отправляем при конверсиях/важных событиях
-        if (
-            sessionData.metrika_goals.length > 0 || // Есть цели
-            sessionData.form_interactions.length > 0 // Есть заполнения форм
-        ) {
-            Logger.debug('Sending data due to conversion events');
-            return true;
-        }
-
-        // 2. Проверка минимального времени на сайте
-        const timeOnSite = Date.now() - sessionData.start_time;
-        if (timeOnSite < 25000) { // меньше 25 секунд
-            Logger.debug('Session too short (<25s), skipping data send');
-            return false;
-        }
-
-        // 3. Для сессий дольше 25 секунд отправляем при накоплении данных
-        const shouldSend = (
-            sessionData.scroll_chunks.length >= 5 || // Хотя бы немного скроллили
-            timeOnSite >= 60000 || // 1 минута на сайте
-            sessionData.cta_clicks.length > 0 // Хотя бы один клик
-        );
-
-        if (shouldSend) {
-            Logger.debug('Sending data: session longer than 25s and has enough events');
-        }
-
-        return shouldSend;
-    }
-
-    // Yandex.Metrika goal tracking
-    function setupMetrikaTracking(attempts = 0, maxAttempts = 5) {
-        const counterId = getYandexCounterId();
-        Logger.info('Setting up Metrika tracking for counter:', counterId);
-        
-        if (!counterId) {
-            if (attempts < maxAttempts) {
-                Logger.info(`Counter ID not found, retrying in 1s (attempt ${attempts + 1}/${maxAttempts})`);
-                setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
-                return;
-            }
-            Logger.warn('Failed to find Yandex.Metrika counter ID after max attempts');
-            return;
-        }
-
-        // Check if counter object exists
-        if (!window[`yaCounter${counterId}`]) {
-            Logger.warn(`Counter object yaCounter${counterId} not found`);
-            if (attempts < maxAttempts) {
-                setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
-                return;
-            }
-            return;
-        }
-
-        // Store original reachGoal function
-        const originalReachGoal = window[`yaCounter${counterId}`].reachGoal;
-        Logger.info('Original reachGoal function:', originalReachGoal);
-        
-        if (!originalReachGoal) {
-            Logger.warn('reachGoal function not found on counter object');
-            if (attempts < maxAttempts) {
-                setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
-                return;
-            }
-            return;
-        }
-
-        Logger.info('Successfully found Metrika counter and reachGoal function');
-
-        // Override reachGoal to capture goals
-        window[`yaCounter${counterId}`].reachGoal = function(goalName, params) {
-            // Log the call immediately
-            Logger.info(`🎯 Metrika reachGoal intercepted: ${goalName}`, params || {});
-            
-            // Call original function first
-            const result = originalReachGoal.apply(this, arguments);
-
-            // Track goal in our system
-            if (sessionData && sessionData.metrika_goals) {
-                const goalData = {
-                    name: goalName,
-                    params: params || {},
-                    timestamp: Date.now()
-                };
-
-                // Log before adding to session data
-                Logger.info('Adding goal to session data:', goalData);
-                Logger.info('Current session data:', {
-                    metrika_goals: sessionData.metrika_goals,
-                    conversion_data: sessionData.conversion_data
-                });
-
-                // Ensure arrays exist
-                if (!sessionData.metrika_goals) {
-                    sessionData.metrika_goals = [];
-                }
-                if (!sessionData.conversion_data) {
-                    sessionData.conversion_data = {
-                        goals_reached: [],
-                        ecommerce_data: [],
-                        last_goal_timestamp: null,
-                        conversion_path: []
-                    };
-                }
-                if (!sessionData.conversion_data.goals_reached) {
-                    sessionData.conversion_data.goals_reached = [];
-                }
-                if (!sessionData.conversion_data.conversion_path) {
-                    sessionData.conversion_data.conversion_path = [];
-                }
-
-                // Add goal to arrays
-                sessionData.metrika_goals.push(goalData);
-                sessionData.conversion_data.goals_reached.push(goalData);
-                sessionData.conversion_data.last_goal_timestamp = Date.now();
-                sessionData.conversion_data.conversion_path.push({
-                    type: 'goal',
-                    name: goalName,
-                    timestamp: Date.now()
-                });
-
-                // Log after adding to session data
-                Logger.info('Goal data added to session:', goalData);
-                Logger.info('Updated session data:', {
-                    metrika_goals: sessionData.metrika_goals,
-                    conversion_data: sessionData.conversion_data
-                });
-
-                // Send data after important goals
-                if (isImportantGoal(goalName)) {
-                    Logger.info(`Important goal reached (${goalName}), sending data...`);
-                    sendSessionSummary().catch(error => 
-                        Logger.error('Failed to send data after goal:', error)
-                    );
-                }
-            } else {
-                Logger.error('Session data or metrika_goals not initialized');
-            }
-
             return result;
         };
-
-        Logger.info('✅ Metrika tracking setup completed');
-    }
-
-    // Important goals that should trigger immediate data send
-    function isImportantGoal(goalName) {
-        const importantGoals = [
-            'order',
-            'purchase',
-            'lead',
-            'contact',
-            'form',
-            'callback',
-            'phone'
-        ];
-        return importantGoals.some(g => goalName.toLowerCase().includes(g));
-    }
-
-    // Add reliable data collection and transmission
-    function saveSessionToStorage() {
-        try {
-            localStorage.setItem('rivox_current_session', JSON.stringify(sessionData));
-            Logger.debug('Session data saved to localStorage');
-        } catch (e) {
-            Logger.warn('Failed to save session to localStorage:', e);
-        }
-    }
-
-    function loadSessionFromStorage() {
-        try {
-            const saved = localStorage.getItem('rivox_current_session');
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                // Only restore if session is recent (last 30 minutes)
-                if (Date.now() - parsed.last_activity < config.sessionTimeout) {
-                    Logger.info('Restoring previous session');
-                    return parsed;
+        
+        // Сжимаем только если размер данных превышает порог
+        if (JSON.stringify(data).length > COMPRESSION_THRESHOLD) {
+            // 2. Удаляем null/undefined значения
+            const removeEmpty = (obj) => {
+                if (!obj || typeof obj !== 'object') return obj;
+                
+                // Для массивов обрабатываем каждый элемент
+                if (Array.isArray(obj)) {
+                    return obj.map(removeEmpty).filter(x => x !== null && x !== undefined);
                 }
-            }
-        } catch (e) {
-            Logger.warn('Failed to load session from localStorage:', e);
-        }
-        return null;
-    }
-
-    // Enhanced session data structure
-    function createSessionData(clientId) {
-        const now = Date.now();
-        return {
-            client_id: clientId,
-            client_token: config.token,
-            session_id: generateSessionId(),
-            start_time: now,
-            last_activity: now,
-            device_info: getBrowserInfo(),
-            page_history: [{
-                timestamp: now,
-                url: window.location.href,
-                referrer: document.referrer,
-                time_spent: 0
-            }],
-            scroll_chunks: [],
-            hover_events: [],
-            form_interactions: [],
-            cta_clicks: [],
-            modal_interactions: [],
-            utm_data: extractUTMData(),
-            metrika_goals: [],
-            conversion_data: {
-                goals_reached: [],
-                ecommerce_data: [],
-                last_goal_timestamp: null,
-                conversion_path: []
-            },
-            traffic_source: {
-                referrer: document.referrer,
-                landing_page: window.location.href,
-                entry_point: window.location.pathname
-            },
-            user_behavior: {
-                time_to_first_interaction: null,
-                total_interactions: 0,
-                interaction_frequency: [],
-                scroll_depth_percentages: [],
-                time_between_clicks: [],
-                mouse_movement_heatmap: [],
-                viewport_size: {
-                    width: window.innerWidth,
-                    height: window.innerHeight
+                
+                // Для объектов удаляем null/undefined значения
+                const result = {};
+                for (const [key, value] of Object.entries(obj)) {
+                    if (value !== null && value !== undefined) {
+                        result[key] = removeEmpty(value);
+                    }
                 }
-            },
-            ml_features: {
-                interest_signals: [],
-                behavior_patterns: [],
-                user_segment: null,
-                conversion_probability: null,
-                funnel_analysis: {}
-            }
-        };
-    }
-
-    // Get browser and device info
-    function getBrowserInfo() {
-        const ua = navigator.userAgent;
-        const browserData = {
-            device_type: 'desktop',
-            browser: 'unknown',
-            platform: navigator.platform
-        };
-
-        // Determine device type
-        if (/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(ua)) {
-            browserData.device_type = 'tablet';
-        } else if (/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(ua)) {
-            browserData.device_type = 'mobile';
-        }
-
-        // Determine browser
-        if (ua.indexOf("Chrome") > -1) {
-            browserData.browser = "Chrome";
-        } else if (ua.indexOf("Safari") > -1) {
-            browserData.browser = "Safari";
-        } else if (ua.indexOf("Firefox") > -1) {
-            browserData.browser = "Firefox";
-        } else if (ua.indexOf("MSIE") > -1 || ua.indexOf("Trident/") > -1) {
-            browserData.browser = "IE";
-        } else if (ua.indexOf("Edge") > -1) {
-            browserData.browser = "Edge";
-        } else if (ua.indexOf("Opera") > -1 || ua.indexOf("OPR") > -1) {
-            browserData.browser = "Opera";
-        }
-
-        return browserData;
-    }
-
-    // Update page history on navigation
-    function updatePageHistory() {
-        if (!sessionData || !sessionData.page_history) return;
-        
-        const currentPage = sessionData.page_history[sessionData.page_history.length - 1];
-        if (currentPage) {
-            currentPage.time_spent = Date.now() - currentPage.timestamp;
-        }
-        
-        sessionData.page_history.push({
-            timestamp: Date.now(),
-            url: window.location.href,
-            referrer: document.referrer,
-            time_spent: 0
-        });
-        
-        saveSessionToStorage();
-    }
-
-    // Guaranteed data sending on important events
-    function sendDataGuaranteed(reason = 'manual') {
-        return new Promise((resolve, reject) => {
-            if (!sessionData) {
-                resolve();
-                return;
-            }
-
-            // Update time spent on current page
-            const currentPage = sessionData.page_history[sessionData.page_history.length - 1];
-            if (currentPage) {
-                currentPage.time_spent = Date.now() - currentPage.timestamp;
-            }
-
-            // Update ML features before sending
-            updateMLFeatures(); 
-
-            // Prepare complete session summary
-            const summary = {
-                ...sessionData,
-                send_reason: reason,
-                timestamp: new Date().toISOString(),
-                sdk_version: SDK_VERSION,
-                total_session_duration: Date.now() - sessionData.start_time
+                return result;
             };
-
-            // --- Add Duplicate Check ---
-            if (isDuplicate(summary)) {
-                Logger.info(`Duplicate data detected, skipping send (${reason})`);
-                resolve(); // Resolve successfully as we don't need to send
+            
+            // 3. Округляем числовые значения для экономии
+            const roundNumbers = (obj) => {
+                if (!obj || typeof obj !== 'object') {
+                    if (typeof obj === 'number' && !Number.isInteger(obj)) {
+                        return parseFloat(obj.toFixed(2));
+                    }
+                    return obj;
+                }
+                
+                // Для массивов обрабатываем каждый элемент
+                if (Array.isArray(obj)) {
+                    return obj.map(roundNumbers);
+                }
+                
+                // Для объектов округляем числовые значения
+                const result = {};
+                for (const [key, value] of Object.entries(obj)) {
+                    result[key] = roundNumbers(value);
+                }
+                return result;
+            };
+            
+            // Применяем все оптимизации
+            return shortenKeys(removeEmpty(roundNumbers(compressedData)), fieldMapping);
+        }
+        
+        // Для небольших данных не применяем сжатие
+        return compressedData;
+    }
+    
+    /**
+     * Основная функция отправки данных с расширенной обработкой ошибок
+     * @param {Object} data - Данные для отправки
+     * @param {Object} options - Дополнительные параметры
+     * @returns {Promise<Object>} Результат отправки
+     */
+    async function sendDataEnhanced(data, options = {}) {
+        // Валидируем данные перед отправкой
+        const validation = validateData(data);
+        
+        if (!validation.isValid) {
+            Logger.warn(`Данные не прошли валидацию: ${validation.errors.join(', ')}`);
+            // Если есть критические ошибки, которые не удалось исправить
+            if (!validation.data) {
+                return {
+                    success: false,
+                    error: 'Validation failed',
+                    errorDetails: validation.errors,
+                    code: 'VALIDATION_ERROR'
+                };
+            }
+        }
+        
+        // Используем исправленные валидатором данные
+        const validData = validation.data;
+        
+        // Подготовка данных для отправки
+        const preparedData = {
+            ...validData,
+            send_timestamp: Date.now(),
+            send_attempt: options.retryCount || 0
+        };
+        
+        // Определяем размер данных до сжатия
+        const rawData = JSON.stringify(preparedData);
+        const rawSize = new Blob([rawData]).size;
+        
+        // Проверка на слишком большой размер
+        if (rawSize > MAX_DATA_SIZE && (!options.isSegment || !options.isRetry)) {
+            Logger.warn(`Данные слишком большие: ${Math.round(rawSize / 1024)} KB, сегментируем`);
+            return await sendLargeDataInSegmentsEnhanced(preparedData);
+        }
+        
+        // Сжимаем данные, если размер превышает порог
+        const dataToSend = rawSize > COMPRESSION_THRESHOLD ? compressData(preparedData) : preparedData;
+        
+        // Преобразуем в строку JSON для отправки
+        const dataStr = JSON.stringify(dataToSend);
+        const compressedSize = new Blob([dataStr]).size;
+        
+        // Логируем информацию о сжатии
+        if (rawSize > COMPRESSION_THRESHOLD) {
+            const compressionRatio = (1 - (compressedSize / rawSize)) * 100;
+            Logger.info(`Сжатие данных: ${Math.round(rawSize / 1024)} KB -> ${Math.round(compressedSize / 1024)} KB (${compressionRatio.toFixed(1)}%)`);
+        }
+        
+        // Получаем конечную точку API
+        const apiEndpoint = options.endpoint || getApiEndpoint(); // Функция получения URL должна быть реализована
+        
+        // Запускаем таймер для контроля длительности запроса
+        const requestStartTime = Date.now();
+        const requestTimeoutId = setTimeout(() => {
+            Logger.warn(`Превышено время ожидания запроса (${REQUEST_TIMEOUT}ms)`);
+        }, REQUEST_TIMEOUT);
+        
+        try {
+            // Основной метод: fetch с timeout
+            const abortController = new AbortController();
+            const timeoutId = setTimeout(() => abortController.abort(), REQUEST_TIMEOUT);
+            
+            const response = await fetch(apiEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-SDK-Version': SDK_VERSION,
+                    'X-Compression': rawSize > COMPRESSION_THRESHOLD ? 'true' : 'false'
+                },
+                body: dataStr,
+                signal: abortController.signal,
+                // Другие параметры fetch
+                credentials: 'include',
+                mode: 'cors',
+                keepalive: compressedSize < MAX_BEACON_SIZE // Используем keepalive для небольших запросов
+            });
+            
+            // Очищаем таймауты
+            clearTimeout(timeoutId);
+            clearTimeout(requestTimeoutId);
+            
+            const requestDuration = Date.now() - requestStartTime;
+            
+            if (response.ok) {
+                let responseData;
+                try {
+                    responseData = await response.json();
+                } catch (e) {
+                    responseData = { status: 'no_json_response' };
+                }
+                
+                Logger.info(`✅ Данные успешно отправлены за ${requestDuration}ms`);
+                return {
+                    success: true,
+                    method: 'fetch',
+                    duration: requestDuration,
+                    response: responseData
+                };
+            } else {
+                // Обработка HTTP ошибок
+                let errorText = '';
+                try {
+                    errorText = await response.text();
+                } catch (e) {
+                    errorText = `Error status: ${response.status}`;
+                }
+                
+                // Определяем, нужно ли делать повторную попытку для этой ошибки
+                const shouldRetry = response.status >= 500 || response.status === 429;
+                
+                Logger.warn(`❌ Ошибка HTTP: ${response.status} ${response.statusText} за ${requestDuration}ms`);
+                
+                // Если нужно повторить и не достигнут лимит попыток
+                if (shouldRetry && (!options.retryCount || options.retryCount < MAX_SEND_RETRIES)) {
+                    return await retryWithExponentialBackoff(data, options);
+                }
+                
+                // Если достигнут лимит попыток или повтор не нужен
+                return {
+                    success: false,
+                    method: 'fetch',
+                    error: `HTTP Error: ${response.status}`,
+                    errorDetails: errorText,
+                    duration: requestDuration,
+                    code: response.status >= 500 ? 'SERVER_ERROR' : 'CLIENT_ERROR',
+                    retryAllowed: shouldRetry,
+                    retry: shouldRetry
+                };
+            }
+        } catch (error) {
+            // Очищаем таймаут запроса
+            clearTimeout(requestTimeoutId);
+            
+            const requestDuration = Date.now() - requestStartTime;
+            const errorMessage = error.name === 'AbortError' ? 'Timeout' : error.message;
+            
+            Logger.warn(`❌ Ошибка сети: ${errorMessage} за ${requestDuration}ms`);
+            
+            // Пробуем метод sendBeacon для небольших данных
+            if (navigator.sendBeacon && compressedSize < MAX_BEACON_SIZE) {
+                try {
+                    const beaconBlob = new Blob([dataStr], { type: 'application/json' });
+                    const beaconSuccess = navigator.sendBeacon(apiEndpoint, beaconBlob);
+                    
+                    if (beaconSuccess) {
+                        Logger.info(`✅ Данные успешно отправлены через Beacon API (размер: ${compressedSize} байт)`);
+                        return {
+                            success: true,
+                            method: 'beacon',
+                            fallback: true,
+                            dataSize: compressedSize
+                        };
+                    }
+                } catch (beaconError) {
+                    Logger.warn(`❌ Ошибка Beacon API: ${beaconError.message}`);
+                }
+            }
+            
+            // Если все еще не удалось отправить и не достигнут лимит повторных попыток
+            if (!options.retryCount || options.retryCount < MAX_SEND_RETRIES) {
+                return await retryWithExponentialBackoff(data, options);
+            }
+            
+            // Если достигнут лимит повторов, сохраняем для последующей отправки
+            const queued = queueForLaterSending(data);
+            
+            return {
+                success: false,
+                error: errorMessage,
+                duration: requestDuration,
+                queued: queued,
+                code: error.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK_ERROR',
+                retryExhausted: options.retryCount >= MAX_SEND_RETRIES
+            };
+        }
+    }
+    
+    /**
+     * Функция повторной отправки с экспоненциальной задержкой
+     * @param {Object} data - Данные для отправки
+     * @param {Object} options - Параметры отправки
+     * @returns {Promise<Object>} Результат повторной отправки
+     */
+    async function retryWithExponentialBackoff(data, options = {}) {
+        const retryCount = (options.retryCount || 0) + 1;
+        
+        // Вычисляем задержку с экспоненциальным ростом и случайным фактором
+        const baseDelay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount - 1);
+        const jitter = Math.random() * 0.3 + 0.85; // 0.85-1.15 случайный множитель
+        const delay = Math.min(baseDelay * jitter, MAX_RETRY_DELAY);
+        
+        Logger.info(`🔄 Запланирована повторная отправка через ${Math.round(delay)}ms (попытка ${retryCount}/${MAX_SEND_RETRIES})`);
+        
+        // Ждем перед повторной отправкой
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        // Повторный вызов с увеличенным счетчиком попыток
+        return await sendDataEnhanced(data, {
+            ...options,
+            retryCount,
+            isRetry: true
+        });
+    }
+    
+    /**
+     * Функция для отправки больших данных по частям
+     * @param {Object} data - Большие данные для отправки
+     * @returns {Promise<Object>} Результат отправки
+     */
+    async function sendLargeDataInSegmentsEnhanced(data) {
+        try {
+            let segments = [];
+            
+            // Функция для сегментации массива
+            const createSegments = (array, maxSize) => {
+                const result = [];
+                for (let i = 0; i < array.length; i += maxSize) {
+                    result.push(array.slice(i, i + maxSize));
+                }
+                return result;
+            };
+            
+            // Если есть массив событий, делим его на части
+            if (data.batch && Array.isArray(data.events) && data.events.length > MAX_SEGMENT_SIZE) {
+                // Сохраняем общие метаданные
+                const metaData = {...data};
+                delete metaData.events;
+                
+                // Делим массив событий на сегменты
+                const eventSegments = createSegments(data.events, MAX_SEGMENT_SIZE);
+                Logger.info(`Большие данные разделены на ${eventSegments.length} сегмента по ${MAX_SEGMENT_SIZE} событий`);
+                
+                // Создаем сегменты с общими метаданными и частями событий
+                segments = eventSegments.map((eventSegment, index) => ({
+                    ...metaData,
+                    events: eventSegment,
+                    segment_info: {
+                        index: index + 1,
+                        total: eventSegments.length,
+                        id: `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`,
+                        size: eventSegment.length
+                    }
+                }));
+            } else {
+                // Если нет batch или events, делим сами данные по ключам
+                const keysToDivide = Object.keys(data).filter(key => 
+                    Array.isArray(data[key]) && 
+                    data[key].length > MAX_SEGMENT_SIZE &&
+                    ['metrika_goals', 'scroll_chunks', 'cta_clicks', 'hover_events', 'form_interactions'].includes(key)
+                );
+                
+                if (keysToDivide.length > 0) {
+                    // Берем первый большой массив для сегментации
+                    const key = keysToDivide[0];
+                    const arrSegments = createSegments(data[key], MAX_SEGMENT_SIZE);
+                    
+                    Logger.info(`Сегментация по ключу ${key}: создано ${arrSegments.length} сегментов`);
+                    
+                    // Создаем сегменты с общими данными, но разными частями массива
+                    segments = arrSegments.map((arrSegment, index) => {
+                        const segmentData = {...data};
+                        segmentData[key] = arrSegment;
+                        segmentData.segment_info = {
+                            index: index + 1,
+                            total: arrSegments.length,
+                            key,
+                            id: `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`,
+                            size: arrSegment.length
+                        };
+                        return segmentData;
+                    });
+                } else {
+                    // Если нет подходящих массивов, создаем один сегмент с сокращенными данными
+                    Logger.warn('Не найдены массивы для сегментации, применяю принудительное сокращение');
+                    
+                    // Функция для удаления больших объектов и сокращения массивов
+                    const reduceLargeObjects = (obj, maxArraySize = 50) => {
+                        if (!obj || typeof obj !== 'object') return obj;
+                        
+                        // Для массивов ограничиваем размер
+                        if (Array.isArray(obj)) {
+                            return obj.slice(0, maxArraySize);
+                        }
+                        
+                        // Для объектов обрабатываем каждое свойство
+                        const result = {};
+                        for (const [key, value] of Object.entries(obj)) {
+                            // Сокращаем большие вложенные объекты
+                            if (value && typeof value === 'object') {
+                                if (Array.isArray(value) && value.length > maxArraySize) {
+                                    // Для больших массивов сохраняем начало и помечаем как сокращенные
+                                    result[key] = value.slice(0, maxArraySize);
+                                    result[`${key}_truncated`] = true;
+                                    result[`${key}_original_size`] = value.length;
+                                } else {
+                                    // Для других объектов рекурсивно сокращаем
+                                    result[key] = reduceLargeObjects(value, maxArraySize);
+                                }
+                            } else {
+                                result[key] = value;
+                            }
+                        }
+                        return result;
+                    };
+                    
+                    // Создаем один сегмент с сокращенными данными
+                    segments = [{
+                        ...reduceLargeObjects(data),
+                        is_truncated: true,
+                        truncation_info: {
+                            reason: 'size_limit',
+                            original_size: JSON.stringify(data).length,
+                            timestamp: Date.now()
+                        }
+                    }];
+                }
+            }
+            
+            // Отправляем сегменты последовательно
+            const results = [];
+            let successCount = 0;
+            let failCount = 0;
+            let queuedCount = 0;
+            
+            for (let i = 0; i < segments.length; i++) {
+                Logger.info(`Отправка сегмента ${i + 1}/${segments.length}`);
+                
+                // Отправляем сегмент с пометкой isSegment
+                const result = await sendDataEnhanced(segments[i], {
+                    isSegment: true,
+                    segmentIndex: i,
+                    totalSegments: segments.length
+                });
+                
+                results.push(result);
+                
+                if (result.success) {
+                    successCount++;
+                } else if (result.queued) {
+                    queuedCount++;
+                } else {
+                    failCount++;
+                }
+                
+                // Делаем небольшую паузу между отправками сегментов
+                if (i < segments.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                }
+            }
+            
+            // Формируем итоговый результат
+            return {
+                success: successCount === segments.length,
+                method: 'segmented',
+                segments: {
+                    total: segments.length,
+                    success: successCount,
+                    failed: failCount,
+                    queued: queuedCount
+                },
+                partial_success: successCount > 0 && successCount < segments.length
+            };
+        } catch (error) {
+            Logger.error('Ошибка при отправке сегментированных данных:', error);
+            
+            // Помещаем в очередь для повторной отправки
+            const queued = queueForLaterSending(data);
+            
+            return {
+                success: false,
+                error: error.message,
+                queued: queued,
+                code: 'SEGMENTATION_ERROR'
+            };
+        }
+    }
+    
+    /**
+     * Функция для добавления данных в очередь для отправки позже
+     * @param {Object} data - Данные для сохранения
+     * @returns {boolean} Успешно ли добавлены данные в очередь
+     */
+    function queueForLaterSending(data) {
+        try {
+            // Проверяем наличие localStorage
+            if (!window.localStorage) {
+                Logger.warn('localStorage недоступен, невозможно сохранить данные для повторной отправки');
+                return false;
+            }
+            
+            // Получаем текущую очередь или создаем новую
+            let queue = [];
+            try {
+                const queueStr = localStorage.getItem('rivox_failed_queue');
+                queue = queueStr ? JSON.parse(queueStr) : [];
+            } catch (e) {
+                Logger.warn('Ошибка при чтении очереди из localStorage, создана новая очередь');
+                queue = [];
+            }
+            
+            // Добавляем новый элемент в очередь
+            queue.push({
+                data: data,
+                timestamp: Date.now(),
+                attempts: 0,
+                next_attempt: Date.now() + 60000 // Через 1 минуту
+            });
+            
+            // Ограничиваем размер очереди
+            const MAX_QUEUE_SIZE = 20;
+            if (queue.length > MAX_QUEUE_SIZE) {
+                queue = queue.slice(-MAX_QUEUE_SIZE);
+            }
+            
+            // Сохраняем очередь
+            localStorage.setItem('rivox_failed_queue', JSON.stringify(queue));
+            
+            Logger.info(`Данные добавлены в очередь неотправленных. Размер очереди: ${queue.length}`);
+            
+            // Планируем отправку данных из очереди
+            scheduleQueueProcessing();
+            
+            return true;
+        } catch (error) {
+            Logger.error('Не удалось добавить данные в очередь неотправленных:', error);
+            return false;
+        }
+    }
+    
+    /**
+     * Планирует обработку очереди неотправленных данных
+     */
+    function scheduleQueueProcessing() {
+        // Устанавливаем таймер только если его еще нет
+        if (!window.rivoxQueueTimer) {
+            window.rivoxQueueTimer = setTimeout(() => {
+                processQueue();
+                window.rivoxQueueTimer = null;
+            }, 60000); // Через 1 минуту
+        }
+    }
+    
+    /**
+     * Обрабатывает очередь неотправленных данных
+     */
+    async function processQueue() {
+        try {
+            // Проверяем наличие localStorage
+            if (!window.localStorage) {
                 return;
             }
-            // --- End of Duplicate Check ---
-
-            // Try to send data
-            sendDataWithFallback(summary)
-                .then(() => {
-                    Logger.info(`Data sent successfully (${reason})`);
-                    // Clear localStorage after successful send
-                    localStorage.removeItem('rivox_current_session');
-                    resolve();
+            
+            // Получаем текущую очередь
+            let queue = [];
+            try {
+                const queueStr = localStorage.getItem('rivox_failed_queue');
+                if (!queueStr) return;
+                queue = JSON.parse(queueStr);
+            } catch (e) {
+                Logger.warn('Ошибка при чтении очереди из localStorage:', e);
+                return;
+            }
+            
+            if (queue.length === 0) {
+                return;
+            }
+            
+            Logger.info(`Обработка очереди неотправленных данных (${queue.length} элементов)`);
+            
+            // Фильтруем элементы, готовые для повторной отправки
+            const now = Date.now();
+            const itemsToProcess = queue.filter(item => now >= item.next_attempt);
+            
+            if (itemsToProcess.length === 0) {
+                // Если нет готовых элементов, планируем следующую проверку
+                scheduleNextQueueCheck(queue);
+                return;
+            }
+            
+            // Ограничиваем количество одновременных отправок
+            const maxBatchSize = 5;
+            const batchToSend = itemsToProcess.slice(0, maxBatchSize);
+            
+            // Отправляем элементы и обновляем очередь
+            const processResults = await Promise.all(
+                batchToSend.map(async (item) => {
+                    // Увеличиваем счетчик попыток
+                    item.attempts++;
+                    
+                    try {
+                        // Пытаемся отправить данные
+                        const result = await sendDataEnhanced(item.data, {
+                            isRetry: true,
+                            fromQueue: true,
+                            retryCount: item.attempts
+                        });
+                        
+                        // Если успешно или превышено количество попыток, удаляем из очереди
+                        if (result.success || item.attempts >= MAX_SEND_RETRIES) {
+                            return {
+                                item,
+                                success: result.success,
+                                remove: true
+                            };
+                        }
+                        
+                        // Иначе планируем следующую попытку с экспоненциальной задержкой
+                        const baseDelay = INITIAL_RETRY_DELAY * Math.pow(2, item.attempts);
+                        const delay = Math.min(baseDelay, MAX_RETRY_DELAY);
+                        item.next_attempt = now + delay;
+                        
+                        return {
+                            item,
+                            success: false,
+                            remove: false,
+                            next_attempt: item.next_attempt
+                        };
+                    } catch (error) {
+                        // В случае ошибки сохраняем элемент, но увеличиваем задержку
+                        Logger.error('Ошибка при обработке элемента очереди:', error);
+                        
+                        // Если превышено количество попыток, удаляем из очереди
+                        if (item.attempts >= MAX_SEND_RETRIES) {
+                            return {
+                                item,
+                                success: false,
+                                remove: true,
+                                error: error.message
+                            };
+                        }
+                        
+                        // Иначе планируем следующую попытку через 5 минут
+                        item.next_attempt = now + 300000; // 5 минут
+                        
+                        return {
+                            item,
+                            success: false,
+                            remove: false,
+                            error: error.message,
+                            next_attempt: item.next_attempt
+                        };
+                    }
                 })
-                .catch(error => {
-                    Logger.error(`Failed to send data (${reason}):`, error);
-                    // Save to localStorage as backup
-                    saveSessionToStorage();
-                    reject(error);
-                });
-        });
+            );
+            
+            // Обновляем очередь: удаляем успешные элементы и сохраняем остальные
+            const updatedQueue = [...queue];
+            let successCount = 0;
+            
+            // Обрабатываем результаты в обратном порядке, чтобы не нарушить индексы
+            processResults.sort((a, b) => {
+                return queue.indexOf(b.item) - queue.indexOf(a.item);
+            }).forEach(result => {
+                if (result.success) successCount++;
+                
+                if (result.remove) {
+                    // Удаляем элемент из очереди
+                    const index = updatedQueue.indexOf(result.item);
+                    if (index !== -1) {
+                        updatedQueue.splice(index, 1);
+                    }
+                }
+            });
+            
+            // Сохраняем обновленную очередь
+            localStorage.setItem('rivox_failed_queue', JSON.stringify(updatedQueue));
+            
+            // Логируем результаты
+            Logger.info(`Обработка очереди завершена: ${successCount}/${batchToSend.length} успешно, осталось ${updatedQueue.length} элементов`);
+            
+            // Планируем следующую проверку, если есть элементы в очереди
+            if (updatedQueue.length > 0) {
+                scheduleNextQueueCheck(updatedQueue);
+            }
+        } catch (error) {
+            Logger.error('Ошибка при обработке очереди неотправленных данных:', error);
+        }
     }
-
-    // Add beforeunload handler
-    window.addEventListener('beforeunload', () => {
-        sendDataGuaranteed('page_close');
-    });
-
-    // Add history change handler
-    window.addEventListener('popstate', updatePageHistory);
-    if (window.history.pushState) {
-        const originalPushState = window.history.pushState.bind(window.history);
-        window.history.pushState = function() {
-            originalPushState.apply(this, arguments);
-            updatePageHistory();
-        };
-    }
-
-    // Expose additional methods for debugging
-    window.RIVOX = {
-        ...window.RIVOX,
-        sendDataGuaranteed,
-        getSessionData: () => sessionData
-    };
-
-    // ---- New ML Features Function ----
-    function updateMLFeatures() {
-        if (!sessionData || !sessionData.ml_features) return;
+    
+    /**
+     * Планирует следующую проверку очереди на основе времени следующей попытки
+     * @param {Array} queue - Текущая очередь
+     */
+    function scheduleNextQueueCheck(queue) {
+        if (!queue || queue.length === 0) return;
         
+        // Находим ближайшее время попытки
         const now = Date.now();
-        const timeOnSite = now - sessionData.start_time;
+        let nextCheckTime = Infinity;
         
-        // Добавляем новые признаки только если они не существуют
-        if (!sessionData.ml_features.interest_signals) {
-            sessionData.ml_features.interest_signals = [];
+        for (const item of queue) {
+            if (item.next_attempt && item.next_attempt < nextCheckTime) {
+                nextCheckTime = item.next_attempt;
+            }
         }
         
-        // Добавляем новые признаки с проверкой на существование
-        const newSignals = [
-            {
-                type: 'time_on_site',
-                value: parseFloat((timeOnSite / 1000).toFixed(2)),
-                timestamp: now
-            },
-            {
-                type: 'scroll_depth',
-                value: sessionData.user_behavior.scroll_depth_percentages ? 
-                    Math.max(0, ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0,
-                timestamp: now
-            },
-            {
-                type: 'interaction_rate',
-                value: parseFloat((sessionData.user_behavior.total_interactions / (timeOnSite / 60000)).toFixed(2)),
-                timestamp: now
-            }
-        ];
+        // Если нет запланированных попыток, устанавливаем по умолчанию через 5 минут
+        if (nextCheckTime === Infinity) {
+            nextCheckTime = now + 300000; // 5 минут
+        }
         
-        // Добавляем только новые сигналы
-        newSignals.forEach(signal => {
-            if (!sessionData.ml_features.interest_signals.some(s => s.type === signal.type)) {
-                sessionData.ml_features.interest_signals.push(signal);
-            }
-        });
-
-        // Обновляем паттерны поведения
-        if (!sessionData.ml_features.behavior_patterns) {
-            sessionData.ml_features.behavior_patterns = [];
-        }
-
-        // Рассчитываем среднюю длительность наведения
-        const totalHoverDuration = sessionData.hover_events.reduce((sum, h) => sum + h.duration, 0);
-        const avgHoverDuration = totalHoverDuration / (sessionData.hover_events.length || 1);
-
-        // Обновляем паттерны
-        sessionData.ml_features.behavior_patterns = [
-            {
-                type: 'scroll_speed',
-                value: parseFloat((sessionData.scroll_chunks.length / (timeOnSite / 60000)).toFixed(2))
-            },
-            {
-                type: 'click_frequency',
-                value: parseFloat((sessionData.cta_clicks.length / (timeOnSite / 60000)).toFixed(2))
-            },
-            {
-                type: 'hover_duration_avg',
-                value: parseFloat(avgHoverDuration.toFixed(0))
-            }
-        ];
-
-        // Обновляем анализ воронки
-        if (!sessionData.ml_features.funnel_analysis) {
-            sessionData.ml_features.funnel_analysis = {};
-        }
-
-        sessionData.ml_features.funnel_analysis = {
-            page_views: sessionData.page_views?.length || 0,
-            product_views: sessionData.page_views?.filter(p => 
-                p.url.includes('/catalog/') || p.url.includes('/product/')
-            ).length || 0,
-            cart_interactions: sessionData.cta_clicks.filter(c => 
-                c.element && (
-                    c.element.toLowerCase().includes('cart') || 
-                    c.element.toLowerCase().includes('basket') ||
-                    c.element.toLowerCase().includes('add_to_cart')
-                )
-            ).length,
-            checkout_attempts: sessionData.metrika_goals.filter(g => 
-                g.name && (
-                    g.name.toLowerCase().includes('checkout') || 
-                    g.name.toLowerCase().includes('order') ||
-                    g.name.toLowerCase().includes('purchase')
-                )
-            ).length
-        };
+        // Вычисляем задержку до следующей проверки
+        const delay = Math.max(1000, nextCheckTime - now); // Минимум 1 секунда
+        
+        Logger.debug(`Следующая проверка очереди через ${Math.round(delay / 1000)} сек`);
+        
+        // Устанавливаем таймер
+        setTimeout(processQueue, delay);
     }
-    // ---- End of New ML Features Function ----
+    
+    /**
+     * Получает URL API для отправки данных
+     * @returns {string} URL API
+     */
+    function getApiEndpoint() {
+        // Эта функция должна возвращать актуальный URL для отправки данных
+        // В реальном коде может зависеть от конфигурации, окружения и т.д.
+        return window.RIVOX && window.RIVOX.config && window.RIVOX.config.endpoint || 
+               'https://rivox-data-handler-779203791697.europe-central2.run.app';
+    }
+    
+    // Экспортируем функции в глобальный объект RIVOX
+    if (!window.RIVOX) {
+        window.RIVOX = {};
+    }
+    
+    // Добавляем функции в глобальный объект RIVOX
+    window.RIVOX.sendDataEnhanced = sendDataEnhanced;
+    window.RIVOX.processQueue = processQueue;
+    window.RIVOX.validateData = validateData;
+    window.RIVOX.compressData = compressData;
+    
+    // При загрузке скрипта проверяем очередь неотправленных данных
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        // Документ уже загружен, запускаем проверку сразу
+        setTimeout(processQueue, 3000);
+    } else {
+        // Документ еще загружается, ждем событие DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(processQueue, 3000);
+        });
+    }
+    
+    // Также проверяем очередь перед закрытием страницы
+    window.addEventListener('beforeunload', () => {
+        // Пытаемся отправить данные с помощью Beacon API
+        const queue = [];
+        try {
+            const queueStr = localStorage.getItem('rivox_failed_queue');
+            if (queueStr) {
+                const queueData = JSON.parse(queueStr);
+                if (queueData && queueData.length > 0 && navigator.sendBeacon) {
+                    // Создаем единый объект для отправки
+                    const batchData = {
+                        batch: true,
+                        event_type: 'final_batch',
+                        timestamp: Date.now(),
+                        events: queueData.map(item => item.data),
+                        is_final: true
+                    };
+                    
+                    // Сжимаем данные
+                    const compressedData = compressData(batchData);
+                    
+                    // Отправляем через Beacon API
+                    const blob = new Blob([JSON.stringify(compressedData)], { 
+                        type: 'application/json' 
+                    });
+                    navigator.sendBeacon(getApiEndpoint(), blob);
+                    
+                    Logger.info('Отправлены данные из очереди перед закрытием страницы');
+                }
+            }
+        } catch (e) {
+            // Игнорируем ошибки при закрытии страницы
+        }
+    });
+    
+    // Сообщаем о готовности модуля
+    Logger.info('✅ RIVOX SDK Улучшенный модуль отправки данных загружен');
+    
 })(window); 
