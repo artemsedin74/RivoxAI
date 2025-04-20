@@ -176,6 +176,8 @@ let Logger = {
         lastActivityTime = now;
         if (sessionData) {
             sessionData.last_activity = now;
+            // Update session duration
+            sessionData.duration = now - sessionData.start_time;
         }
     }
 
@@ -854,13 +856,19 @@ let Logger = {
 
         Logger.info('Preparing to send session data...');
         
+        // Update final duration before sending
+        const now = Date.now();
+        sessionData.duration = now - sessionData.start_time;
+        sessionData.end_time = new Date(now).toISOString();
+        
         // Добавляем подробное логирование данных сессии
         Logger.info('Current session data:', {
             client_id: sessionData.client_id,
             session_id: sessionData.session_id,
             goals_count: sessionData.metrika_goals?.length || 0,
             goals: sessionData.metrika_goals || [],
-            conversion_data: sessionData.conversion_data || {}
+            conversion_data: sessionData.conversion_data || {},
+            duration: sessionData.duration
         });
 
         // Проверяем и логируем состояние целей
@@ -1216,7 +1224,10 @@ let Logger = {
     window.RIVOX = {
         init: init,
         sendSessionSummary,
-        config
+        getSessionData: () => sessionData,
+        config,
+        sendDataGuaranteed,
+        getSessionData: () => sessionData
     };
 
     // Initialize when Metrika is ready
@@ -1567,16 +1578,16 @@ let Logger = {
 
     // Enhanced session data structure
     function createSessionData(clientId) {
-        const browserInfo = getBrowserInfo();
+        const now = Date.now();
         return {
             client_id: clientId,
             client_token: config.token,
             session_id: generateSessionId(),
-            start_time: Date.now(),
-            last_activity: Date.now(),
-            device_info: browserInfo,
+            start_time: now,
+            last_activity: now,
+            device_info: getBrowserInfo(),
             page_history: [{
-                timestamp: Date.now(),
+                timestamp: now,
                 url: window.location.href,
                 referrer: document.referrer,
                 time_spent: 0
