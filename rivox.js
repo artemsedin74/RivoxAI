@@ -3894,6 +3894,17 @@ let Logger = {
     
     // Улучшенная функция отправки данных с альтернативными методами и обработкой ошибок
     async function sendDataWithFallback(data) {
+        // Используем улучшенную версию, если она доступна
+        if (window.RIVOX && window.RIVOX.sendDataEnhanced) {
+            try {
+                Logger.info("📡 Используем улучшенную версию отправки данных");
+                return await window.RIVOX.sendDataEnhanced(data);
+            } catch (enhancedError) {
+                Logger.warn("⚠️ Ошибка в улучшенной версии отправки:", enhancedError);
+                // Продолжаем с обычной версией
+            }
+        }
+        
         // Проверка наличия данных
         if (!data || Object.keys(data).length === 0) {
                 return { 
@@ -3915,6 +3926,9 @@ let Logger = {
         
         // Убедимся что эндпоинт определен правильно
         const apiUrl = config.apiEndpoint || config.endpoint;
+        
+        // Добавляем больше логирования
+        Logger.debug(`📊 Отправка данных (размер: ${(dataSize / 1024).toFixed(1)} KB) на ${apiUrl}`);
         
         // Если данные слишком большие, пытаемся отправить по частям
         if (dataSize > 5 * 1024 * 1024) { // 5 МБ
@@ -3939,14 +3953,16 @@ let Logger = {
             if (response.ok) {
                 try {
                     const result = await response.json();
-                return { 
+                    Logger.info(`✅ Данные успешно отправлены через fetch`);
+                    return { 
                         success: true,
                         response: result,
                         method: 'fetch'
-                };
+                    };
                 } catch (e) {
                     // Успешная отправка, но проблема с парсингом ответа
-                return { 
+                    Logger.info(`✅ Данные отправлены, но возникла проблема с парсингом ответа`);
+                    return { 
                         success: true,
                         method: 'fetch',
                         parseError: true
@@ -3967,7 +3983,7 @@ let Logger = {
                 if (response.status >= 500 || response.status === 429) {
                     // 5xx - ошибка сервера, 429 - слишком много запросов
                     // Для этих ошибок имеет смысл повторить попытку
-                return { 
+                    return { 
                         success: false,
                         retry: true,
                         error: `Server error: ${response.status}`,
@@ -3978,7 +3994,7 @@ let Logger = {
                 } else {
                     // 4xx - Клиентская ошибка, кроме 429
                     // Нет смысла повторять попытку для таких ошибок
-                return { 
+                    return { 
                         success: false,
                         retry: false,
                         error: `Client error: ${response.status}`,
@@ -4019,6 +4035,7 @@ let Logger = {
                     // Используем апи URL с проверкой
                     const result = await sendViaJSONP(preparedData, apiUrl);
                     if (result.success) {
+                        Logger.info('Данные успешно отправлены через JSONP');
                         return {
                             success: true,
                             method: 'jsonp',
@@ -4032,6 +4049,7 @@ let Logger = {
             
             // Все методы отправки не удались, добавляем в очередь
             const queued = addToFailedQueue(preparedData);
+            Logger.info(`Данные добавлены в очередь для повторной отправки`);
             
             return { 
                 success: false,
