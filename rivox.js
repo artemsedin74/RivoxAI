@@ -1718,7 +1718,7 @@ let Logger = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-SDK-Version': config.version
+                    'x-sdk-version': config.version
                 },
                 body: JSON.stringify(preparedData),
                 // Важные настройки для надежной отправки
@@ -3943,7 +3943,7 @@ let Logger = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-SDK-Version': config.version
+                    'x-sdk-version': config.version
                 },
                 body: dataStr,
                 credentials: 'include',
