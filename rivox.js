@@ -13,7 +13,7 @@ function logEvent(eventName, payload = {}) {
       timestamp: Date.now(),
       host: window.location.hostname,
     };
-    navigator.sendBeacon('https://your-log-endpoint.com/logs', JSON.stringify(data));
+    navigator.sendBeacon('https://rivox-data-handler-779203791697.europe-central2.run.app/logs', JSON.stringify(data));
   } catch (e) {
     // Ошибки логирования не должны влиять на работу SDK
   }
