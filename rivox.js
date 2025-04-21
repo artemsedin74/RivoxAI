@@ -1456,6 +1456,73 @@ let Logger = {
         return false;
     }
 
+    // Гарантированная отправка данных с повторными попытками
+    async function sendDataGuaranteed(reason) {
+        if (!sessionData || !isSessionActive) {
+            Logger.warn('No session data to send or session not active');
+            return { success: false, error: 'No active session', code: 'NO_SESSION' };
+        }
+
+        Logger.info(`Гарантированная отправка данных (причина: ${reason || 'manual'})...`);
+        
+        // Обновляем временные метрики перед отправкой
+        const now = Date.now();
+        sessionData.duration = now - sessionData.start_time;
+        sessionData.last_activity = now;
+        
+        // Обновляем ML параметры
+        updateMLFeatures();
+
+        try {
+            // Делаем первую попытку через основной механизм отправки
+            const result = await sendSessionSummary();
+            Logger.info('✅ Данные успешно отправлены с первой попытки');
+            return { success: true, method: 'primary', result };
+        } catch (primaryError) {
+            Logger.warn('⚠️ Первичная отправка не удалась, использую запасные методы', primaryError);
+            
+            // Вторая попытка: используем прямую отправку с помощью fetch
+            try {
+                const response = await sendDataWithFallback({
+                    client_id: sessionData.client_id,
+                    client_token: config.token,
+                    session_id: sessionData.session_id,
+                    timestamp: new Date().toISOString(),
+                    sdk_version: SDK_VERSION,
+                    data_type: 'guaranteed_fallback',
+                    reason: reason || 'fallback',
+                    metrika_goals: sessionData.metrika_goals || [],
+                    page_url: window.location.href,
+                    debug_info: {
+                        primary_error: primaryError.message,
+                        browser: navigator.userAgent
+                    }
+                });
+                
+                Logger.info('✅ Данные успешно отправлены через запасной метод');
+                return { success: true, method: 'fallback', response };
+            } catch (fallbackError) {
+                Logger.error('❌ Все методы отправки не удались', fallbackError);
+                
+                // Добавляем в очередь неудавшихся отправок для повторной попытки позже
+                addToFailedQueue({
+                    summary: sessionData,
+                    timestamp: Date.now(),
+                    reason: reason || 'all_failed',
+                    errors: [primaryError.message, fallbackError.message]
+                });
+                
+                return { 
+                    success: false, 
+                    error: 'All sending methods failed', 
+                    queued: true,
+                    primary_error: primaryError.message,
+                    fallback_error: fallbackError.message
+                };
+            }
+        }
+    }
+
     // Expose public API
     window.RIVOX = {
         init: init,
@@ -1633,7 +1700,7 @@ let Logger = {
     async function sendDataWithFallback(data) {
         // Проверка наличия данных (базовая валидация)
         if (!data || Object.keys(data).length === 0) {
-            return { 
+        return {
                 success: false,
                 error: 'No data provided',
                 code: 'EMPTY_DATA'
@@ -1653,7 +1720,7 @@ let Logger = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-sdk-version': config.version
+                    'x-sdk-version': SDK_VERSION
                 },
                 body: JSON.stringify(dataToSend)
             });
@@ -1667,7 +1734,7 @@ let Logger = {
             // При ошибке добавляем в очередь для повторной отправки
             Logger.warn(`Не удалось отправить данные: ${error.message}`);
             addToFailedQueue(data);
-            return { 
+        return {
                 success: false, 
                 error: error.message, 
                 queued: true 
@@ -1711,13 +1778,13 @@ let Logger = {
                 }
                 
                 if (successCount === segments.length) {
-                    return {
+                return { 
                         success: true,
                         method: 'segmented',
                         segments: segments.length
-                    };
+                };
                 } else {
-                    return {
+                return { 
                         success: false,
                         error: 'Partial failure in segmented data',
                         successSegments: successCount,
@@ -1733,7 +1800,7 @@ let Logger = {
                 // Добавляем в очередь для отправки позже
                 const queued = addToFailedQueue(data);
                 
-                return {
+                return { 
                     success: false,
                     error: 'Data too large for non-batch sending',
                     queued: queued,
@@ -1746,7 +1813,7 @@ let Logger = {
             // Добавляем в очередь для отправки позже
             const queued = addToFailedQueue(data);
             
-            return {
+                return { 
                 success: false,
                 error: error.message,
                 queued: queued,
@@ -1760,7 +1827,7 @@ let Logger = {
         try {
             return await sendDataWithFallback(segmentData);
         } catch (error) {
-            return {
+                return { 
                 success: false,
                 error: error.message,
                 code: 'SEGMENT_SEND_ERROR'
@@ -1775,6 +1842,77 @@ let Logger = {
             segments.push(array.slice(i, i + segmentSize));
         }
         return segments;
+    }
+    
+    // Обновление ML-признаков для аналитики поведения
+    function updateMLFeatures() {
+        if (!sessionData || !sessionData.ml_features) {
+            Logger.warn('Cannot update ML features: no session data available');
+            return;
+        }
+        
+        try {
+            // Получаем текущие данные о поведении пользователя
+            const behavior = sessionData.user_behavior || {};
+            
+            // Вычисляем средние метрики
+            const avgTimePerPage = sessionData.page_history && sessionData.page_history.length > 0 
+                ? sessionData.duration / sessionData.page_history.length 
+                : 0;
+                
+            const scrollDepth = behavior.scroll_depth_percentages && behavior.scroll_depth_percentages.length > 0
+                ? Math.max(...behavior.scroll_depth_percentages.map(d => d.depth || 0))
+                : 0;
+                
+            const clickFrequency = behavior.time_between_clicks && behavior.time_between_clicks.length > 0
+                ? behavior.time_between_clicks.length / (sessionData.duration / 60000) // клики в минуту
+                : 0;
+            
+            // Обновляем признаки для ML-модели
+            sessionData.ml_features = {
+                // Временные характеристики
+                session_duration: sessionData.duration,
+                avg_time_per_page: avgTimePerPage,
+                time_to_first_interaction: behavior.time_to_first_interaction || 0,
+                
+                // Активность пользователя
+                total_interactions: behavior.total_interactions || 0,
+                scroll_depth: scrollDepth,
+                scroll_count: sessionData.scroll_chunks?.length || 0,
+                click_count: sessionData.cta_clicks?.length || 0,
+                clicks_per_minute: clickFrequency,
+                
+                // Взаимодействие с формами
+                form_interactions: sessionData.form_interactions?.length || 0,
+                
+                // Контекстные данные
+                has_conversion: sessionData.metrika_goals?.length > 0,
+                goals_count: sessionData.metrika_goals?.length || 0,
+                
+                // Дополнительные признаки
+                device_type: getDeviceType(),
+                viewport_size: behavior.viewport_size || { width: window.innerWidth, height: window.innerHeight },
+                path_depth: window.location.pathname.split('/').filter(p => p.length > 0).length
+            };
+            
+            // Логируем обновление признаков
+            Logger.debug('ML features updated:', sessionData.ml_features);
+            
+        } catch (error) {
+            Logger.error('Error updating ML features:', error);
+        }
+    }
+    
+    // Вспомогательная функция для определения типа устройства
+    function getDeviceType() {
+        const ua = navigator.userAgent;
+        if (/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(ua)) {
+            return 'tablet';
+        }
+        if (/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(ua)) {
+            return 'mobile';
+        }
+        return 'desktop';
     }
     
     // Функция отправки данных через JSONP (для совместимости со старыми браузерами)
