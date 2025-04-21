@@ -579,6 +579,211 @@ let Logger = {
         };
     }
 
+    // Загрузка данных сессии из localStorage
+    function loadSessionFromStorage() {
+        try {
+            const sessionStr = localStorage.getItem('rivox_session');
+            if (!sessionStr) {
+                Logger.debug('Сессия не найдена в localStorage');
+                return null;
+            }
+            
+            const session = JSON.parse(sessionStr);
+            
+            // Проверяем время последней активности
+            if (session && session.last_activity) {
+                const now = Date.now();
+                const timeSinceLastActivity = now - session.last_activity;
+                
+                // Если прошло больше времени таймаута сессии, считаем сессию устаревшей
+                if (timeSinceLastActivity > config.sessionTimeout) {
+                    Logger.info(`Сессия устарела (${timeSinceLastActivity}ms > ${config.sessionTimeout}ms), создаю новую`);
+                    localStorage.removeItem('rivox_session');
+                    return null;
+                }
+                
+                Logger.info('Сессия восстановлена из localStorage');
+                return session;
+            }
+            
+            return null;
+        } catch (error) {
+            Logger.error('Ошибка при загрузке сессии из localStorage:', error);
+            localStorage.removeItem('rivox_session');
+            return null;
+        }
+    }
+    
+    // Сохранение данных сессии в localStorage
+    function saveSessionToStorage() {
+        if (!sessionData) return;
+        
+        try {
+            // Ограничиваем размер данных для localStorage
+            const sessionCopy = JSON.parse(JSON.stringify(sessionData));
+            
+            // Удаляем большие массивы данных для экономии места
+            if (sessionCopy.scroll_chunks && sessionCopy.scroll_chunks.length > 10) {
+                sessionCopy.scroll_chunks = sessionCopy.scroll_chunks.slice(-10);
+            }
+            
+            if (sessionCopy.hover_events && sessionCopy.hover_events.length > 5) {
+                sessionCopy.hover_events = sessionCopy.hover_events.slice(-5);
+            }
+            
+            if (sessionCopy.user_behavior && sessionCopy.user_behavior.mouse_movement_heatmap && 
+                sessionCopy.user_behavior.mouse_movement_heatmap.length > 10) {
+                sessionCopy.user_behavior.mouse_movement_heatmap = 
+                    sessionCopy.user_behavior.mouse_movement_heatmap.slice(-10);
+            }
+            
+            localStorage.setItem('rivox_session', JSON.stringify(sessionCopy));
+            Logger.debug('Сессия сохранена в localStorage');
+        } catch (error) {
+            Logger.error('Ошибка при сохранении сессии в localStorage:', error);
+        }
+    }
+    
+    // Создание новых данных сессии
+    function createSessionData(clientId) {
+        const sessionData = {
+            client_id: clientId,
+            client_token: config.token,
+            session_id: generateSessionId(),
+            start_time: Date.now(),
+            last_activity: Date.now(),
+            page_views: [{
+                timestamp: Date.now(),
+                url: window.location.href,
+                referrer: document.referrer
+            }],
+            scroll_chunks: [],
+            hover_events: [],
+            form_interactions: [],
+            cta_clicks: [],
+            modal_interactions: [],
+            utm_data: extractUTMData(),
+            metrika_goals: [],
+            conversion_data: {
+                goals_reached: [],
+                ecommerce_data: [],
+                last_goal_timestamp: null,
+                conversion_path: []
+            },
+            traffic_source: {
+                referrer: document.referrer,
+                landing_page: window.location.href,
+                entry_point: window.location.pathname
+            },
+            user_behavior: {
+                time_to_first_interaction: null,
+                total_interactions: 0,
+                interaction_frequency: [],
+                scroll_depth_percentages: [],
+                time_between_clicks: [],
+                mouse_movement_heatmap: [],
+                viewport_size: {
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                }
+            },
+            ml_features: {
+                interest_signals: [],
+                behavior_patterns: [],
+                user_segment: null,
+                conversion_probability: null,
+                funnel_analysis: {}
+            }
+        };
+        
+        Logger.debug('Создана новая сессия:', sessionData.session_id);
+        return sessionData;
+    }
+    
+    // Проверка условий для отправки данных на сервер
+    function shouldSendData() {
+        if (!sessionData) return false;
+        
+        // Если достаточно скроллов
+        if (sessionData.scroll_chunks && sessionData.scroll_chunks.length >= 5) {
+            return true;
+        }
+        
+        // Если достаточно кликов
+        if (sessionData.cta_clicks && sessionData.cta_clicks.length >= 3) {
+            return true;
+        }
+        
+        // Если есть взаимодействия с формами
+        if (sessionData.form_interactions && sessionData.form_interactions.length > 0) {
+            return true;
+        }
+        
+        // Если прошло много времени с момента последней отправки
+        const lastSendTime = sessionData.last_send_time || sessionData.start_time;
+        const timeSinceLastSend = Date.now() - lastSendTime;
+        if (timeSinceLastSend > 60000) { // 1 минута
+            return true;
+        }
+        
+        return false;
+    }
+    
+    // Функция для настройки отслеживания целей Metrika
+    function setupMetrikaTracking() {
+        if (!isYandexMetrikaReady()) {
+            Logger.warn('Yandex.Metrika не найдена, отслеживание целей не будет работать');
+            return;
+        }
+        
+        try {
+            const counterId = getYandexCounterId();
+            if (!counterId) {
+                Logger.warn('Не удалось определить ID счетчика Yandex.Metrika');
+                return;
+            }
+            
+            // Проверяем, что функция ym доступна
+            if (typeof ym !== 'function') {
+                Logger.warn('Функция ym не доступна');
+                return;
+            }
+            
+            // Переопределяем функцию reachGoal для отслеживания
+            const originalReachGoal = ym;
+            
+            window.ym = function(counterId, method, goalName, params) {
+                // Вызываем оригинальную функцию
+                const result = originalReachGoal.apply(this, arguments);
+                
+                // Если это вызов reachGoal, добавляем в наши данные
+                if (method === 'reachGoal' && goalName && sessionData) {
+                    Logger.info(`🎯 Цель Metrika: ${goalName}`);
+                    
+                    if (!sessionData.metrika_goals) {
+                        sessionData.metrika_goals = [];
+                    }
+                    
+                    sessionData.metrika_goals.push({
+                        name: goalName,
+                        params: params || {},
+                        timestamp: Date.now()
+                    });
+                    
+                    // Сохраняем сессию и отправляем данные
+                    saveSessionToStorage();
+                    sendDataGuaranteed('metrika_goal').catch(Logger.error);
+                }
+                
+                return result;
+            };
+            
+            Logger.info('✅ Отслеживание целей Metrika настроено');
+        } catch (error) {
+            Logger.error('Ошибка при настройке отслеживания целей Metrika:', error);
+        }
+    }
+
     function waitForMetrika(callback) {
         let attempts = 0;
         const maxAttempts = 50;
