@@ -57,6 +57,16 @@ let Logger = {
     'use strict';
 
     const SDK_VERSION = '4.6.3';
+    
+    // Добавляем переменные для контроля отправки данных
+    let lastSendTime = 0;
+    let dataSubmissionInProgress = false;
+    let consecErrorCount = 0;
+    const retryStrategy = {
+        initialDelay: 500,
+        maxRetries: 3,
+        backoffFactor: 1.5
+    };
 
     // Configuration
     const config = {
@@ -85,6 +95,13 @@ let Logger = {
         maxQueueSize: 10,
         deduplicationWindow: 60000, // 1 минута
         beaconSupport: true,
+        
+        // Новые оптимизации
+        useCompression: true,         // Использовать сжатие данных
+        minSendInterval: 15000,       // Минимум 15 секунд между отправками
+        maxEventsPerBatch: 50,        // Макс событий в одной отправке
+        errorBackoffTime: 60000,      // Задержка после ошибок (1 минута)
+        maxRequestSize: 500000,       // Макс размер запроса (500KB)
 
         // ML-оптимизированные параметры с улучшенными порогами
         formInteractionThreshold: 1, 
@@ -796,6 +813,29 @@ let Logger = {
     function shouldSendData() {
         if (!sessionData) return false;
         
+        // Проверяем, что не слишком много запросов
+        if (dataSubmissionInProgress) {
+            Logger.debug('Данные уже отправляются, пропускаю отправку');
+            return false;
+        }
+        
+        // Проверяем минимальный интервал между отправками
+        const now = Date.now();
+        const timeSinceLastSend = now - (sessionData.last_send_time || sessionData.start_time);
+        if (timeSinceLastSend < config.minSendInterval) {
+            Logger.debug(`Слишком короткий интервал между отправками (${Math.round(timeSinceLastSend / 1000)}с < ${Math.round(config.minSendInterval / 1000)}с)`);
+            return false;
+        }
+        
+        // Если были ошибки - увеличиваем интервал между отправками
+        if (consecErrorCount > 0) {
+            const backoffTime = config.errorBackoffTime * Math.min(consecErrorCount, 5);
+            if (timeSinceLastSend < backoffTime) {
+                Logger.debug(`Увеличенный интервал после ошибок: ${Math.round(timeSinceLastSend / 1000)}с < ${Math.round(backoffTime / 1000)}с`);
+                return false;
+            }
+        }
+        
         // Если достаточно скроллов
         if (sessionData.scroll_chunks && sessionData.scroll_chunks.length >= 5) {
             return true;
@@ -812,8 +852,6 @@ let Logger = {
         }
         
         // Если прошло много времени с момента последней отправки
-        const lastSendTime = sessionData.last_send_time || sessionData.start_time;
-        const timeSinceLastSend = Date.now() - lastSendTime;
         if (timeSinceLastSend > 60000) { // 1 минута
             return true;
         }
@@ -1378,122 +1416,128 @@ let Logger = {
         });
     }
 
-    // Modify sendSessionSummary to add logging
+    // Modify sendSessionSummary to add logging and optimize sending
     async function sendSessionSummary() {
         if (!sessionData || !isSessionActive) {
             Logger.warn('No session data to send or session not active');
             return;
         }
 
-        Logger.info('Preparing to send session data...');
+        // Предотвращаем параллельные запросы
+        if (dataSubmissionInProgress) {
+            Logger.info('Отправка данных уже выполняется, пропускаю запрос');
+            return;
+        }
         
-        // Проверяем и исправляем client_id перед отправкой
-        if (sessionData.client_id) {
-            if (sessionData.client_id instanceof Promise) {
-                try {
-                    sessionData.client_id = safeClientId(await sessionData.client_id);
-                } catch(e) {
-                    sessionData.client_id = safeClientId(null);
+        try {
+            dataSubmissionInProgress = true;
+            
+            Logger.info('Preparing to send session data...');
+            
+            // Проверяем и исправляем client_id перед отправкой
+            if (sessionData.client_id) {
+                if (sessionData.client_id instanceof Promise) {
+                    try {
+                        sessionData.client_id = safeClientId(await sessionData.client_id);
+                    } catch(e) {
+                        sessionData.client_id = safeClientId(null);
+                    }
+                } else {
+                    sessionData.client_id = safeClientId(sessionData.client_id);
                 }
-            } else {
-                sessionData.client_id = safeClientId(sessionData.client_id);
             }
-        }
-        
-        // Update final duration before sending
-        const now = Date.now();
-        sessionData.duration = now - sessionData.start_time;
-        sessionData.end_time = new Date(now).toISOString();
-        
-        // Добавляем подробное логирование данных сессии
-        Logger.info('Current session data:', {
-            client_id: sessionData.client_id,
-            session_id: sessionData.session_id,
-            goals_count: sessionData.metrika_goals?.length || 0,
-            goals: sessionData.metrika_goals || [],
-            conversion_data: sessionData.conversion_data || {},
-            duration: sessionData.duration
-        });
-
-        // Проверяем и логируем состояние целей
-        if (sessionData.metrika_goals && sessionData.metrika_goals.length > 0) {
-            Logger.info('Goals found in session data:', sessionData.metrika_goals);
-        } else {
-            Logger.warn('No goals found in session data');
-        }
-
-        // Update ML features before sending
-        updateMLFeatures();
-
-        // Prepare data for sending
-        const summary = {
-            client_id: sessionData.client_id,
-            client_token: config.token,
-            session_id: sessionData.session_id,
-            timestamp: new Date().toISOString(),
-            sdk_version: SDK_VERSION,
             
-            // Page info
-            page_url: window.location.href,
-            domain: window.location.hostname,
-            path: window.location.pathname,
+            // Update final duration before sending
+            const now = Date.now();
+            sessionData.duration = now - sessionData.start_time;
+            sessionData.end_time = new Date(now).toISOString();
+            sessionData.last_send_time = now; // Обновляем время последней отправки
             
-            // Session metrics
-            session_duration: Date.now() - sessionData.start_time,
-            time_to_first_interaction: sessionData.user_behavior.time_to_first_interaction,
-            total_interactions: sessionData.user_behavior.total_interactions,
+            // Добавляем подробное логирование данных сессии
+            Logger.info('Current session data:', {
+                client_id: sessionData.client_id,
+                session_id: sessionData.session_id,
+                goals_count: sessionData.metrika_goals?.length || 0,
+                goals: sessionData.metrika_goals || [],
+                conversion_data: sessionData.conversion_data || {},
+                duration: sessionData.duration
+            });
+
+            // Проверяем и логируем состояние целей
+            if (sessionData.metrika_goals && sessionData.metrika_goals.length > 0) {
+                Logger.info('Goals found in session data:', sessionData.metrika_goals);
+            } else {
+                Logger.warn('No goals found in session data');
+            }
+
+            // Update ML features before sending
+            updateMLFeatures();
+
+            // Prepare data for sending - используем функцию для ограничения размера данных
+            const summary = prepareSessionDataForSending();
+
+            // Проверяем и логируем данные перед отправкой
+            Logger.info('Data to be sent:', {
+                goals_count: summary.metrika_goals?.length || 0,
+                goals: summary.metrika_goals || [],
+                conversion_data: summary.conversion_data || {}
+            });
+
+            // Получаем размер данных для отправки
+            const jsonData = JSON.stringify(summary);
+            const dataSize = jsonData.length;
             
-            // Scroll data
-            scroll_depth_max: sessionData.user_behavior.scroll_depth_percentages ? 
-                Math.max(...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)) : 0,
-            scroll_count: sessionData.scroll_chunks.length,
-            scroll_chunks: sessionData.scroll_chunks,
+            // Если размер данных слишком большой - обрезаем
+            if (dataSize > config.maxRequestSize) {
+                Logger.warn(`Размер данных (${dataSize}) превышает лимит (${config.maxRequestSize}), данные будут обрезаны`);
+                return await sendLargeDataInChunks(summary);
+            }
             
-            // Click data
-            click_count: sessionData.cta_clicks.length,
-            clicks: sessionData.cta_clicks,
+            // Используем сжатие если включено и доступно LZString
+            const useCompression = config.useCompression && typeof LZString !== 'undefined';
+            let compressedData = null;
             
-            // Hover data
-            hover_count: sessionData.hover_events.length,
-            hovers: sessionData.hover_events,
+            if (useCompression) {
+                try {
+                    compressedData = LZString.compressToUTF16(jsonData);
+                    const compressionRatio = Math.round((compressedData.length / jsonData.length) * 100);
+                    Logger.info(`Данные сжаты: ${dataSize} → ${compressedData.length} байт (${compressionRatio}%)`);
+                } catch (e) {
+                    Logger.warn('Ошибка сжатия данных, отправляю несжатые:', e);
+                    compressedData = null;
+                }
+            }
 
-            // UTM Data
-            utm_data: sessionData.utm_data,
+            let retryCount = 0;
+            const maxRetries = config.maxRetries;
 
-            // Metrika Goals and Conversion Data
-            metrika_goals: sessionData.metrika_goals || [],
-            conversion_data: sessionData.conversion_data || {},
-            
-            // User Behavior
-            user_behavior: sessionData.user_behavior,
-
-            // ML Features
-            ml_features: sessionData.ml_features
-        };
-
-        // Проверяем и логируем данные перед отправкой
-        Logger.info('Data to be sent:', {
-            goals_count: summary.metrika_goals.length,
-            goals: summary.metrika_goals,
-            conversion_data: summary.conversion_data
-        });
-
-        let retryCount = 0;
-        const maxRetries = 3;
-        const retryDelay = 1000; // 1 second
-
-        while (retryCount < maxRetries) {
-            try {
-                // Try direct POST first
+            while (retryCount < maxRetries) {
                 try {
                     Logger.info(`Attempting POST request (attempt ${retryCount + 1}/${maxRetries})...`);
+                    
+                    // Формируем заголовки и тело запроса
+                    const headers = {
+                        'Content-Type': 'application/json',
+                        'Origin': window.location.origin
+                    };
+                    
+                    let body;
+                    
+                    // Если используем сжатие и оно работает
+                    if (useCompression && compressedData) {
+                        headers['x-compression'] = 'true';
+                        body = JSON.stringify({ data: compressedData });
+                    } else {
+                        body = jsonData;
+                    }
+                    
+                    // Добавляем заголовок с размером для отладки
+                    headers['x-data-size'] = dataSize.toString();
+                    
                     const response = await fetch(config.endpoint, {
-                method: 'POST',
-                headers: {
-                            'Content-Type': 'application/json',
-                            'Origin': window.location.origin
-                        },
-                        body: JSON.stringify(summary)
+                        method: 'POST',
+                        headers: headers,
+                        body: body
                     });
 
                     if (!response.ok) {
@@ -1502,15 +1546,24 @@ let Logger = {
 
                     const result = await response.json();
                     Logger.info('✅ POST request successful:', result);
+                    
+                    // Сбрасываем счетчик ошибок при успехе
+                    consecErrorCount = 0;
+                    
                     return result;
                 } catch (error) {
                     Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
                     
+                    // Инкрементируем счетчик последовательных ошибок
+                    if (error.message.includes('500')) {
+                        consecErrorCount++;
+                    }
+                    
                     // If we're out of retries, try beacon API as last resort
-                    if (retryCount === maxRetries - 1 && navigator.sendBeacon) {
+                    if (retryCount === maxRetries - 1 && navigator.sendBeacon && config.beaconSupport) {
                         try {
                             Logger.info('Trying beacon API as last resort...');
-                            const blob = new Blob([JSON.stringify(summary)], {
+                            const blob = new Blob([jsonData], {
                                 type: 'application/json'
                             });
                             const success = navigator.sendBeacon(config.endpoint, blob);
@@ -1523,21 +1576,22 @@ let Logger = {
                         }
                     }
                     
-                    // Wait before retry
-                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    // Wait before retry with exponential backoff
+                    const backoffTime = retryStrategy.initialDelay * Math.pow(retryStrategy.backoffFactor, retryCount);
+                    Logger.info(`Waiting ${backoffTime}ms before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, backoffTime));
                     retryCount++;
                 }
-            } catch (error) {
-                Logger.error(`Failed to send data (attempt ${retryCount + 1}/${maxRetries}):`, error);
-                if (retryCount === maxRetries - 1) {
-                    throw error;
-                }
-                await new Promise(resolve => setTimeout(resolve, retryDelay));
-                retryCount++;
             }
-        }
 
-        throw new Error(`Failed to send data after ${maxRetries} attempts`);
+            // Если все попытки неудачны - добавляем в очередь неудавшихся отправок
+            Logger.error(`Failed to send data after ${maxRetries} attempts, queueing for later retry`);
+            addToFailedQueue(summary);
+            
+            throw new Error(`Failed to send data after ${maxRetries} attempts`);
+        } finally {
+            dataSubmissionInProgress = false;
+        }
     }
 
     // Start periodic sending
@@ -2320,5 +2374,272 @@ let Logger = {
             // Добавляем скрипт на страницу, что запускает запрос
             document.body.appendChild(script);
         });
+    }
+
+    // Функция для подготовки данных сессии к отправке
+    function prepareSessionDataForSending() {
+        // Базовые данные, которые всегда включаем
+        const summary = {
+            client_id: sessionData.client_id,
+            client_token: config.token,
+            session_id: sessionData.session_id,
+            timestamp: new Date().toISOString(),
+            sdk_version: SDK_VERSION,
+            
+            // Page info
+            page_url: window.location.href,
+            domain: window.location.hostname,
+            path: window.location.pathname,
+            
+            // Session metrics
+            session_duration: sessionData.duration || (Date.now() - sessionData.start_time),
+            time_to_first_interaction: sessionData.user_behavior?.time_to_first_interaction,
+            total_interactions: sessionData.user_behavior?.total_interactions || 0,
+            
+            // UTM Data
+            utm_data: sessionData.utm_data,
+
+            // Metrika Goals and Conversion Data
+            metrika_goals: sessionData.metrika_goals || [],
+            conversion_data: sessionData.conversion_data || {},
+            
+            // User Behavior (базовые метрики)
+            user_behavior: {
+                time_to_first_interaction: sessionData.user_behavior?.time_to_first_interaction,
+                total_interactions: sessionData.user_behavior?.total_interactions || 0,
+                viewport_size: sessionData.user_behavior?.viewport_size || { width: window.innerWidth, height: window.innerHeight }
+            },
+
+            // ML Features
+            ml_features: sessionData.ml_features || {}
+        };
+        
+        // Ограничиваем размеры массивов событий
+        
+        // Scroll data - ограничиваем до 30 последних событий
+        if (sessionData.scroll_chunks && sessionData.scroll_chunks.length) {
+            const maxScrollEvents = 30;
+            summary.scroll_depth_max = sessionData.user_behavior?.scroll_depth_percentages ? 
+                Math.max(...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth || 0)) : 0;
+            summary.scroll_count = sessionData.scroll_chunks.length;
+            
+            if (sessionData.scroll_chunks.length > maxScrollEvents) {
+                Logger.debug(`Ограничиваю события скролла: ${sessionData.scroll_chunks.length} → ${maxScrollEvents}`);
+                summary.scroll_chunks = sessionData.scroll_chunks.slice(-maxScrollEvents);
+            } else {
+                summary.scroll_chunks = sessionData.scroll_chunks;
+            }
+        }
+        
+        // Click data - ограничиваем до 20 последних кликов
+        if (sessionData.cta_clicks && sessionData.cta_clicks.length) {
+            const maxClickEvents = 20;
+            summary.click_count = sessionData.cta_clicks.length;
+            
+            if (sessionData.cta_clicks.length > maxClickEvents) {
+                Logger.debug(`Ограничиваю события кликов: ${sessionData.cta_clicks.length} → ${maxClickEvents}`);
+                summary.clicks = sessionData.cta_clicks.slice(-maxClickEvents);
+            } else {
+                summary.clicks = sessionData.cta_clicks;
+            }
+        }
+        
+        // Hover data - ограничиваем до 10 последних hover-событий
+        if (sessionData.hover_events && sessionData.hover_events.length) {
+            const maxHoverEvents = 10;
+            summary.hover_count = sessionData.hover_events.length;
+            
+            if (sessionData.hover_events.length > maxHoverEvents) {
+                Logger.debug(`Ограничиваю hover-события: ${sessionData.hover_events.length} → ${maxHoverEvents}`);
+                summary.hovers = sessionData.hover_events.slice(-maxHoverEvents);
+            } else {
+                summary.hovers = sessionData.hover_events;
+            }
+        }
+        
+        // Полная user_behavior секция (без ограничения основных метрик)
+        if (sessionData.user_behavior) {
+            // Копируем базовую структуру
+            summary.user_behavior = {
+                ...summary.user_behavior,
+                time_to_first_interaction: sessionData.user_behavior.time_to_first_interaction,
+                total_interactions: sessionData.user_behavior.total_interactions || 0,
+                avg_time_between_clicks: sessionData.user_behavior.avg_time_between_clicks
+            };
+            
+            // Ограничиваем массивы данных
+            if (sessionData.user_behavior.scroll_depth_percentages && sessionData.user_behavior.scroll_depth_percentages.length > 20) {
+                summary.user_behavior.scroll_depth_percentages = sessionData.user_behavior.scroll_depth_percentages.slice(-20);
+            } else {
+                summary.user_behavior.scroll_depth_percentages = sessionData.user_behavior.scroll_depth_percentages;
+            }
+            
+            if (sessionData.user_behavior.time_between_clicks && sessionData.user_behavior.time_between_clicks.length > 15) {
+                summary.user_behavior.time_between_clicks = sessionData.user_behavior.time_between_clicks.slice(-15);
+            } else {
+                summary.user_behavior.time_between_clicks = sessionData.user_behavior.time_between_clicks;
+            }
+            
+            if (sessionData.user_behavior.interaction_frequency && sessionData.user_behavior.interaction_frequency.length > 30) {
+                summary.user_behavior.interaction_frequency = sessionData.user_behavior.interaction_frequency.slice(-30);
+            } else {
+                summary.user_behavior.interaction_frequency = sessionData.user_behavior.interaction_frequency;
+            }
+            
+            // Тепловая карта - очень большой массив, ограничиваем сильнее
+            if (sessionData.user_behavior.mouse_movement_heatmap && sessionData.user_behavior.mouse_movement_heatmap.length > 10) {
+                summary.user_behavior.mouse_movement_heatmap = sessionData.user_behavior.mouse_movement_heatmap.slice(-10);
+            } else {
+                summary.user_behavior.mouse_movement_heatmap = sessionData.user_behavior.mouse_movement_heatmap;
+            }
+        }
+        
+        return summary;
+    }
+
+    // Функция для отправки больших данных по частям (chunked sending)
+    async function sendLargeDataInChunks(data) {
+        try {
+            Logger.info('Данные слишком большие, разбиваю на части...');
+            
+            // Базовая информация о сессии
+            const baseSessionInfo = {
+                client_id: data.client_id,
+                client_token: data.client_token,
+                session_id: data.session_id,
+                timestamp: data.timestamp,
+                sdk_version: data.sdk_version,
+                chunked_data: true // Маркер разделенных данных
+            };
+            
+            // Получаем данные о целях и конверсии - их всегда отправляем
+            const criticalData = {
+                ...baseSessionInfo,
+                metrika_goals: data.metrika_goals || [],
+                conversion_data: data.conversion_data || {},
+                utm_data: data.utm_data,
+                page_url: data.page_url,
+                domain: data.domain,
+                path: data.path
+            };
+            
+            // Отправляем критические данные в первую очередь
+            const criticalResponse = await sendWithRetry(criticalData, 'critical_data');
+            Logger.info('✅ Критические данные успешно отправлены');
+            
+            // Функция для отправки куска данных
+            const sendChunk = async (chunkData, chunkName) => {
+                const chunk = {
+                    ...baseSessionInfo,
+                    chunk_type: chunkName,
+                    data: chunkData
+                };
+                
+                try {
+                    const chunkResponse = await sendWithRetry(chunk, chunkName);
+                    Logger.info(`✅ Chunk ${chunkName} sent successfully`);
+                    return chunkResponse;
+                } catch (error) {
+                    Logger.warn(`❌ Failed to send chunk ${chunkName}:`, error);
+                    return { success: false, error: error.message };
+                }
+            };
+            
+            // Отправляем части данных параллельно
+            const promises = [];
+            
+            // Отправляем скролл-данные
+            if (data.scroll_chunks && data.scroll_chunks.length) {
+                promises.push(sendChunk({
+                    scroll_count: data.scroll_count,
+                    scroll_depth_max: data.scroll_depth_max,
+                    scroll_chunks: data.scroll_chunks
+                }, 'scroll_data'));
+            }
+            
+            // Отправляем данные о кликах
+            if (data.clicks && data.clicks.length) {
+                promises.push(sendChunk({
+                    click_count: data.click_count,
+                    clicks: data.clicks
+                }, 'click_data'));
+            }
+            
+            // Отправляем поведенческие данные
+            if (data.user_behavior) {
+                promises.push(sendChunk({
+                    user_behavior: data.user_behavior
+                }, 'behavior_data'));
+            }
+            
+            // Отправляем ML-фичи
+            if (data.ml_features) {
+                promises.push(sendChunk({
+                    ml_features: data.ml_features
+                }, 'ml_features'));
+            }
+            
+            // Ожидаем завершения всех отправок
+            const results = await Promise.allSettled(promises);
+            
+            const successCount = results.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+            const failCount = promises.length - successCount;
+            
+            Logger.info(`📊 Chunked sending results: ${successCount} successful, ${failCount} failed`);
+            
+            // Если хотя бы критические данные отправлены - считаем успехом
+            return {
+                success: true,
+                method: 'chunked',
+                critical_data_sent: criticalResponse.success,
+                chunks_sent: successCount,
+                chunks_failed: failCount
+            };
+        } catch (error) {
+            Logger.error('❌ Error sending large data in chunks:', error);
+            throw error;
+        }
+    }
+
+    // Функция для отправки данных с повторными попытками
+    async function sendWithRetry(data, dataType = 'unknown') {
+        let retries = 0;
+        const maxRetries = config.maxRetries;
+        
+        while (retries < maxRetries) {
+            try {
+                Logger.info(`📤 Sending ${dataType} data (attempt ${retries + 1}/${maxRetries})...`);
+                
+                const response = await fetch(config.endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Origin': window.location.origin,
+                        'x-data-type': dataType
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                return result;
+            } catch (error) {
+                retries++;
+                
+                if (retries >= maxRetries) {
+                    throw error;
+                }
+                
+                // Exponential backoff
+                const backoffTime = retryStrategy.initialDelay * Math.pow(retryStrategy.backoffFactor, retries - 1);
+                Logger.warn(`Retry ${retries}/${maxRetries} after ${backoffTime}ms for ${dataType} data`);
+                await new Promise(resolve => setTimeout(resolve, backoffTime));
+            }
+        }
+        
+        throw new Error(`Failed to send ${dataType} data after ${maxRetries} attempts`);
     }
 })(window); 
