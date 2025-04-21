@@ -5,6 +5,20 @@
 // RIVOX SDK v4.6.3
 // Enhanced version with ML data collection capabilities
 
+function logEvent(eventName, payload = {}) {
+  try {
+    const data = {
+      event: eventName,
+      payload,
+      timestamp: Date.now(),
+      host: window.location.hostname,
+    };
+    navigator.sendBeacon('https://your-log-endpoint.com/logs', JSON.stringify(data));
+  } catch (e) {
+    // Ошибки логирования не должны влиять на работу SDK
+  }
+}
+
 // Utility functions for Yandex.Metrika
 function isYandexMetrikaReady() {
     return typeof ym !== 'undefined' || typeof Ya !== 'undefined' || !!window.yaCounter;
@@ -20,7 +34,7 @@ function getYandexCounterId() {
         if (key.startsWith('yaCounter')) {
             const counterId = key.replace('yaCounter', '');
             if (counterId && !isNaN(Number(counterId))) {
-                Logger.debug('Found counter ID via yaCounter object:', counterId);
+                logEvent('counter_id_found', { source: 'yaCounter_object', counterId });
                 return counterId;
             }
         }
@@ -32,25 +46,33 @@ function getYandexCounterId() {
             // Try common internal properties
             const counters = ym.a || ym.counters || ym.__counters || []; 
             if (counters.length > 0 && counters[0] && counters[0].id) {
-                 Logger.debug('Found counter ID via ym internal property:', counters[0].id);
+                 logEvent('counter_id_found', { source: 'ym_internal_property', id: counters[0].id });
                  return counters[0].id;
             }
         } catch (e) {
-            Logger.warn('Error checking ym internal properties:', e);
+            logEvent('counter_check_error', { error: e.message });
         }
     }
 
-    Logger.debug('Yandex.Metrika counter ID not found after checking multiple sources.');
+    logEvent('counter_id_not_found', { sources_checked: ['window.ymCounterId', 'yaCounter*', 'ym.counters'] });
     return null;
 }
 
 // Define a placeholder Logger globally first
 let Logger = {
     setLevel: () => {},
-    debug: () => {},
-    info: () => {},
-    warn: console.warn,
-    error: console.error
+    debug: (msg, data) => {
+        logEvent('debug', { message: msg, data });
+    },
+    info: (msg, data) => {
+        logEvent('info', { message: msg, data });
+    },
+    warn: (msg, data) => {
+        logEvent('warning', { message: msg, data });
+    },
+    error: (msg, error) => {
+        logEvent('error', { message: msg, error: error?.message || error });
+    }
 };
 
 (function(window) {
@@ -141,25 +163,25 @@ let Logger = {
         
         debug: function(msg, data) {
             if (this.level <= this.LEVELS.DEBUG && config.debug) {
-                console.log(`rivox.js [DEBUG]: ${msg}`, data || '');
+                logEvent('debug', { message: msg, data: data || '' });
             }
         },
         
         info: function(msg, data) {
             if (this.level <= this.LEVELS.INFO && config.debug) { 
-                console.log(`rivox.js ℹ️: ${msg}`, data || '');
+                logEvent('info', { message: msg, data: data || '' });
             }
         },
         
         warn: function(msg, data) {
             if (this.level <= this.LEVELS.WARN) {
-                console.warn(`rivox.js ⚠️: ${msg}`, data || '');
+                logEvent('warning', { message: msg, data: data || '' });
             }
         },
         
         error: function(msg, error) {
             if (this.level <= this.LEVELS.ERROR) {
-                console.error(`rivox.js ❌: ${msg}`, error || '');
+                logEvent('error', { message: msg, error: error?.message || error || '' });
             }
         }
     };
