@@ -109,8 +109,7 @@ let Logger = {
         maxFormDuration: 300000,
         minClickGap: 50, // Уменьшено со 100 для большей детализации
         maxClickGap: 10000,
-        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop', 'inoxhub.ru' 'https://xn--90aala0adcvdb6p.xn--p1ai' 'https://xn--90aala0adcvdb6p.xn--p1ai/' 'https://белоеяблоко.рф/
-'],
+        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop', 'inoxhub.ru', 'xn--90aala0adcvdb6p.xn--p1ai', 'белоеяблоко.рф'],
         initDelay: 300,
         sendDelay: 300000, // 5 минут
         retryDelay: 120000, // 2 минуты
