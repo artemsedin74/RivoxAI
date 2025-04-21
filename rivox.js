@@ -384,22 +384,28 @@ let Logger = {
             sendSessionSummary();
         }
 
+        const clientId = generateClientId();
+        // Преобразуем clientId в строку, если это Promise или объект
+        const safeClientId = clientId instanceof Promise 
+            ? 'temp_' + Date.now() 
+            : (typeof clientId === 'object' ? String(clientId) : clientId);
+
         sessionData = {
-        client_id: generateClientId(),
+            client_id: safeClientId,
             client_token: config.token,
-        session_id: generateSessionId(),
-        start_time: Date.now(),
-        last_activity: Date.now(),
+            session_id: generateSessionId(),
+            start_time: Date.now(),
+            last_activity: Date.now(),
             page_views: [{
                 timestamp: Date.now(),
                 url: window.location.href,
                 referrer: document.referrer
             }],
-        scroll_chunks: [],
-        hover_events: [],
-        form_interactions: [],
-        cta_clicks: [],
-        modal_interactions: [],
+            scroll_chunks: [],
+            hover_events: [],
+            form_interactions: [],
+            cta_clicks: [],
+            modal_interactions: [],
             utm_data: extractUTMData(),
             metrika_goals: [],
             conversion_data: {
@@ -425,14 +431,14 @@ let Logger = {
                     height: window.innerHeight
                 }
             },
-        ml_features: {
-            interest_signals: [],
-            behavior_patterns: [],
-            user_segment: null,
-            conversion_probability: null,
-            funnel_analysis: {}
-        }
-    };
+            ml_features: {
+                interest_signals: [],
+                behavior_patterns: [],
+                user_segment: null,
+                conversion_probability: null,
+                funnel_analysis: {}
+            }
+        };
 
         isSessionActive = true;
         Logger.info('New session started:', sessionData.session_id);
@@ -638,6 +644,17 @@ let Logger = {
             }
             
             localStorage.setItem('rivox_session', JSON.stringify(sessionCopy));
+            
+            // Сохраняем активность сессии и ID отдельно для быстрого доступа
+            localStorage.setItem('rivox_session_active', isSessionActive ? 'true' : 'false');
+            localStorage.setItem('rivox_session_id', sessionData.session_id);
+            
+            // Убедимся, что client_id всегда строка
+            if (typeof sessionData.client_id === 'object') {
+                sessionData.client_id = String(sessionData.client_id);
+            }
+            localStorage.setItem('rivox_client_id', sessionData.client_id);
+            
             Logger.debug('Сессия сохранена в localStorage');
         } catch (error) {
             Logger.error('Ошибка при сохранении сессии в localStorage:', error);
@@ -646,8 +663,13 @@ let Logger = {
     
     // Создание новых данных сессии
     function createSessionData(clientId) {
+        // Преобразуем clientId в строку, если это Promise или объект
+        const safeClientId = clientId instanceof Promise 
+            ? 'temp_' + Date.now() 
+            : (typeof clientId === 'object' ? String(clientId) : clientId);
+            
         const sessionData = {
-            client_id: clientId,
+            client_id: safeClientId,
             client_token: config.token,
             session_id: generateSessionId(),
             start_time: Date.now(),
@@ -861,9 +883,11 @@ let Logger = {
         if (savedSession) {
             Logger.info('Restoring previous session');
             sessionData = savedSession;
+            isSessionActive = true; // Активируем сессию при восстановлении
         } else {
             Logger.info('Creating new session');
             sessionData = createSessionData(clientId);
+            isSessionActive = true; // Активируем новую сессию
         }
         
         // Ensure all required arrays exist
@@ -1464,20 +1488,35 @@ let Logger = {
 
     function generateClientId() {
         return new Promise((resolve) => {
-            // 1. Сначала пробуем получить из бэкапа
+            // 1. Сначала пробуем получить из localStorage
+            const storedId = localStorage.getItem('rivox_client_id');
+            if (storedId) {
+                Logger.info('Using stored client ID from localStorage:', storedId);
+                resolve(storedId);
+                return;
+            }
+            
+            // 2. Затем пробуем получить из бэкапа
             const backupId = localStorage.getItem('_ym_client_id_backup');
             if (backupId) {
                 Logger.info('Using backed up Yandex.Metrika client ID:', backupId);
+                // Сохраняем в наш формат хранения для будущего использования
+                try {
+                    localStorage.setItem('rivox_client_id', backupId);
+                } catch (e) {
+                    Logger.warn('Could not save client ID to localStorage:', e);
+                }
                 resolve(backupId);
                 return;
             }
 
-            // 2. Пробуем получить из куки Метрики
+            // 3. Пробуем получить из куки Метрики
             const ymUid = getCookie('_ym_uid');
             if (ymUid) {
                 Logger.info('Using Yandex.Metrika cookie ID:', ymUid);
                 try {
                     localStorage.setItem('_ym_client_id_backup', ymUid);
+                    localStorage.setItem('rivox_client_id', ymUid);
                 } catch (e) {
                     Logger.warn('Could not save client ID to localStorage:', e);
                 }
@@ -1485,12 +1524,17 @@ let Logger = {
                 return;
             }
 
-            // 3. Пробуем получить напрямую из Метрики
+            // 4. Пробуем получить напрямую из Метрики
             const getFromMetrika = (attempts = 0, maxAttempts = 5) => {
                 if (attempts >= maxAttempts) {
                     // Если не удалось получить ID, используем временный
                     const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2);
                     Logger.info('Using temporary client ID:', tempId);
+                    try {
+                        localStorage.setItem('rivox_client_id', tempId);
+                    } catch (e) {
+                        Logger.warn('Could not save temporary client ID to localStorage:', e);
+                    }
                     resolve(tempId);
                     return;
                 }
@@ -1509,6 +1553,7 @@ let Logger = {
                             Logger.info('Got client ID from Yandex.Metrika:', clientID);
                             try {
                                 localStorage.setItem('_ym_client_id_backup', clientID);
+                                localStorage.setItem('rivox_client_id', clientID);
                             } catch (e) {
                                 Logger.warn('Could not save client ID to localStorage:', e);
                             }
@@ -1735,7 +1780,10 @@ let Logger = {
         getSessionData: () => sessionData,
         config,
         sendDataGuaranteed,
-        getSessionData: () => sessionData
+        startNewSession, // Добавляем публичный доступ к функции запуска новой сессии
+        get clientId() { return sessionData?.client_id || null; },
+        get sessionId() { return sessionData?.session_id || null; },
+        get isSessionActive() { return isSessionActive; }
     };
 
     // Initialize when Metrika is ready
@@ -1905,7 +1953,7 @@ let Logger = {
     async function sendDataWithFallback(data) {
         // Проверка наличия данных (базовая валидация)
         if (!data || Object.keys(data).length === 0) {
-        return {
+            return {
                 success: false,
                 error: 'No data provided',
                 code: 'EMPTY_DATA'
@@ -1913,6 +1961,21 @@ let Logger = {
         }
         
         try {
+            // Исправляем client_id если он объект или Promise
+            if (data.client_id && typeof data.client_id === 'object') {
+                if (data.client_id instanceof Promise) {
+                    try {
+                        data.client_id = await data.client_id;
+                    } catch (e) {
+                        data.client_id = 'temp_' + Date.now();
+                        Logger.warn('Failed to resolve client_id Promise, using temporary ID');
+                    }
+                } else {
+                    data.client_id = String(data.client_id);
+                    Logger.warn('Converting client_id from object to string');
+                }
+            }
+            
             // Формируем данные для отправки
             const dataToSend = {
                 ...data,
@@ -1931,7 +1994,8 @@ let Logger = {
             });
             
             if (response.ok) {
-                return { success: true, method: 'fetch' };
+                const responseData = await response.json();
+                return { success: true, method: 'fetch', result: responseData };
             } else {
                 throw new Error(`Server error: ${response.status}`);
             }
@@ -1939,7 +2003,7 @@ let Logger = {
             // При ошибке добавляем в очередь для повторной отправки
             Logger.warn(`Не удалось отправить данные: ${error.message}`);
             addToFailedQueue(data);
-        return {
+            return {
                 success: false, 
                 error: error.message, 
                 queued: true 
