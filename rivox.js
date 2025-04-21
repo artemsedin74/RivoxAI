@@ -231,6 +231,32 @@ let Logger = {
         return Math.max(0, validEnd - validStart);
     }
     
+    // НОВАЯ ФУНКЦИЯ: Обеспечение безопасного client_id (всегда строка)
+    function safeClientId(id) {
+        if (id === null || id === undefined) {
+            Logger.warn('Null/undefined client_id, создаю временный');
+            return 'temp_' + Date.now();
+        }
+        
+        if (typeof id === 'object') {
+            if (id instanceof Promise) {
+                Logger.warn('Promise в client_id, создаю временный');
+                return 'promise_' + Date.now();
+            }
+            
+            if (id.toString && typeof id.toString === 'function' && id.toString() !== '[object Object]') {
+                Logger.warn('Object в client_id, преобразую в строку через toString');
+                return id.toString();
+            }
+            
+            Logger.warn('Невалидный object в client_id, создаю временный');
+            return 'obj_' + Date.now();
+        }
+        
+        // Гарантированно возвращаем строку
+        return String(id);
+    }
+    
     // Адаптация порогов в зависимости от устройства и поведения пользователя
     function getAdaptiveThresholds() {
         // Базовые значения из конфигурации
@@ -384,14 +410,12 @@ let Logger = {
             sendSessionSummary();
         }
 
-        const clientId = generateClientId();
-        // Преобразуем clientId в строку, если это Promise или объект
-        const safeClientId = clientId instanceof Promise 
-            ? 'temp_' + Date.now() 
-            : (typeof clientId === 'object' ? String(clientId) : clientId);
-
+        const rawClientId = generateClientId();
+        
         sessionData = {
-            client_id: safeClientId,
+            client_id: rawClientId instanceof Promise 
+                ? rawClientId.then(id => safeClientId(id)).catch(() => safeClientId(null))
+                : safeClientId(rawClientId),
             client_token: config.token,
             session_id: generateSessionId(),
             start_time: Date.now(),
@@ -442,6 +466,24 @@ let Logger = {
 
         isSessionActive = true;
         Logger.info('New session started:', sessionData.session_id);
+        
+        // Сохраняем идентификаторы сессии отдельно в localStorage
+        try {
+            localStorage.setItem('rivox_session_id', sessionData.session_id);
+            localStorage.setItem('rivox_session_active', 'true');
+            // Сохраняем ID клиента, когда он будет доступен
+            if (sessionData.client_id instanceof Promise) {
+                sessionData.client_id.then(id => {
+                    localStorage.setItem('rivox_client_id', safeClientId(id));
+                }).catch(() => {
+                    localStorage.setItem('rivox_client_id', safeClientId(null));
+                });
+            } else {
+                localStorage.setItem('rivox_client_id', safeClientId(sessionData.client_id));
+            }
+        } catch (e) {
+            Logger.warn('Failed to save session IDs to localStorage:', e);
+        }
     }
 
     // Extract UTM data
@@ -625,6 +667,25 @@ let Logger = {
         if (!sessionData) return;
         
         try {
+            // Убедимся, что client_id всегда строка перед сохранением
+            if (sessionData.client_id) {
+                if (sessionData.client_id instanceof Promise) {
+                    sessionData.client_id.then(id => {
+                        const safeId = safeClientId(id);
+                        sessionData.client_id = safeId;
+                        localStorage.setItem('rivox_client_id', safeId);
+                    }).catch(() => {
+                        const safeId = safeClientId(null);
+                        sessionData.client_id = safeId;
+                        localStorage.setItem('rivox_client_id', safeId);
+                    });
+                } else {
+                    const safeId = safeClientId(sessionData.client_id);
+                    sessionData.client_id = safeId;
+                    localStorage.setItem('rivox_client_id', safeId);
+                }
+            }
+            
             // Ограничиваем размер данных для localStorage
             const sessionCopy = JSON.parse(JSON.stringify(sessionData));
             
@@ -644,16 +705,8 @@ let Logger = {
             }
             
             localStorage.setItem('rivox_session', JSON.stringify(sessionCopy));
-            
-            // Сохраняем активность сессии и ID отдельно для быстрого доступа
             localStorage.setItem('rivox_session_active', isSessionActive ? 'true' : 'false');
             localStorage.setItem('rivox_session_id', sessionData.session_id);
-            
-            // Убедимся, что client_id всегда строка
-            if (typeof sessionData.client_id === 'object') {
-                sessionData.client_id = String(sessionData.client_id);
-            }
-            localStorage.setItem('rivox_client_id', sessionData.client_id);
             
             Logger.debug('Сессия сохранена в localStorage');
         } catch (error) {
@@ -663,13 +716,12 @@ let Logger = {
     
     // Создание новых данных сессии
     function createSessionData(clientId) {
-        // Преобразуем clientId в строку, если это Promise или объект
-        const safeClientId = clientId instanceof Promise 
-            ? 'temp_' + Date.now() 
-            : (typeof clientId === 'object' ? String(clientId) : clientId);
+        const safeId = clientId instanceof Promise 
+            ? clientId.then(id => safeClientId(id)).catch(() => safeClientId(null))
+            : safeClientId(clientId);
             
         const sessionData = {
-            client_id: safeClientId,
+            client_id: safeId,
             client_token: config.token,
             session_id: generateSessionId(),
             start_time: Date.now(),
@@ -717,6 +769,24 @@ let Logger = {
                 funnel_analysis: {}
             }
         };
+        
+        // Сохраняем идентификаторы сессии отдельно в localStorage
+        try {
+            localStorage.setItem('rivox_session_id', sessionData.session_id);
+            localStorage.setItem('rivox_session_active', 'true');
+            // Сохраняем ID клиента, когда он будет доступен
+            if (sessionData.client_id instanceof Promise) {
+                sessionData.client_id.then(id => {
+                    localStorage.setItem('rivox_client_id', safeClientId(id));
+                }).catch(() => {
+                    localStorage.setItem('rivox_client_id', safeClientId(null));
+                });
+            } else {
+                localStorage.setItem('rivox_client_id', safeClientId(sessionData.client_id));
+            }
+        } catch (e) {
+            Logger.warn('Failed to save session IDs to localStorage:', e);
+        }
         
         Logger.debug('Создана новая сессия:', sessionData.session_id);
         return sessionData;
@@ -898,15 +968,11 @@ let Logger = {
         sessionData.cta_clicks = sessionData.cta_clicks || [];
         sessionData.metrika_goals = sessionData.metrika_goals || [];
         
-        // Add current page to history
-        sessionData.page_history.push({
-            timestamp: Date.now(),
-            url: window.location.href,
-            referrer: document.referrer,
-            time_spent: 0
-        });
+        // Убедимся, что client_id всегда строка
+        if (sessionData.client_id) {
+            sessionData.client_id = safeClientId(sessionData.client_id);
+        }
         
-        isSessionActive = true;
         setupEventListeners();
         saveSessionToStorage();
 
@@ -1320,6 +1386,19 @@ let Logger = {
         }
 
         Logger.info('Preparing to send session data...');
+        
+        // Проверяем и исправляем client_id перед отправкой
+        if (sessionData.client_id) {
+            if (sessionData.client_id instanceof Promise) {
+                try {
+                    sessionData.client_id = safeClientId(await sessionData.client_id);
+                } catch(e) {
+                    sessionData.client_id = safeClientId(null);
+                }
+            } else {
+                sessionData.client_id = safeClientId(sessionData.client_id);
+            }
+        }
         
         // Update final duration before sending
         const now = Date.now();
@@ -1780,9 +1859,16 @@ let Logger = {
         getSessionData: () => sessionData,
         config,
         sendDataGuaranteed,
-        startNewSession, // Добавляем публичный доступ к функции запуска новой сессии
-        get clientId() { return sessionData?.client_id || null; },
-        get sessionId() { return sessionData?.session_id || null; },
+        // Добавляем публичный доступ к функции запуска новой сессии
+        startNewSession,
+        // Геттеры для удобного доступа к ключевым свойствам
+        get clientId() { 
+            if (!sessionData) return null;
+            return sessionData.client_id instanceof Promise 
+                ? 'pending' // Возвращаем временное значение пока Promise не выполнен
+                : safeClientId(sessionData.client_id); 
+        },
+        get sessionId() { return sessionData ? sessionData.session_id : null; },
         get isSessionActive() { return isSessionActive; }
     };
 
@@ -1960,26 +2046,27 @@ let Logger = {
             };
         }
         
-        try {
-            // Исправляем client_id если он объект или Promise
-            if (data.client_id && typeof data.client_id === 'object') {
-                if (data.client_id instanceof Promise) {
-                    try {
-                        data.client_id = await data.client_id;
-                    } catch (e) {
-                        data.client_id = 'temp_' + Date.now();
-                        Logger.warn('Failed to resolve client_id Promise, using temporary ID');
-                    }
-                } else {
-                    data.client_id = String(data.client_id);
-                    Logger.warn('Converting client_id from object to string');
+        // Создаем копию данных, чтобы не модифицировать оригинал
+        const cleanData = {...data};
+        
+        // Проверяем и исправляем client_id перед отправкой
+        if (cleanData.client_id) {
+            if (cleanData.client_id instanceof Promise) {
+                try {
+                    cleanData.client_id = safeClientId(await cleanData.client_id);
+                } catch(e) {
+                    cleanData.client_id = safeClientId(null);
                 }
+            } else {
+                cleanData.client_id = safeClientId(cleanData.client_id);
             }
-            
+        }
+        
+        try {
             // Формируем данные для отправки
             const dataToSend = {
-                ...data,
-                event_timestamp: data.event_timestamp || Date.now()
+                ...cleanData,
+                event_timestamp: cleanData.event_timestamp || Date.now()
             };
             
             // Отправляем данные через основной эндпоинт
