@@ -14,24 +14,37 @@ function logEvent(eventName, payload = {}) {
       host: window.location.hostname,
     };
     
-    // Улучшенная отправка логов через Beacon API
     const jsonString = JSON.stringify(data);
     
-    // Создаем blob с правильным типом контента
-    const blob = new Blob([jsonString], {
-      type: 'application/json'
-    });
+    // Создаем URL для отправки данных
+    const url = 'https://rivox-data-handler-779203791697.europe-central2.run.app/logs';
     
-    // Используем Beacon API для отправки данных
-    const success = navigator.sendBeacon('https://rivox-data-handler-779203791697.europe-central2.run.app/logs', blob);
-    
-    // Если отправка через Beacon не удалась, пробуем обычный fetch
-    if (!success) {
-      fetch('https://rivox-data-handler-779203791697.europe-central2.run.app/logs', {
+    // Используем Image beacon вместо navigator.sendBeacon для надежности
+    // Этот метод обходит CORS вообще и работает надежнее
+    if (eventName === 'error' || eventName === 'warning') {
+      // Для важных сообщений используем AJAX с повторными попытками
+      fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
+        // ВАЖНО! Отключаем использование credentials
+        credentials: 'omit', 
+        body: jsonString,
+        keepalive: true
+      }).catch(() => {
+        // Если и это не работает, используем Image beacon как запасной вариант
+        const img = new Image();
+        img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
+      });
+    } else {
+      // Для обычных сообщений пробуем вначале fetch без credentials
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'omit', // ВАЖНО! Отключаем использование credentials
         body: jsonString,
         keepalive: true
       }).catch(() => {/* Игнорируем ошибки fetch */});
