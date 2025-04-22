@@ -7,7 +7,76 @@ function _0x1e66ab(){return Date.now().toString(36)+Math.random().toString(36).s
 
 function _0x53f28c(){return new Promise(_0x32e8ca=>{const _0x173fa3=localStorage.getItem('rivox_client_id');if(_0x173fa3)return _0x257a1e.info('Using stored client ID from localStorage:',_0x173fa3),void _0x32e8ca(_0x173fa3);const _0x424e55=localStorage.getItem('_ym_client_id_backup');if(_0x424e55){_0x257a1e.info('Using backed up Yandex.Metrika client ID:',_0x424e55);try{localStorage.setItem('rivox_client_id',_0x424e55)}catch(_0x3adf54){_0x257a1e.warn('Could not save client ID to localStorage:',_0x3adf54)}return void _0x32e8ca(_0x424e55)}const _0x14fbda=function(_0x5b25d0){const _0x48f8b7=document.cookie.match(new RegExp('(?:^|; )'+_0x5b25d0.replace(/([\.$?*|{}\(\)\[\]\\\/\+^])/g,'\\$1')+'=([^;]*)'));return _0x48f8b7?decodeURIComponent(_0x48f8b7[1]):null}('_ym_uid');if(_0x14fbda){_0x257a1e.info('Using Yandex.Metrika cookie ID:',_0x14fbda);try{localStorage.setItem('_ym_client_id_backup',_0x14fbda),localStorage.setItem('rivox_client_id',_0x14fbda)}catch(_0x5c8c56){_0x257a1e.warn('Could not save client ID to localStorage:',_0x5c8c56)}return void _0x32e8ca(_0x14fbda)}const _0x24e35a=(_0x15b9fd=0,_0x2fb93d=5)=>{if(_0x15b9fd>=_0x2fb93d){const _0x27fbe0='temp_'+Date.now()+'_'+Math.random().toString(36).substr(2);_0x257a1e.info('Using temporary client ID:',_0x27fbe0);try{localStorage.setItem('rivox_client_id',_0x27fbe0)}catch(_0x260a8a){_0x257a1e.warn('Could not save temporary client ID to localStorage:',_0x260a8a)}return void _0x32e8ca(_0x27fbe0)}let _0x1fc17e=_0x1f9cb3();if(_0x1fc17e)try{ym(_0x1fc17e,'getClientID',function(_0x5e0c51){if(_0x5e0c51){_0x257a1e.info('Got client ID from Yandex.Metrika:',_0x5e0c51);try{localStorage.setItem('_ym_client_id_backup',_0x5e0c51),localStorage.setItem('rivox_client_id',_0x5e0c51)}catch(_0x3a2bbd){_0x257a1e.warn('Could not save client ID to localStorage:',_0x3a2bbd)}_0x32e8ca(_0x5e0c51)}else setTimeout(()=>_0x24e35a(_0x15b9fd+1),1e3)})}catch(_0x46f539){setTimeout(()=>_0x24e35a(_0x15b9fd+1),1e3)}else setTimeout(()=>_0x24e35a(_0x15b9fd+1),1e3)};_0x24e35a()})}
 
-function _0x5d2ab9(){_0x40c77a&&_0x36c60e();const _0x1e7ea0=_0x53f28c();_0x40c77a={client_id:_0x1e7ea0 instanceof Promise?_0x1e7ea0.then((_0x2b5f95=>_0x18a6f4(_0x2b5f95))).catch((()=>_0x18a6f4(null))):_0x18a6f4(_0x1e7ea0),client_token:_0x3c8f0c.token,session_id:_0x1e66ab(),start_time:Date.now(),last_activity:Date.now(),page_views:[{timestamp:Date.now(),url:_0x13b5e2.location.href,referrer:document.referrer}],scroll_chunks:[],hover_events:[],form_interactions:[],cta_clicks:[],modal_interactions:[],utm_data:_0x1bce1a(),metrika_goals:[],ecommerce_events:[],conversion_data:{goals_reached:[],ecommerce_data:[],last_goal_timestamp:null,conversion_path:[]},traffic_source:{referrer:document.referrer,landing_page:_0x13b5e2.location.href,entry_point:_0x13b5e2.location.pathname},user_behavior:{time_to_first_interaction:null,total_interactions:0,interaction_frequency:[],scroll_depth_percentages:[],time_between_clicks:[],mouse_movement_heatmap:[],viewport_size:{width:_0x13b5e2.innerWidth,height:_0x13b5e2.innerHeight}},ml_features:{interest_signals:[],behavior_patterns:[],user_segment:null,conversion_probability:null,funnel_analysis:{}}};_0x3db7da=!0,_0x257a1e.info('New session started:',_0x40c77a.session_id);try{localStorage.setItem('rivox_session_id',_0x40c77a.session_id),localStorage.setItem('rivox_session_active','true'),_0x40c77a.client_id instanceof Promise?_0x40c77a.client_id.then((_0x39bcea=>{localStorage.setItem('rivox_client_id',_0x18a6f4(_0x39bcea))})).catch((()=>{localStorage.setItem('rivox_client_id',_0x18a6f4(null))})):localStorage.setItem('rivox_client_id',_0x18a6f4(_0x40c77a.client_id))}catch(_0x40dccd){_0x257a1e.warn('Failed to save session IDs to localStorage:',_0x40dccd)}}function _0x1bce1a(){const _0x5c7d31=new URLSearchParams(_0x13b5e2.location.search),_0x28adde={traffic_type:'direct',landing_page_type:'unknown',referrer_domain:document.referrer?new URL(document.referrer).hostname:''};return['source','medium','campaign','term','content'].forEach((_0x4c1c74=>{const _0x3608d5=_0x5c7d31.get(`utm_${_0x4c1c74}`);_0x3608d5&&(_0x28adde[_0x4c1c74]=_0x3608d5,'medium'===_0x4c1c74&&(_0x28adde.traffic_type=_0x3608d5))})),_0x28adde}async function _0xc58a7f(){if(0===_0x1e73a0.length)return;const _0x1407c0=_0x1e73a0;_0x1e73a0=[];try{const _0x565da6=await fetch(_0x3c8f0c.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Origin:_0x13b5e2.location.origin},body:JSON.stringify(_0x1407c0)});if(!_0x565da6.ok)throw new Error(`HTTP error! status: ${_0x565da6.status}`);_0x257a1e.info('✅ Queued data sent successfully')}catch(_0x5290d1){_0x257a1e.error('Failed to send queued data:',_0x5290d1),_0x1e73a0=[..._0x1407c0,..._0x1e73a0]}}function _0x389cc6(){if(_0x40c77a)try{if(_0x40c77a.client_id)if(_0x40c77a.client_id instanceof Promise)_0x40c77a.client_id.then((_0x3d8a70=>{const _0xa4dafc=_0x18a6f4(_0x3d8a70);_0x40c77a.client_id=_0xa4dafc,localStorage.setItem('rivox_client_id',_0xa4dafc)})).catch((()=>{const _0x5a6aa7=_0x18a6f4(null);_0x40c77a.client_id=_0x5a6aa7,localStorage.setItem('rivox_client_id',_0x5a6aa7)}));else{const _0xf98a0=_0x18a6f4(_0x40c77a.client_id);_0x40c77a.client_id=_0xf98a0,localStorage.setItem('rivox_client_id',_0xf98a0)}const _0x3b3d93=JSON.parse(JSON.stringify(_0x40c77a));_0x3b3d93.scroll_chunks&&_0x3b3d93.scroll_chunks.length>10&&(_0x3b3d93.scroll_chunks=_0x3b3d93.scroll_chunks.slice(-10)),_0x3b3d93.hover_events&&_0x3b3d93.hover_events.length>5&&(_0x3b3d93.hover_events=_0x3b3d93.hover_events.slice(-5)),_0x3b3d93.user_behavior&&_0x3b3d93.user_behavior.mouse_movement_heatmap&&_0x3b3d93.user_behavior.mouse_movement_heatmap.length>10&&(_0x3b3d93.user_behavior.mouse_movement_heatmap=_0x3b3d93.user_behavior.mouse_movement_heatmap.slice(-10)),localStorage.setItem('rivox_session',JSON.stringify(_0x3b3d93)),localStorage.setItem('rivox_session_active',_0x3db7da?'true':'false'),localStorage.setItem('rivox_session_id',_0x40c77a.session_id),_0x257a1e.debug('Сессия сохранена в localStorage')}catch(_0x3e1e3e){_0x257a1e.error('Ошибка при сохранении сессии в localStorage:',_0x3e1e3e)}}function _0x5dd0e5(){if(!_0x40c77a)return!1;if(_0x59cc22)return _0x257a1e.debug('Данные уже отправляются, пропускаю отправку'),!1;const _0x113c8b=Date.now()-(_0x40c77a.last_send_time||_0x40c77a.start_time);if(_0x113c8b<_0x3c8f0c.minSendInterval)return _0x257a1e.debug(`Слишком короткий интервал между отправками (${Math.round(_0x113c8b/1e3)}с < ${Math.round(_0x3c8f0c.minSendInterval/1e3)}с)`),!1;if(_0x5a1f78>0){const _0x1b4e7f=_0x3c8f0c.errorBackoffTime*Math.min(_0x5a1f78,5);if(_0x113c8b<_0x1b4e7f)return _0x257a1e.debug(`Увеличенный интервал после ошибок: ${Math.round(_0x113c8b/1e3)}с < ${Math.round(_0x1b4e7f/1e3)}с)`),!1}return!!(_0x40c77a.scroll_chunks&&_0x40c77a.scroll_chunks.length>=5)||!!(_0x40c77a.cta_clicks&&_0x40c77a.cta_clicks.length>=3)||!!(_0x40c77a.form_interactions&&_0x40c77a.form_interactions.length>0)||_0x113c8b>6e4}
+function _0x5d2ab9(){
+  if(_0x40c77a) {
+    _0x3dbf4e('session_start');
+  }
+
+  const _0x1e7ea0=_0x53f28c();
+  _0x40c77a={
+    client_id:_0x1e7ea0 instanceof Promise?_0x1e7ea0.then((_0x2b5f95=>_0x18a6f4(_0x2b5f95))).catch((()=>_0x18a6f4(null))):_0x18a6f4(_0x1e7ea0),
+    client_token:_0x3c8f0c.token,
+    session_id:_0x1e66ab(),
+    start_time:Date.now(),
+    last_activity:Date.now(),
+    page_views:[{timestamp:Date.now(),url:_0x13b5e2.location.href,referrer:document.referrer}],
+    scroll_chunks:[],
+    hover_events:[],
+    form_interactions:[],
+    cta_clicks:[],
+    modal_interactions:[],
+    utm_data:_0x1bce1a(),
+    metrika_goals:[],
+    ecommerce_events:[],
+    conversion_data:{goals_reached:[],ecommerce_data:[],last_goal_timestamp:null,conversion_path:[]},
+    traffic_source:{referrer:document.referrer,landing_page:_0x13b5e2.location.href,entry_point:_0x13b5e2.location.pathname},
+    user_behavior:{time_to_first_interaction:null,total_interactions:0,interaction_frequency:[],scroll_depth_percentages:[],time_between_clicks:[],mouse_movement_heatmap:[],viewport_size:{width:_0x13b5e2.innerWidth,height:_0x13b5e2.innerHeight}},
+    ml_features:{interest_signals:[],behavior_patterns:[],user_segment:null,conversion_probability:null,funnel_analysis:{}}
+  };
+  
+  _0x3db7da=!0,_0x257a1e.info('New session started:',_0x40c77a.session_id);
+  
+  try{
+    localStorage.setItem('rivox_session_id',_0x40c77a.session_id),
+    localStorage.setItem('rivox_session_active','true'),
+    _0x40c77a.client_id instanceof Promise?_0x40c77a.client_id.then((_0x39bcea=>{
+      localStorage.setItem('rivox_client_id',_0x18a6f4(_0x39bcea))
+    })).catch((()=>{
+      localStorage.setItem('rivox_client_id',_0x18a6f4(null))
+    })):localStorage.setItem('rivox_client_id',_0x18a6f4(_0x40c77a.client_id))
+  }catch(_0x40dccd){
+    _0x257a1e.warn('Failed to save session IDs to localStorage:',_0x40dccd)
+  }
+}
+
+function _0x1bce1a(){const _0x5c7d31=new URLSearchParams(_0x13b5e2.location.search),_0x28adde={traffic_type:'direct',landing_page_type:'unknown',referrer_domain:document.referrer?new URL(document.referrer).hostname:''};return['source','medium','campaign','term','content'].forEach((_0x4c1c74=>{const _0x3608d5=_0x5c7d31.get(`utm_${_0x4c1c74}`);_0x3608d5&&(_0x28adde[_0x4c1c74]=_0x3608d5,'medium'===_0x4c1c74&&(_0x28adde.traffic_type=_0x3608d5))})),_0x28adde}async function _0xc58a7f(){if(0===_0x1e73a0.length)return;const _0x1407c0=_0x1e73a0;_0x1e73a0=[];try{const _0x565da6=await fetch(_0x3c8f0c.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Origin:_0x13b5e2.location.origin},body:JSON.stringify(_0x1407c0)});if(!_0x565da6.ok)throw new Error(`HTTP error! status: ${_0x565da6.status}`);_0x257a1e.info('✅ Queued data sent successfully')}catch(_0x5290d1){_0x257a1e.error('Failed to send queued data:',_0x5290d1),_0x1e73a0=[..._0x1407c0,..._0x1e73a0]}}function _0x389cc6(){if(_0x40c77a)try{if(_0x40c77a.client_id)if(_0x40c77a.client_id instanceof Promise)_0x40c77a.client_id.then((_0x3d8a70=>{const _0xa4dafc=_0x18a6f4(_0x3d8a70);_0x40c77a.client_id=_0xa4dafc,localStorage.setItem('rivox_client_id',_0xa4dafc)})).catch((()=>{const _0x5a6aa7=_0x18a6f4(null);_0x40c77a.client_id=_0x5a6aa7,localStorage.setItem('rivox_client_id',_0x5a6aa7)}));else{const _0xf98a0=_0x18a6f4(_0x40c77a.client_id);_0x40c77a.client_id=_0xf98a0,localStorage.setItem('rivox_client_id',_0xf98a0)}const _0x3b3d93=JSON.parse(JSON.stringify(_0x40c77a));_0x3b3d93.scroll_chunks&&_0x3b3d93.scroll_chunks.length>10&&(_0x3b3d93.scroll_chunks=_0x3b3d93.scroll_chunks.slice(-10)),_0x3b3d93.hover_events&&_0x3b3d93.hover_events.length>5&&(_0x3b3d93.hover_events=_0x3b3d93.hover_events.slice(-5)),_0x3b3d93.user_behavior&&_0x3b3d93.user_behavior.mouse_movement_heatmap&&_0x3b3d93.user_behavior.mouse_movement_heatmap.length>10&&(_0x3b3d93.user_behavior.mouse_movement_heatmap=_0x3b3d93.user_behavior.mouse_movement_heatmap.slice(-10)),localStorage.setItem('rivox_session',JSON.stringify(_0x3b3d93)),localStorage.setItem('rivox_session_active',_0x3db7da?'true':'false'),localStorage.setItem('rivox_session_id',_0x40c77a.session_id),_0x257a1e.debug('Сессия сохранена в localStorage')}catch(_0x3e1e3e){_0x257a1e.error('Ошибка при сохранении сессии в localStorage:',_0x3e1e3e)}}function _0x5dd0e5(){
+  if(!_0x40c77a)return!1;
+  if(_0x59cc22)return _0x257a1e.debug('Данные уже отправляются, пропускаю отправку'),!1;
+  
+  const _0x113c8b=Date.now()-(_0x40c77a.last_send_time||_0x40c77a.start_time);
+  if(_0x113c8b<_0x3c8f0c.minSendInterval)
+    return _0x257a1e.debug(`Слишком короткий интервал между отправками (${Math.round(_0x113c8b/1e3)}с < ${Math.round(_0x3c8f0c.minSendInterval/1e3)}с)`),!1;
+  
+  if(_0x5a1f78>0){
+    const _0x1b4e7f=_0x3c8f0c.errorBackoffTime*Math.min(_0x5a1f78,5);
+    if(_0x113c8b<_0x1b4e7f)
+      return _0x257a1e.debug(`Увеличенный интервал после ошибок: ${Math.round(_0x113c8b/1e3)}с < ${Math.round(_0x1b4e7f/1e3)}с)`),!1;
+  }
+  
+  return!!(_0x40c77a.scroll_chunks&&_0x40c77a.scroll_chunks.length>=5)||!!(_0x40c77a.cta_clicks&&_0x40c77a.cta_clicks.length>=3)||!!(_0x40c77a.form_interactions&&_0x40c77a.form_interactions.length>0)||_0x113c8b>6e4
+}
+
+// Вспомогательная функция для безопасного вызова _0x36c60e()
+function _0x3dbf4e(reason) {
+  (async () => {
+    try {
+      _0x257a1e.info(`Sending data (${reason})...`);
+      await _0x36c60e();
+    } catch(e) {
+      _0x257a1e.error(`Error sending data (${reason}):`, e);
+    }
+  })();
+}
 
 function _0x4cb00c(_0x4e49db){if(!_0x4e49db)return!1;const _0x513a72=_0x4e49db.replace(/^www\./,''),_0x14f6e0=_0x3c8f0c.allowedDomains.some(_0x32a9f1=>{const _0x512d8d=_0x32a9f1.replace(/^www\./,'');return _0x513a72===_0x512d8d||_0x513a72.endsWith('.'+_0x512d8d)});return _0x3c8f0c.debug&&_0x257a1e.debug('Checking domain:',{original:_0x4e49db,normalized:_0x513a72,allowed:_0x14f6e0,allowedDomains:_0x3c8f0c.allowedDomains}),_0x14f6e0}
 
@@ -15,7 +84,271 @@ function _0x2c5e77(_0x424a76){const _0x4a26f2=document.querySelector('script[dat
 
 function _0x29cb50(_0x33c19a){let _0x19d3a5=0;!function _0x57be81(){if(_0x19d3a5++,'undefined'!=typeof ym&&void 0!==ym.a)return _0x257a1e.info('Metrika ready (ym object)'),void _0x33c19a();if(_0x13b5e2.Ya&&_0x13b5e2.Ya.Metrika)return _0x257a1e.info('Metrika ready (Ya.Metrika)'),void _0x33c19a();for(const _0x4f4a2b in _0x13b5e2)if(_0x4f4a2b.startsWith('yaCounter'))return _0x257a1e.info('Metrika ready (counter object)'),void _0x33c19a();if(_0x19d3a5>=50)return _0x257a1e.info('Proceeding without waiting for Metrika'),void _0x33c19a();_0x257a1e.debug(`Waiting for Metrika (attempt ${_0x19d3a5}/50)...`),setTimeout(_0x57be81,100)}()}
 
-async function _0x36c60e(){if(_0x40c77a&&_0x3db7da){if(_0x59cc22)return void _0x257a1e.info('Отправка данных уже выполняется, пропускаю запрос');try{_0x59cc22=!0,_0x257a1e.info('Preparing to send session data...');if(_0x40c77a.client_id)if(_0x40c77a.client_id instanceof Promise)try{_0x40c77a.client_id=_0x18a6f4(await _0x40c77a.client_id)}catch(_0x23c0c0){_0x40c77a.client_id=_0x18a6f4(null)}else _0x40c77a.client_id=_0x18a6f4(_0x40c77a.client_id);const _0x32cda4=Date.now();_0x40c77a.duration=_0x32cda4-_0x40c77a.start_time,_0x40c77a.end_time=new Date(_0x32cda4).toISOString(),_0x40c77a.last_send_time=_0x32cda4,_0x257a1e.info('Current session data:',{client_id:_0x40c77a.client_id,session_id:_0x40c77a.session_id,goals_count:_0x40c77a.metrika_goals?.length||0,goals:_0x40c77a.metrika_goals||[],conversion_data:_0x40c77a.conversion_data||{},duration:_0x40c77a.duration}),_0x40c77a.metrika_goals&&_0x40c77a.metrika_goals.length>0?_0x257a1e.info('Goals found in session data:',_0x40c77a.metrika_goals):_0x257a1e.warn('No goals found in session data'),_0x7b3ff2();const _0x55b44e={client_id:_0x40c77a.client_id,client_token:_0x3c8f0c.token,session_id:_0x40c77a.session_id,timestamp:(new Date).toISOString(),sdk_version:_0x2bed9f,page_url:_0x13b5e2.location.href,domain:_0x13b5e2.location.hostname,path:_0x13b5e2.location.pathname,session_duration:_0x40c77a.duration||Date.now()-_0x40c77a.start_time,time_to_first_interaction:_0x40c77a.user_behavior?.time_to_first_interaction,total_interactions:_0x40c77a.user_behavior?.total_interactions||0,utm_data:_0x40c77a.utm_data,metrika_goals:_0x40c77a.metrika_goals||[],conversion_data:_0x40c77a.conversion_data||{},user_behavior:{time_to_first_interaction:_0x40c77a.user_behavior?.time_to_first_interaction,total_interactions:_0x40c77a.user_behavior?.total_interactions||0,viewport_size:_0x40c77a.user_behavior?.viewport_size||{width:_0x13b5e2.innerWidth,height:_0x13b5e2.innerHeight}},ml_features:_0x40c77a.ml_features||{}};if(_0x40c77a.scroll_chunks&&_0x40c77a.scroll_chunks.length){const _0x1d3121=30;_0x55b44e.scroll_depth_max=_0x40c77a.user_behavior?.scroll_depth_percentages?Math.max(..._0x40c77a.user_behavior.scroll_depth_percentages.map(_0x29c3a5=>_0x29c3a5.depth||0)):0,_0x55b44e.scroll_count=_0x40c77a.scroll_chunks.length,_0x40c77a.scroll_chunks.length>_0x1d3121?(_0x257a1e.debug(`Ограничиваю события скролла: ${_0x40c77a.scroll_chunks.length} → ${_0x1d3121}`),_0x55b44e.scroll_chunks=_0x40c77a.scroll_chunks.slice(-_0x1d3121)):_0x55b44e.scroll_chunks=_0x40c77a.scroll_chunks}if(_0x40c77a.cta_clicks&&_0x40c77a.cta_clicks.length){const _0x48c7db=20;_0x55b44e.click_count=_0x40c77a.cta_clicks.length,_0x40c77a.cta_clicks.length>_0x48c7db?(_0x257a1e.debug(`Ограничиваю события кликов: ${_0x40c77a.cta_clicks.length} → ${_0x48c7db}`),_0x55b44e.clicks=_0x40c77a.cta_clicks.slice(-_0x48c7db)):_0x55b44e.clicks=_0x40c77a.cta_clicks}if(_0x40c77a.hover_events&&_0x40c77a.hover_events.length){const _0x27431a=10;_0x55b44e.hover_count=_0x40c77a.hover_events.length,_0x40c77a.hover_events.length>_0x27431a?(_0x257a1e.debug(`Ограничиваю hover-события: ${_0x40c77a.hover_events.length} → ${_0x27431a}`),_0x55b44e.hovers=_0x40c77a.hover_events.slice(-_0x27431a)):_0x55b44e.hovers=_0x40c77a.hover_events}_0x40c77a.user_behavior&&(_0x55b44e.user_behavior={..._0x55b44e.user_behavior,time_to_first_interaction:_0x40c77a.user_behavior.time_to_first_interaction,total_interactions:_0x40c77a.user_behavior.total_interactions||0,avg_time_between_clicks:_0x40c77a.user_behavior.avg_time_between_clicks},_0x40c77a.user_behavior.scroll_depth_percentages&&_0x40c77a.user_behavior.scroll_depth_percentages.length>20?_0x55b44e.user_behavior.scroll_depth_percentages=_0x40c77a.user_behavior.scroll_depth_percentages.slice(-20):_0x55b44e.user_behavior.scroll_depth_percentages=_0x40c77a.user_behavior.scroll_depth_percentages,_0x40c77a.user_behavior.time_between_clicks&&_0x40c77a.user_behavior.time_between_clicks.length>15?_0x55b44e.user_behavior.time_between_clicks=_0x40c77a.user_behavior.time_between_clicks.slice(-15):_0x55b44e.user_behavior.time_between_clicks=_0x40c77a.user_behavior.time_between_clicks,_0x40c77a.user_behavior.interaction_frequency&&_0x40c77a.user_behavior.interaction_frequency.length>30?_0x55b44e.user_behavior.interaction_frequency=_0x40c77a.user_behavior.interaction_frequency.slice(-30):_0x55b44e.user_behavior.interaction_frequency=_0x40c77a.user_behavior.interaction_frequency,_0x40c77a.user_behavior.mouse_movement_heatmap&&_0x40c77a.user_behavior.mouse_movement_heatmap.length>10?_0x55b44e.user_behavior.mouse_movement_heatmap=_0x40c77a.user_behavior.mouse_movement_heatmap.slice(-10):_0x55b44e.user_behavior.mouse_movement_heatmap=_0x40c77a.user_behavior.mouse_movement_heatmap),_0x257a1e.info('Data to be sent:',{goals_count:_0x55b44e.metrika_goals?.length||0,goals:_0x55b44e.metrika_goals||[],conversion_data:_0x55b44e.conversion_data||{}});const _0x1e6edd=JSON.stringify(_0x55b44e),_0x3c9384=_0x1e6edd.length;if(_0x3c9384>_0x3c8f0c.maxRequestSize)return _0x257a1e.warn(`Размер данных (${_0x3c9384}) превышает лимит (${_0x3c8f0c.maxRequestSize}), данные будут обрезаны`),void function(_0x4522d5){}(_0x55b44e);const _0x56582f=_0x3c8f0c.useCompression&&'undefined'!=typeof LZString;let _0x5c35e6=null;if(_0x56582f)try{_0x5c35e6=LZString.compressToUTF16(_0x1e6edd);const _0x349e8f=Math.round(_0x5c35e6.length/_0x1e6edd.length*100);_0x257a1e.info(`Данные сжаты: ${_0x3c9384} → ${_0x5c35e6.length} байт (${_0x349e8f}%)`)}catch(_0x34be4e){_0x257a1e.warn('Ошибка сжатия данных, отправляю несжатые:',_0x34be4e),_0x5c35e6=null}let _0x2d8ac1=0;const _0x1ee5fe=_0x3c8f0c.maxRetries;for(;_0x2d8ac1<_0x1ee5fe;)try{_0x257a1e.info(`Attempting POST request (attempt ${_0x2d8ac1+1}/${_0x1ee5fe})...`);const _0x4e5ac8={'Content-Type':'application/json',Origin:_0x13b5e2.location.origin};let _0x2a83ab;_0x56582f&&_0x5c35e6?(_0x4e5ac8['x-compression']='true',_0x2a83ab=JSON.stringify({data:_0x5c35e6})):_0x2a83ab=_0x1e6edd,_0x4e5ac8['x-data-size']=_0x3c9384.toString();const _0x45c6d3=await fetch(_0x3c8f0c.endpoint,{method:'POST',headers:_0x4e5ac8,body:_0x2a83ab});if(!_0x45c6d3.ok)throw new Error(`HTTP error! status: ${_0x45c6d3.status}`);const _0x151d1e=await _0x45c6d3.json();return _0x257a1e.info('✅ POST request successful:',_0x151d1e),_0x5a1f78=0,_0x151d1e}catch(_0x18b0d2){if(_0x257a1e.warn(`POST request failed (attempt ${_0x2d8ac1+1}/${_0x1ee5fe}):`,_0x18b0d2),_0x18b0d2.message.includes('500')&&_0x5a1f78++,_0x2d8ac1===_0x1ee5fe-1&&navigator.sendBeacon&&_0x3c8f0c.beaconSupport)try{_0x257a1e.info('Trying beacon API as last resort...');const _0x35ddd9=new Blob([_0x1e6edd],{type:'application/json'});if(navigator.sendBeacon(_0x3c8f0c.endpoint,_0x35ddd9))return _0x257a1e.info('✅ Data sent via beacon API'),{success:!0,method:'beacon'}}catch(_0x531e1d){_0x257a1e.error('Beacon API failed:',_0x531e1d)}const _0x5f5421=_0x54e1a6*Math.pow(_0x34c88e,_0x2d8ac1);_0x257a1e.info(`Waiting ${_0x5f5421}ms before retry...`),await new Promise(_0x5c8c3e=>setTimeout(_0x5c8c3e,_0x5f5421)),_0x2d8ac1++}_0x257a1e.error(`Failed to send data after ${_0x1ee5fe} attempts, queueing for later retry`),_0x2e5e74(_0x55b44e)}finally{_0x59cc22=!1}}else _0x257a1e.warn('No session data to send or session not active')}
+async function _0x36c60e(){
+  if(_0x40c77a&&_0x3db7da){
+    if(_0x59cc22)return void _0x257a1e.info('Отправка данных уже выполняется, пропускаю запрос');
+    try{
+      _0x59cc22=!0,_0x257a1e.info('Preparing to send session data...');
+      
+      // Убедимся, что client_id правильно обработан
+      if(_0x40c77a.client_id) {
+        if(_0x40c77a.client_id instanceof Promise) {
+          try {
+            _0x40c77a.client_id=_0x18a6f4(await _0x40c77a.client_id);
+          } catch(_0x23c0c0) {
+            _0x40c77a.client_id=_0x18a6f4(null);
+          }
+        } else {
+          _0x40c77a.client_id=_0x18a6f4(_0x40c77a.client_id);
+        }
+      }
+      
+      // Убедимся что необходимые поля инициализированы
+      if (!_0x40c77a.client_token && _0x3c8f0c.token) {
+        _0x257a1e.warn("Adding missing client_token to request data");
+        _0x40c77a.client_token = _0x3c8f0c.token;
+      }
+      
+      if (!_0x40c77a.session_id) {
+        _0x257a1e.warn("Adding missing session_id to request data");
+        _0x40c77a.session_id = _0x1e66ab();
+      }
+      
+      const _0x32cda4=Date.now();
+      _0x40c77a.duration=_0x32cda4-_0x40c77a.start_time;
+      _0x40c77a.end_time=new Date(_0x32cda4).toISOString();
+      _0x40c77a.last_send_time=_0x32cda4;
+      
+      _0x257a1e.info('Current session data:', {
+        client_id: _0x40c77a.client_id,
+        session_id: _0x40c77a.session_id,
+        goals_count: _0x40c77a.metrika_goals?.length || 0,
+        goals: _0x40c77a.metrika_goals || [],
+        conversion_data: _0x40c77a.conversion_data || {},
+        duration: _0x40c77a.duration
+      });
+      
+      if(_0x40c77a.metrika_goals && _0x40c77a.metrika_goals.length > 0) {
+        _0x257a1e.info('Goals found in session data:', _0x40c77a.metrika_goals);
+      } else {
+        _0x257a1e.warn('No goals found in session data');
+      }
+      
+      _0x7b3ff2();
+      
+      // Создаем проверенный объект для отправки
+      const _0x55b44e = {
+        client_id: _0x40c77a.client_id,
+        client_token: _0x3c8f0c.token,
+        session_id: _0x40c77a.session_id,
+        timestamp: (new Date).toISOString(),
+        sdk_version: _0x2bed9f,
+        page_url: _0x13b5e2.location.href,
+        domain: _0x13b5e2.location.hostname,
+        path: _0x13b5e2.location.pathname,
+        session_duration: _0x40c77a.duration || Date.now() - _0x40c77a.start_time,
+        time_to_first_interaction: _0x40c77a.user_behavior?.time_to_first_interaction,
+        total_interactions: _0x40c77a.user_behavior?.total_interactions || 0,
+        utm_data: _0x40c77a.utm_data,
+        metrika_goals: _0x40c77a.metrika_goals || [],
+        conversion_data: _0x40c77a.conversion_data || {},
+        user_behavior: {
+          time_to_first_interaction: _0x40c77a.user_behavior?.time_to_first_interaction,
+          total_interactions: _0x40c77a.user_behavior?.total_interactions || 0,
+          viewport_size: _0x40c77a.user_behavior?.viewport_size || {
+            width: _0x13b5e2.innerWidth,
+            height: _0x13b5e2.innerHeight
+          }
+        },
+        ml_features: _0x40c77a.ml_features || {}
+      };
+      
+      // Добавим данные скроллинга, если они есть
+      if(_0x40c77a.scroll_chunks && _0x40c77a.scroll_chunks.length) {
+        const _0x1d3121 = 30;
+        _0x55b44e.scroll_depth_max = _0x40c77a.user_behavior?.scroll_depth_percentages
+          ? Math.max(..._0x40c77a.user_behavior.scroll_depth_percentages.map(_0x29c3a5 => _0x29c3a5.depth || 0))
+          : 0;
+        _0x55b44e.scroll_count = _0x40c77a.scroll_chunks.length;
+        if(_0x40c77a.scroll_chunks.length > _0x1d3121) {
+          _0x257a1e.debug(`Ограничиваю события скролла: ${_0x40c77a.scroll_chunks.length} → ${_0x1d3121}`);
+          _0x55b44e.scroll_chunks = _0x40c77a.scroll_chunks.slice(-_0x1d3121);
+        } else {
+          _0x55b44e.scroll_chunks = _0x40c77a.scroll_chunks;
+        }
+      }
+      
+      // Добавим данные кликов, если они есть
+      if(_0x40c77a.cta_clicks && _0x40c77a.cta_clicks.length) {
+        const _0x48c7db = 20;
+        _0x55b44e.click_count = _0x40c77a.cta_clicks.length;
+        if(_0x40c77a.cta_clicks.length > _0x48c7db) {
+          _0x257a1e.debug(`Ограничиваю события кликов: ${_0x40c77a.cta_clicks.length} → ${_0x48c7db}`);
+          _0x55b44e.clicks = _0x40c77a.cta_clicks.slice(-_0x48c7db);
+        } else {
+          _0x55b44e.clicks = _0x40c77a.cta_clicks;
+        }
+      }
+      
+      // Добавим данные hover-событий, если они есть
+      if(_0x40c77a.hover_events && _0x40c77a.hover_events.length) {
+        const _0x27431a = 10;
+        _0x55b44e.hover_count = _0x40c77a.hover_events.length;
+        if(_0x40c77a.hover_events.length > _0x27431a) {
+          _0x257a1e.debug(`Ограничиваю hover-события: ${_0x40c77a.hover_events.length} → ${_0x27431a}`);
+          _0x55b44e.hovers = _0x40c77a.hover_events.slice(-_0x27431a);
+        } else {
+          _0x55b44e.hovers = _0x40c77a.hover_events;
+        }
+      }
+      
+      // Дополним поля user_behavior
+      if(_0x40c77a.user_behavior) {
+        _0x55b44e.user_behavior = {
+          ..._0x55b44e.user_behavior,
+          time_to_first_interaction: _0x40c77a.user_behavior.time_to_first_interaction,
+          total_interactions: _0x40c77a.user_behavior.total_interactions || 0,
+          avg_time_between_clicks: _0x40c77a.user_behavior.avg_time_between_clicks
+        };
+        
+        if(_0x40c77a.user_behavior.scroll_depth_percentages && _0x40c77a.user_behavior.scroll_depth_percentages.length > 20) {
+          _0x55b44e.user_behavior.scroll_depth_percentages = _0x40c77a.user_behavior.scroll_depth_percentages.slice(-20);
+        } else {
+          _0x55b44e.user_behavior.scroll_depth_percentages = _0x40c77a.user_behavior.scroll_depth_percentages;
+        }
+        
+        if(_0x40c77a.user_behavior.time_between_clicks && _0x40c77a.user_behavior.time_between_clicks.length > 15) {
+          _0x55b44e.user_behavior.time_between_clicks = _0x40c77a.user_behavior.time_between_clicks.slice(-15);
+        } else {
+          _0x55b44e.user_behavior.time_between_clicks = _0x40c77a.user_behavior.time_between_clicks;
+        }
+        
+        if(_0x40c77a.user_behavior.interaction_frequency && _0x40c77a.user_behavior.interaction_frequency.length > 30) {
+          _0x55b44e.user_behavior.interaction_frequency = _0x40c77a.user_behavior.interaction_frequency.slice(-30);
+        } else {
+          _0x55b44e.user_behavior.interaction_frequency = _0x40c77a.user_behavior.interaction_frequency;
+        }
+        
+        if(_0x40c77a.user_behavior.mouse_movement_heatmap && _0x40c77a.user_behavior.mouse_movement_heatmap.length > 10) {
+          _0x55b44e.user_behavior.mouse_movement_heatmap = _0x40c77a.user_behavior.mouse_movement_heatmap.slice(-10);
+        } else {
+          _0x55b44e.user_behavior.mouse_movement_heatmap = _0x40c77a.user_behavior.mouse_movement_heatmap;
+        }
+      }
+      
+      // Проверим итоговые данные перед отправкой
+      _0x257a1e.info('Data to be sent:', {
+        goals_count: _0x55b44e.metrika_goals?.length || 0,
+        goals: _0x55b44e.metrika_goals || [],
+        conversion_data: _0x55b44e.conversion_data || {}
+      });
+      
+      // Конвертируем в JSON и проверим размер
+      const _0x1e6edd = JSON.stringify(_0x55b44e);
+      const _0x3c9384 = _0x1e6edd.length;
+      
+      // Проверяем на превышение лимита размера
+      if(_0x3c9384 > _0x3c8f0c.maxRequestSize) {
+        _0x257a1e.warn(`Размер данных (${_0x3c9384}) превышает лимит (${_0x3c8f0c.maxRequestSize}), данные будут обрезаны`);
+        return void function(_0x4522d5) {}(_0x55b44e);
+      }
+      
+      // Попробуем сжать данные, если поддерживается
+      const _0x56582f = _0x3c8f0c.useCompression && 'undefined' != typeof LZString;
+      let _0x5c35e6 = null;
+      
+      if(_0x56582f) {
+        try {
+          _0x5c35e6 = LZString.compressToUTF16(_0x1e6edd);
+          const _0x349e8f = Math.round(_0x5c35e6.length / _0x1e6edd.length * 100);
+          _0x257a1e.info(`Данные сжаты: ${_0x3c9384} → ${_0x5c35e6.length} байт (${_0x349e8f}%)`);
+        } catch(_0x34be4e) {
+          _0x257a1e.warn('Ошибка сжатия данных, отправляю несжатые:', _0x34be4e);
+          _0x5c35e6 = null;
+        }
+      }
+      
+      // Настраиваем повторные попытки
+      let _0x2d8ac1 = 0;
+      const _0x1ee5fe = _0x3c8f0c.maxRetries;
+      
+      while(_0x2d8ac1 < _0x1ee5fe) {
+        try {
+          _0x257a1e.info(`Attempting POST request (attempt ${_0x2d8ac1+1}/${_0x1ee5fe})...`);
+          
+          // Готовим заголовки
+          const _0x4e5ac8 = {
+            'Content-Type': 'application/json',
+            'Origin': _0x13b5e2.location.origin
+          };
+          
+          // Подготовим тело запроса с учетом сжатия
+          let _0x2a83ab;
+          if(_0x56582f && _0x5c35e6) {
+            _0x4e5ac8['x-compression'] = 'true';
+            _0x2a83ab = JSON.stringify({data: _0x5c35e6});
+          } else {
+            _0x2a83ab = _0x1e6edd;
+          }
+          
+          // Добавим информацию о размере данных
+          _0x4e5ac8['x-data-size'] = _0x3c9384.toString();
+          
+          // Выполним запрос
+          const _0x45c6d3 = await fetch(_0x3c8f0c.endpoint, {
+            method: 'POST',
+            headers: _0x4e5ac8,
+            body: _0x2a83ab
+          });
+          
+          if(!_0x45c6d3.ok) {
+            throw new Error(`HTTP error! status: ${_0x45c6d3.status}`);
+          }
+          
+          const _0x151d1e = await _0x45c6d3.json();
+          _0x257a1e.info('✅ POST request successful:', _0x151d1e);
+          _0x5a1f78 = 0;
+          return _0x151d1e;
+        } catch(_0x18b0d2) {
+          _0x257a1e.warn(`POST request failed (attempt ${_0x2d8ac1+1}/${_0x1ee5fe}):`, _0x18b0d2);
+          
+          // Увеличим счетчик ошибок для 500-х статусов
+          if(_0x18b0d2.message.includes('500')) {
+            _0x5a1f78++;
+          }
+          
+          // Если это последняя попытка, попробуем использовать beacon API
+          if(_0x2d8ac1 === _0x1ee5fe-1 && navigator.sendBeacon && _0x3c8f0c.beaconSupport) {
+            try {
+              _0x257a1e.info('Trying beacon API as last resort...');
+              const _0x35ddd9 = new Blob([_0x1e6edd], {type: 'application/json'});
+              if(navigator.sendBeacon(_0x3c8f0c.endpoint, _0x35ddd9)) {
+                _0x257a1e.info('✅ Data sent via beacon API');
+                return {success: true, method: 'beacon'};
+              }
+            } catch(_0x531e1d) {
+              _0x257a1e.error('Beacon API failed:', _0x531e1d);
+            }
+          }
+          
+          // Экспоненциальное увеличение задержки между попытками
+          const _0x5f5421 = _0x54e1a6 * Math.pow(_0x34c88e, _0x2d8ac1);
+          _0x257a1e.info(`Waiting ${_0x5f5421}ms before retry...`);
+          await new Promise(_0x5c8c3e => setTimeout(_0x5c8c3e, _0x5f5421));
+          _0x2d8ac1++;
+        }
+      }
+      
+      // Если все попытки не удались, добавляем в очередь для последующей отправки
+      _0x257a1e.error(`Failed to send data after ${_0x1ee5fe} attempts, queueing for later retry`);
+      _0x2e5e74(_0x55b44e);
+    } finally {
+      _0x59cc22 = false;
+    }
+  } else {
+    _0x257a1e.warn('No session data to send or session not active');
+  }
+}
 
 function _0x2bb2e2(_0x2fcbbb,_0x4cbc27){let _0x4d2d61=0;return function(..._0x151307){const _0x5b6b5a=Date.now();if(_0x5b6b5a-_0x4d2d61>=_0x4cbc27)return _0x4d2d61=_0x5b6b5a,_0x2fcbbb.apply(this,_0x151307)}}
 
@@ -25,7 +358,105 @@ function _0x4f1433(_0x5099c2){if(!_0x5099c2)return!1;return['A','BUTTON','INPUT'
 
 function _0x3f9e56(_0xde8dab){if(!_0xde8dab)return!1;const _0x254c5d=['A','BUTTON','INPUT[type="submit"]','INPUT[type="button"]','IMG[data-product-id]','DIV.price_matrix_block','DIV.buy_block'],_0x26a76a=['btn','button','cta','buy','add-to-cart','checkout','order','submit','callback','contact','phone','price','price_matrix_block','buy_block','product-item','product-card','product-detail','add_to_cart','quick_buy','fast_order'],_0xbfed88=['купить','заказать','добавить','корзин','оформить','позвонить','заказать звонок','отправить','оставить заявку','в 1 клик','быстрый заказ','быстрая покупка'];let _0x41a4b0=_0xde8dab;for(;_0x41a4b0&&_0x41a4b0!==document;){const _0x2c0e68=_0x254c5d.some(_0x1d6e5a=>{const[_0x2a67a1,_0x14c6e3]=_0x1d6e5a.split('[type="');if(_0x14c6e3)return _0x41a4b0.tagName===_0x2a67a1&&_0x41a4b0.type===_0x14c6e3.slice(0,-1);if(_0x1d6e5a.includes('.')){const[_0x50a8cf,_0x45ac58]=_0x1d6e5a.split('.');return _0x41a4b0.tagName===_0x50a8cf&&_0x41a4b0.className&&_0x41a4b0.className.includes(_0x45ac58)}return _0x41a4b0.tagName===_0x1d6e5a}),_0x1075c1=_0x41a4b0.className&&'string'==typeof _0x41a4b0.className&&_0x26a76a.some(_0x310d6e=>_0x41a4b0.className.toLowerCase().includes(_0x310d6e)),_0x58abef=(_0x41a4b0.textContent||_0x41a4b0.value||'').toLowerCase(),_0x2b4097=_0xbfed88.some(_0x1c962d=>_0x58abef.includes(_0x1c962d)),_0x339f67=_0x41a4b0.hasAttribute('data-rivox-cta')||_0x41a4b0.hasAttribute('data-cta')||_0x41a4b0.hasAttribute('data-buy')||_0x41a4b0.hasAttribute('data-product-buy')||_0x41a4b0.hasAttribute('data-product-id');if(_0x2c0e68||_0x1075c1||_0x2b4097||_0x339f67)return!0;_0x41a4b0=_0x41a4b0.parentElement}return!1}
 
-async function _0x21d84a(_0x42f493){if(!_0x40c77a||!_0x3db7da)return _0x257a1e.warn('No session data to send or session not active'),{success:!1,error:'No active session',code:'NO_SESSION'};_0x257a1e.info(`Гарантированная отправка данных (причина: ${_0x42f493||'manual'})...`);const _0x1ce7ac=Date.now();_0x40c77a.duration=_0x1ce7ac-_0x40c77a.start_time,_0x40c77a.last_activity=_0x1ce7ac,_0x7b3ff2();try{const _0x1f0dec=await _0x36c60e();return _0x257a1e.info('✅ Данные успешно отправлены с первой попытки'),{success:!0,method:'primary',result:_0x1f0dec}}catch(_0x24e06a){_0x257a1e.warn('⚠️ Первичная отправка не удалась, использую запасные методы',_0x24e06a);try{const _0x1e7071=await _0x5d9520({client_id:_0x40c77a.client_id,client_token:_0x3c8f0c.token,session_id:_0x40c77a.session_id,timestamp:(new Date).toISOString(),sdk_version:_0x2bed9f,data_type:'guaranteed_fallback',reason:_0x42f493||'fallback',metrika_goals:_0x40c77a.metrika_goals||[],page_url:_0x13b5e2.location.href,debug_info:{primary_error:_0x24e06a.message,browser:navigator.userAgent}});return _0x257a1e.info('✅ Данные успешно отправлены через запасной метод'),{success:!0,method:'fallback',response:_0x1e7071}}catch(_0x3359ae){return _0x257a1e.error('❌ Все методы отправки не удались',_0x3359ae),_0x2e5e74({summary:_0x40c77a,timestamp:Date.now(),reason:_0x42f493||'all_failed',errors:[_0x24e06a.message,_0x3359ae.message]}),{success:!1,error:'All sending methods failed',queued:!0,primary_error:_0x24e06a.message,fallback_error:_0x3359ae.message}}}}
+async function _0x21d84a(_0x42f493){
+  if(!_0x40c77a || !_0x3db7da) {
+    return _0x257a1e.warn('No session data to send or session not active'), 
+    {
+      success: false, 
+      error: 'No active session', 
+      code: 'NO_SESSION'
+    };
+  }
+  
+  _0x257a1e.info(`Гарантированная отправка данных (причина: ${_0x42f493 || 'manual'})...`);
+  
+  const _0x1ce7ac = Date.now();
+  _0x40c77a.duration = _0x1ce7ac - _0x40c77a.start_time;
+  _0x40c77a.last_activity = _0x1ce7ac;
+  
+  _0x7b3ff2();
+  
+  try {
+    // Избегаем рекурсивного вызова _0x36c60e и используем прямой запрос
+    _0x257a1e.info('Подготовка и отправка данных напрямую...');
+
+    // Создаём объект данных для прямой отправки
+    const directData = {
+      client_id: _0x40c77a.client_id,
+      client_token: _0x3c8f0c.token,
+      session_id: _0x40c77a.session_id,
+      timestamp: (new Date()).toISOString(),
+      sdk_version: _0x2bed9f,
+      page_url: _0x13b5e2.location.href,
+      domain: _0x13b5e2.location.hostname,
+      path: _0x13b5e2.location.pathname,
+      session_duration: _0x40c77a.duration,
+      reason: _0x42f493 || 'manual_send',
+      method: 'guaranteed_send',
+      metrika_goals: _0x40c77a.metrika_goals || [],
+      conversion_data: _0x40c77a.conversion_data || {}
+    };
+
+    // Отправляем
+    const response = await fetch(_0x3c8f0c.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': _0x13b5e2.location.origin,
+        'x-reason': _0x42f493 || 'manual_send'
+      },
+      body: JSON.stringify(directData)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server responded with status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    _0x257a1e.info('✅ Данные успешно отправлены с первой попытки');
+    return {success: true, method: 'direct', result};
+  } catch(_0x24e06a) {
+    _0x257a1e.warn('⚠️ Первичная отправка не удалась, использую запасные методы', _0x24e06a);
+    
+    try {
+      const _0x1e7071 = await _0x5d9520({
+        client_id: _0x40c77a.client_id,
+        client_token: _0x3c8f0c.token,
+        session_id: _0x40c77a.session_id,
+        timestamp: (new Date).toISOString(),
+        sdk_version: _0x2bed9f,
+        data_type: 'guaranteed_fallback',
+        reason: _0x42f493 || 'fallback',
+        metrika_goals: _0x40c77a.metrika_goals || [],
+        page_url: _0x13b5e2.location.href,
+        debug_info: {
+          primary_error: _0x24e06a.message,
+          browser: navigator.userAgent
+        }
+      });
+      
+      _0x257a1e.info('✅ Данные успешно отправлены через запасной метод');
+      return {success: true, method: 'fallback', response: _0x1e7071};
+    } catch(_0x3359ae) {
+      _0x257a1e.error('❌ Все методы отправки не удались', _0x3359ae);
+      
+      _0x2e5e74({
+        summary: _0x40c77a,
+        timestamp: Date.now(),
+        reason: _0x42f493 || 'all_failed',
+        errors: [_0x24e06a.message, _0x3359ae.message]
+      });
+      
+      return {
+        success: false,
+        error: 'All sending methods failed',
+        queued: true,
+        primary_error: _0x24e06a.message,
+        fallback_error: _0x3359ae.message
+      };
+    }
+  }
+}
 
 function _0x2e5e74(_0x1aded6){try{let _0x4df1e9=function(){try{const _0x219b9c=localStorage.getItem('rivox_failed_queue');if(!_0x219b9c)return[];const _0x1facc3=JSON.parse(_0x219b9c);return Array.isArray(_0x1facc3)?_0x1facc3:[]}catch(_0x56f9b8){return _0x257a1e.error('❌ Ошибка при получении очереди неотправленных данных:',_0x56f9b8),[]}}();const _0x48e37f={data:_0x1aded6,timestamp:Date.now(),attempts:0,retryAt:Date.now()+3e4};_0x4df1e9.push(_0x48e37f),_0x4df1e9.length>10&&(_0x4df1e9=_0x4df1e9.slice(-10)),function(_0x272cee){try{Array.isArray(_0x272cee)||(_0x272cee=[]);const _0x354e3c=JSON.stringify(_0x272cee).length,_0x49c9f7=(_0x354e3c/1024).toFixed(2);if(_0x354e3c>2097152){_0x257a1e.warn(`Очередь слишком большая (${_0x49c9f7}KB), обрезаем старые записи`),_0x272cee=_0x272cee.slice(-2);const _0x18fd0f=(JSON.stringify(_0x272cee).length/1024).toFixed(2);_0x257a1e.info(`Размер очереди уменьшен до ${_0x18fd0f}KB`)}localStorage.setItem('rivox_failed_queue',JSON.stringify(_0x272cee))}catch(_0x3cb9b1){_0x257a1e.error('❌ Ошибка при сохранении очереди неотправленных данных:',_0x3cb9b1)}}(_0x4df1e9),_0x257a1e.info(`📋 Добавлен элемент в очередь неотправленных данных. Размер очереди: ${_0x4df1e9.length}`),setTimeout(()=>{_0x1a9c1c()},3e4)}catch(_0x42a7e3){_0x257a1e.error('❌ Ошибка при добавлении в очередь неотправленных данных:',_0x42a7e3)}}
 
@@ -39,7 +470,22 @@ function _0x43f22c(){const _0x3fea90=navigator.userAgent;return/(tablet|ipad|pla
 
 async function _0x505d11(_0x1a93db,_0x41c57e='unknown'){let _0xbdf07c=0;const _0x2ede96=_0x3c8f0c.maxRetries;for(;_0xbdf07c<_0x2ede96;)try{_0x257a1e.info(`📤 Sending ${_0x41c57e} data (attempt ${_0xbdf07c+1}/${_0x2ede96})...`);const _0x5bcf43=await fetch(_0x3c8f0c.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Origin:_0x13b5e2.location.origin,'x-data-type':_0x41c57e},body:JSON.stringify(_0x1a93db)});if(!_0x5bcf43.ok)throw new Error(`HTTP error! status: ${_0x5bcf43.status}`);return await _0x5bcf43.json()}catch(_0xa5de36){if(_0xbdf07c++,_0xbdf07c>=_0x2ede96)throw _0xa5de36;const _0x21d566=_0x54e1a6*Math.pow(_0x34c88e,_0xbdf07c-1);_0x257a1e.warn(`Retry ${_0xbdf07c}/${_0x2ede96} after ${_0x21d566}ms for ${_0x41c57e} data`),await new Promise(_0x23c538=>setTimeout(_0x23c538,_0x21d566))}throw new Error(`Failed to send ${_0x41c57e} data after ${_0x2ede96} attempts`)}
 
-async function _0x3dda1e(){const _0x13a9b9=_0x13b5e2.location.hostname;if(!_0x4cb00c(_0x13a9b9))return void _0x257a1e.error(`Domain ${_0x13a9b9} is not allowed. SDK initialization aborted.`);_0x257a1e.info('RIVOX SDK initializing...'),_0x1a9c1c();const _0x30bad9=_0x2c5e77();if(!_0x30bad9)return;await new Promise(_0x318214=>{_0x29cb50(_0x318214)});const _0x53df07=await _0x53f28c();_0x53df07?_0x257a1e.info('RIVOX SDK initialized with client ID:',_0x53df07):_0x257a1e.warn('Proceeding with initialization despite missing client ID');const _0x1baa35=function(){try{const _0x28f7c0=localStorage.getItem('rivox_session');if(!_0x28f7c0)return _0x257a1e.debug('Сессия не найдена в localStorage'),null;const _0x5e7ee8=JSON.parse(_0x28f7c0);if(_0x5e7ee8&&_0x5e7ee8.last_activity){const _0x5d694d=Date.now()-_0x5e7ee8.last_activity;return _0x5d694d>_0x3c8f0c.sessionTimeout?(_0x257a1e.info(`Сессия устарела (${_0x5d694d}ms > ${_0x3c8f0c.sessionTimeout}ms), создаю новую`),localStorage.removeItem('rivox_session'),null):(_0x257a1e.info('Сессия восстановлена из localStorage'),_0x5e7ee8)}return null}catch(_0x9e6ad){return _0x257a1e.error('Ошибка при загрузке сессии из localStorage:',_0x9e6ad),localStorage.removeItem('rivox_session'),null}}();_0x1baa35?(_0x257a1e.info('Restoring previous session'),_0x40c77a=_0x1baa35,_0x3db7da=!0):(_0x257a1e.info('Creating new session'),_0x40c77a=function(_0x58e982){const _0x2c55de={client_id:_0x58e982 instanceof Promise?_0x58e982.then(_0xdc0d43=>_0x18a6f4(_0xdc0d43)).catch(()=>_0x18a6f4(null)):_0x18a6f4(_0x58e982),client_token:_0x3c8f0c.token,session_id:_0x1e66ab(),start_time:Date.now(),last_activity:Date.now(),page_views:[{timestamp:Date.now(),url:_0x13b5e2.location.href,referrer:document.referrer}],scroll_chunks:[],hover_events:[],form_interactions:[],cta_clicks:[],modal_interactions:[],utm_data:_0x1bce1a(),metrika_goals:[],ecommerce_events:[],conversion_data:{goals_reached:[],ecommerce_data:[],last_goal_timestamp:null,conversion_path:[]},traffic_source:{referrer:document.referrer,landing_page:_0x13b5e2.location.href,entry_point:_0x13b5e2.location.pathname},user_behavior:{time_to_first_interaction:null,total_interactions:0,interaction_frequency:[],scroll_depth_percentages:[],time_between_clicks:[],mouse_movement_heatmap:[],viewport_size:{width:_0x13b5e2.innerWidth,height:_0x13b5e2.innerHeight}},ml_features:{interest_signals:[],behavior_patterns:[],user_segment:null,conversion_probability:null,funnel_analysis:{}}};try{localStorage.setItem('rivox_session_id',_0x2c55de.session_id),localStorage.setItem('rivox_session_active','true'),_0x2c55de.client_id instanceof Promise?_0x2c55de.client_id.then(_0x10a4e7=>{localStorage.setItem('rivox_client_id',_0x18a6f4(_0x10a4e7))}).catch(()=>{localStorage.setItem('rivox_client_id',_0x18a6f4(null))}):localStorage.setItem('rivox_client_id',_0x18a6f4(_0x2c55de.client_id))}catch(_0x48e48c){_0x257a1e.warn('Failed to save session IDs to localStorage:',_0x48e48c)}return _0x257a1e.debug('Создана новая сессия:',_0x2c55de.session_id),_0x2c55de}(_0x53df07),_0x3db7da=!0),_0x40c77a.page_history=_0x40c77a.page_history||[],_0x40c77a.scroll_chunks=_0x40c77a.scroll_chunks||[],_0x40c77a.hover_events=_0x40c77a.hover_events||[],_0x40c77a.form_interactions=_0x40c77a.form_interactions||[],_0x40c77a.cta_clicks=_0x40c77a.cta_clicks||[],_0x40c77a.metrika_goals=_0x40c77a.metrika_goals||[],_0x40c77a.ecommerce_events=_0x40c77a.ecommerce_events||[],_0x40c77a.conversion_data||(_0x40c77a.conversion_data={goals_reached:[],ecommerce_data:[],last_goal_timestamp:null,conversion_path:[]}),_0x40c77a.client_id&&(_0x40c77a.client_id=_0x18a6f4(_0x40c77a.client_id)),function(){_0x257a1e.info('Настраиваю обработчики событий...');const _0x55f2e1=function(){const _0x4e28e3={scrollChunk:_0x3c8f0c.scrollChunkSize,minInteraction:_0x3c8f0c.minInteractionGap,minScroll:_0x3c8f0c.minScrollSpeed,minHover:_0x3c8f0c.minHoverDuration,minClick:_0x3c8f0c.minClickGap};if(!_0x3c8f0c.adaptiveThresholds)return _0x4e28e3;if(/Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)){const _0x5ba81e=_0x3c8f0c.mobileAdjustmentFactor;_0x4e28e3.scrollChunk=Math.round(_0x4e28e3.scrollChunk*_0x5ba81e),_0x4e28e3.minInteraction=Math.round(_0x4e28e3.minInteraction*_0x5ba81e),_0x4e28e3.minScroll=_0x4e28e3.minScroll*_0x5ba81e,_0x4e28e3.minHover=Math.round(1.5*_0x4e28e3.minHover),_0x4e28e3.minClick=Math.round(1.2*_0x4e28e3.minClick),_0x257a1e.debug('Применяю адаптивные пороги для мобильного устройства:',_0x4e28e3)}_0x40c77a&&_0x40c77a.user_behavior&&(_0x40c77a.scroll_chunks&&_0x40c77a.scroll_chunks.length>10&&_0x40c77a.scroll_chunks.reduce((_0x18a4f9,_0x53a9d9)=>_0x18a4f9+_0x53a9d9.delta,0)/_0x40c77a.scroll_chunks.length>100&&(_0x4e28e3.scrollChunk=Math.max(5,Math.round(.8*_0x4e28e3.scrollChunk)),_0x257a1e.debug('Адаптация: снижаю порог скролла для быстро скроллящего пользователя:',_0x4e28e3.scrollChunk)),_0x40c77a.user_behavior.total_interactions>20&&(_0x4e28e3.minInteraction=Math.max(100,Math.round(.9*_0x4e28e3.minInteraction)),_0x257a1e.debug('Адаптация: снижаю порог взаимодействий для активного пользователя:',_0x4e28e3.minInteraction)));return _0x4e28e3}();_0x257a1e.debug('Установлены адаптивные пороги для взаимодействий:',_0x55f2e1);let _0x11bc4d,_0x46f2ff,_0x4b1172,_0x51a5d9,_0x4f2cfc=_0x13b5e2.scrollY;_0x13b5e2.addEventListener('scroll',_0x2bb2e2(()=>{_0x4d8c40();const _0x474e61=_0x13b5e2.scrollY,_0x4ce2ea=Math.abs(_0x474e61-_0x4f2cfc);if(_0x4ce2ea>=_0x55f2e1.scrollChunk){const _0x3a8b3d=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight),_0x580abe=_0x13b5e2.innerHeight,_0x56f5c2=_0x474e61/(_0x3a8b3d-_0x580abe)*100;_0x257a1e.debug('Событие скролла:',{position:_0x474e61,delta:_0x4ce2ea,percent:_0x56f5c2.toFixed(2)+'%'}),_0x40c77a.scroll_chunks||(_0x40c77a.scroll_chunks=[]),_0x40c77a.user_behavior.scroll_depth_percentages||(_0x40c77a.user_behavior.scroll_depth_percentages=[]),_0x40c77a.scroll_chunks.push({timestamp:Date.now(),position:_0x474e61,delta:_0x4ce2ea,viewport_height:_0x580abe,document_height:_0x3a8b3d,percent:_0x56f5c2}),_0x40c77a.user_behavior.scroll_depth_percentages.push({depth:_0x56f5c2,timestamp:Date.now()}),_0x40c77a.scroll_depth_max=Math.max(_0x40c77a.scroll_depth_max||0,_0x56f5c2),_0x1e9bd1('scroll'),_0x4f2cfc=_0x474e61}_0x11bc4d&&clearTimeout(_0x11bc4d),_0x11bc4d=setTimeout(()=>{const _0x5c9a57=Math.max(..._0x40c77a.user_behavior.scroll_depth_percentages.map(_0x5aa38a=>_0x5aa38a.depth));_0x257a1e.debug('Max scroll depth:',_0x5c9a57.toFixed(2)+'%')},1e3),_0x5dd0e5()&&(_0x257a1e.info('Sending data after accumulating events'),_0x36c60e())},100)),document.addEventListener('mouseover',_0x2bb2e2(_0x3d4e1f=>{_0x4d8c40();const _0x15d20f=_0x3d4e1f.target;_0x4f1433(_0x15d20f)&&(_0x46f2ff=Date.now(),_0x4b1172=_0x15d20f,_0x257a1e.debug('Hover event started:',{element:_0x28e5f1(_0x15d20f)})),_0x5dd0e5()&&(_0x257a1e.info('Sending data after accumulating events'),_0x36c60e())},100)),document.addEventListener('mouseout',_0x2bb2e2(_0x13af32=>{_0x4d8c40();const _0x2071af=_0x13af32.target;if(_0x4f1433(_0x2071af)&&_0x46f2ff&&_0x2071af===_0x4b1172){const _0x2c7c73=Date.now()-_0x46f2ff;_0x257a1e.debug('Hover event completed:',{element:_0x28e5f1(_0x2071af),duration:_0x2c7c73+'ms'}),_0x40c77a.hover_events.push({timestamp:Date.now(),element:_0x28e5f1(_0x2071af),duration:_0x2c7c73,start_time:_0x46f2ff}),_0x46f2ff=null,_0x4b1172=null}},100)),document.addEventListener('click',_0x3a03dc=>{_0x4d8c40();let _0x2eeda7=_0x3a03dc.target,_0x1de17f=null;for(;_0x2eeda7&&_0x2eeda7!==document;){if(_0x3f9e56(_0x2eeda7)){_0x1de17f=_0x2eeda7;break}_0x2eeda7=_0x2eeda7.parentElement}const _0x10d6bd=_0x1de17f||_0x3a03dc.target,_0x4f42ca=_0x10d6bd.getBoundingClientRect(),_0x3b6c12=_0x13b5e2.pageXOffset||document.documentElement.scrollLeft,_0x1452d4=_0x13b5e2.pageYOffset||document.documentElement.scrollTop,_0x18b3dd=Date.now(),_0x585dc2={timestamp:_0x18b3dd,element:_0x28e5f1(_0x10d6bd),element_text:(_0x10d6bd.textContent||_0x10d6bd.value||'').trim(),position:{x:Math.round(_0x3a03dc.clientX+_0x3b6c12),y:Math.round(_0x3a03dc.clientY+_0x1452d4),relative:{x:Math.round(_0x3a03dc.clientX),y:Math.round(_0x3a03dc.clientY)},element:{top:Math.round(_0x4f42ca.top+_0x1452d4),left:Math.round(_0x4f42ca.left+_0x3b6c12),width:Math.round(_0x4f42ca.width),height:Math.round(_0x4f42ca.height)}},is_cta:_0x3f9e56(_0x10d6bd),page_url:_0x13b5e2.location.href,page_title:document.title||'',element_type:_0x10d6bd.tagName||'',element_id:_0x10d6bd.id||'',element_class:_0x10d6bd.className||'',has_href:'A'===_0x10d6bd.tagName&&!!_0x10d6bd.href,href:'A'===_0x10d6bd.tagName?_0x10d6bd.href:null};_0x257a1e.debug('🖱️ Зафиксирован клик:',_0x585dc2),_0x40c77a.cta_clicks.push(_0x585dc2),_0x1e9bd1('click'),_0x40c77a.user_behavior.time_between_clicks||(_0x40c77a.user_behavior.time_between_clicks=[]);const _0x5c03da=_0x40c77a.user_behavior.time_between_clicks,_0x58c851=_0x5c03da.length>0?_0x5c03da[_0x5c03da.length-1]:null;if(_0x58c851){const _0x356ece=_0x18b3dd-_0x58c851.timestamp;if(_0x356ece>=_0x55f2e1.minClick&&_0x356ece<=_0x3c8f0c.maxClickGap){_0x5c03da.push({timestamp:_0x18b3dd,delta:_0x356ece,element_type:_0x10d6bd.tagName||'',is_cta:_0x3f9e56(_0x10d6bd)});const _0xfdf24d=_0x5c03da.reduce((_0x42c75f,_0x1d0c89)=>_0x42c75f+(_0x1d0c89.delta||0),0)/_0x5c03da.length;_0x40c77a.user_behavior.avg_time_between_clicks=_0xfdf24d,_0x257a1e.debug('Обновлен интервал между кликами:',{last:_0x356ece,avg:_0xfdf24d})}}else _0x5c03da.push({timestamp:_0x18b3dd,delta:0,element_type:_0x10d6bd.tagName||'',is_cta:_0x3f9e56(_0x10d6bd)});_0x5dd0e5()&&(_0x257a1e.info('Накоплено достаточно событий, отправляю данные'),_0x21d84a('events_threshold').catch(_0x257a1e.error))});let _0x21bd23=new Map;document.addEventListener('mousemove',_0x2bb2e2(_0x50a7a8=>{_0x4d8c40();const _0x47c7f6=`${10*Math.floor(_0x50a7a8.clientX/10)},${10*Math.floor(_0x50a7a8.clientY/10)}`;_0x21bd23.set(_0x47c7f6,(_0x21bd23.get(_0x47c7f6)||0)+1),_0x51a5d9&&clearTimeout(_0x51a5d9),_0x51a5d9=setTimeout(()=>{_0x40c77a.user_behavior.mouse_movement_heatmap||(_0x40c77a.user_behavior.mouse_movement_heatmap=[]),_0x21bd23.forEach((_0x57dacd,_0x3db3dd)=>{const[_0x57c486,_0x44d4f5]=_0x3db3dd.split(',').map(Number);_0x40c77a.user_behavior.mouse_movement_heatmap.push({x:_0x57c486,y:_0x44d4f5,count:_0x57dacd,timestamp:Date.now()})}),_0x21bd23.clear()},5e3)},100)),document.addEventListener('submit',_0x55bd7b=>{if(!_0x55bd7b.target||!_0x55bd7b.target.elements)return;_0x40c77a.form_interactions||(_0x40c77a.form_interactions=[]);const _0x47c77a={timestamp:Date.now(),form_id:_0x55bd7b.target.id||_0x55bd7b.target.name||'unknown',fields:Array.from(_0x55bd7b.target.elements).filter(_0x51bbe6=>_0x51bbe6.name).map(_0x6dfcc1=>({name:_0x6dfcc1.name,type:_0x6dfcc1.type,value:_0x6dfcc1.value}))};_0x40c77a.form_interactions.push(_0x47c77a),_0x5dd0e5()&&(_0x257a1e.info('Sending data after form submission'),_0x36c60e())}),_0x257a1e.info('Event listeners setup complete')}(),_0x389cc6(),document.addEventListener('mousemove',_0x4d8c40),document.addEventListener('keydown',_0x4d8c40),document.addEventListener('scroll',_0x4d8c40),document.addEventListener('click',_0x4d8c40),setTimeout(()=>{'function'==typeof RIVOX.start&&(_0x257a1e.info('🟢 RIVOX tracking start'),RIVOX.start())},_0x30bad9.initDelay),function(){_0x5bc9e5&&clearInterval(_0x5bc9e5);_0x5bc9e5=setInterval(()=>{_0x3db7da&&_0xc58a7f()},_0x3c8f0c.sendDelay)}(),setInterval(()=>{Date.now()-_0x9af5fe>_0x3c8f0c.sessionTimeout&&(_0x257a1e.info('⏹️ Session timeout due to inactivity'),_0x3db7da=!1,_0x21d84a('session_timeout'))},6e4),function(){if(_0x4a3ce1())try{if(!_0x1f9cb3())return void _0x257a1e.warn('Не удалось определить ID счетчика Yandex.Metrika');if('function'!=typeof ym)return void _0x257a1e.warn('Функция ym не доступна');const _0x5c59ca=ym;_0x13b5e2.ym=function(_0x1b2c9f,_0x4c3a57,_0x8aed98,_0x38fbe9){const _0x3a6fa4=_0x5c59ca.apply(this,arguments);if('reachGoal'===_0x4c3a57&&_0x8aed98&&_0x40c77a&&(_0x257a1e.info(`🎯 Цель Metrika: ${_0x8aed98}`),_0x40c77a.metrika_goals||(_0x40c77a.metrika_goals=[]),_0x40c77a.metrika_goals.push({name:_0x8aed98,params:_0x38fbe9||{},timestamp:Date.now(),type:'goal'}),_0x389cc6(),_0x21d84a('metrika_goal').catch(_0x257a1e.error)),'ecommerce'===_0x4c3a57&&_0x8aed98&&_0x40c77a){const _0x23dda3=_0x8aed98;_0x257a1e.info(`🛒 Ecommerce Metrika: ${_0x23dda3}`,_0x38fbe9),_0x40c77a.ecommerce_events||(_0x40c77a.ecommerce_events=[]);const _0x50d6da={action:_0x23dda3,params:_0x38fbe9||{},timestamp:Date.now(),type:'ecommerce'};_0x40c77a.ecommerce_events.push(_0x50d6da),_0x40c77a.metrika_goals.push({name:`ecommerce_${_0x23dda3}`,params:_0x38fbe9||{},timestamp:Date.now(),type:'ecommerce',ecommerce_data:_0x50d6da}),'purchase'!==_0x23dda3&&'checkout'!==_0x23dda3||(_0x257a1e.info(`💰 Важное Ecommerce-событие: ${_0x23dda3}`,_0x38fbe9),_0x40c77a.conversion_data||(_0x40c77a.conversion_data={goals_reached:[],ecommerce_data:[],last_goal_timestamp:null,conversion_path:[]}),_0x40c77a.conversion_data.ecommerce_data.push(_0x50d6da),_0x40c77a.conversion_data.last_goal_timestamp=Date.now(),_0x40c77a.conversion_data.goals_reached.push(`ecommerce_${_0x23dda3}`),_0x40c77a.has_conversion=!0),_0x389cc6(),_0x21d84a('ecommerce_event').catch(_0x257a1e.error)}return _0x3a6fa4},_0x257a1e.info('✅ Отслеживание целей Metrika настроено (включая Ecommerce)')}catch(_0x37ae18){_0x257a1e.error('Ошибка при настройке отслеживания целей Metrika:',_0x37ae18)}else _0x257a1e.warn('Yandex.Metrika не найдена, отслеживание целей не будет работать')}(),_0x257a1e.info('✅ RIVOX SDK initialization completed')}
+async function _0x3dda1e(){const _0x13a9b9=_0x13b5e2.location.hostname;if(!_0x4cb00c(_0x13a9b9))return void _0x257a1e.error(`Domain ${_0x13a9b9} is not allowed. SDK initialization aborted.`);_0x257a1e.info('RIVOX SDK initializing...'),_0x1a9c1c();const _0x30bad9=_0x2c5e77();if(!_0x30bad9)return;await new Promise(_0x318214=>{_0x29cb50(_0x318214)});const _0x53df07=await _0x53f28c();_0x53df07?_0x257a1e.info('RIVOX SDK initialized with client ID:',_0x53df07):_0x257a1e.warn('Proceeding with initialization despite missing client ID');const _0x1baa35=function(){try{const _0x28f7c0=localStorage.getItem('rivox_session');if(!_0x28f7c0)return _0x257a1e.debug('Сессия не найдена в localStorage'),null;const _0x5e7ee8=JSON.parse(_0x28f7c0);if(_0x5e7ee8&&_0x5e7ee8.last_activity){const _0x5d694d=Date.now()-_0x5e7ee8.last_activity;return _0x5d694d>_0x3c8f0c.sessionTimeout?(_0x257a1e.info(`Сессия устарела (${_0x5d694d}ms > ${_0x3c8f0c.sessionTimeout}ms), создаю новую`),localStorage.removeItem('rivox_session'),null):(_0x257a1e.info('Сессия восстановлена из localStorage'),_0x5e7ee8)}return null}catch(_0x9e6ad){return _0x257a1e.error('Ошибка при загрузке сессии из localStorage:',_0x9e6ad),localStorage.removeItem('rivox_session'),null}}();_0x1baa35?(_0x257a1e.info('Restoring previous session'),_0x40c77a=_0x1baa35,_0x3db7da=!0):(_0x257a1e.info('Creating new session'),_0x40c77a=function(_0x58e982){const _0x2c55de={client_id:_0x58e982 instanceof Promise?_0x58e982.then(_0xdc0d43=>_0x18a6f4(_0xdc0d43)).catch(()=>_0x18a6f4(null)):_0x18a6f4(_0x58e982),client_token:_0x3c8f0c.token,session_id:_0x1e66ab(),start_time:Date.now(),last_activity:Date.now(),page_views:[{timestamp:Date.now(),url:_0x13b5e2.location.href,referrer:document.referrer}],scroll_chunks:[],hover_events:[],form_interactions:[],cta_clicks:[],modal_interactions:[],utm_data:_0x1bce1a(),metrika_goals:[],ecommerce_events:[],conversion_data:{goals_reached:[],ecommerce_data:[],last_goal_timestamp:null,conversion_path:[]},traffic_source:{referrer:document.referrer,landing_page:_0x13b5e2.location.href,entry_point:_0x13b5e2.location.pathname},user_behavior:{time_to_first_interaction:null,total_interactions:0,interaction_frequency:[],scroll_depth_percentages:[],time_between_clicks:[],mouse_movement_heatmap:[],viewport_size:{width:_0x13b5e2.innerWidth,height:_0x13b5e2.innerHeight}},ml_features:{interest_signals:[],behavior_patterns:[],user_segment:null,conversion_probability:null,funnel_analysis:{}}};try{localStorage.setItem('rivox_session_id',_0x2c55de.session_id),localStorage.setItem('rivox_session_active','true'),_0x2c55de.client_id instanceof Promise?_0x2c55de.client_id.then(_0x10a4e7=>{localStorage.setItem('rivox_client_id',_0x18a6f4(_0x10a4e7))}).catch(()=>{localStorage.setItem('rivox_client_id',_0x18a6f4(null))}):localStorage.setItem('rivox_client_id',_0x18a6f4(_0x2c55de.client_id))}catch(_0x48e48c){_0x257a1e.warn('Failed to save session IDs to localStorage:',_0x48e48c)}return _0x257a1e.debug('Создана новая сессия:',_0x2c55de.session_id),_0x2c55de}(_0x53df07),_0x3db7da=!0),_0x40c77a.page_history=_0x40c77a.page_history||[],_0x40c77a.scroll_chunks=_0x40c77a.scroll_chunks||[],_0x40c77a.hover_events=_0x40c77a.hover_events||[],_0x40c77a.form_interactions=_0x40c77a.form_interactions||[],_0x40c77a.cta_clicks=_0x40c77a.cta_clicks||[],_0x40c77a.metrika_goals=_0x40c77a.metrika_goals||[],_0x40c77a.ecommerce_events=_0x40c77a.ecommerce_events||[],_0x40c77a.conversion_data||(_0x40c77a.conversion_data={goals_reached:[],ecommerce_data:[],last_goal_timestamp:null,conversion_path:[]}),_0x40c77a.client_id&&(_0x40c77a.client_id=_0x18a6f4(_0x40c77a.client_id)),function(){_0x257a1e.info('Настраиваю обработчики событий...');const _0x55f2e1=function(){const _0x4e28e3={scrollChunk:_0x3c8f0c.scrollChunkSize,minInteraction:_0x3c8f0c.minInteractionGap,minScroll:_0x3c8f0c.minScrollSpeed,minHover:_0x3c8f0c.minHoverDuration,minClick:_0x3c8f0c.minClickGap};if(!_0x3c8f0c.adaptiveThresholds)return _0x4e28e3;if(/Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)){const _0x5ba81e=_0x3c8f0c.mobileAdjustmentFactor;_0x4e28e3.scrollChunk=Math.round(_0x4e28e3.scrollChunk*_0x5ba81e),_0x4e28e3.minInteraction=Math.round(_0x4e28e3.minInteraction*_0x5ba81e),_0x4e28e3.minScroll=_0x4e28e3.minScroll*_0x5ba81e,_0x4e28e3.minHover=Math.round(1.5*_0x4e28e3.minHover),_0x4e28e3.minClick=Math.round(1.2*_0x4e28e3.minClick),_0x257a1e.debug('Применяю адаптивные пороги для мобильного устройства:',_0x4e28e3)}_0x40c77a&&_0x40c77a.user_behavior&&(_0x40c77a.scroll_chunks&&_0x40c77a.scroll_chunks.length>10&&_0x40c77a.scroll_chunks.reduce((_0x18a4f9,_0x53a9d9)=>_0x18a4f9+_0x53a9d9.delta,0)/_0x40c77a.scroll_chunks.length>100&&(_0x4e28e3.scrollChunk=Math.max(5,Math.round(.8*_0x4e28e3.scrollChunk)),_0x257a1e.debug('Адаптация: снижаю порог скролла для быстро скроллящего пользователя:',_0x4e28e3.scrollChunk)),_0x40c77a.user_behavior.total_interactions>20&&(_0x4e28e3.minInteraction=Math.max(100,Math.round(.9*_0x4e28e3.minInteraction)),_0x257a1e.debug('Адаптация: снижаю порог взаимодействий для активного пользователя:',_0x4e28e3.minInteraction)));return _0x4e28e3}();_0x257a1e.debug('Установлены адаптивные пороги для взаимодействий:',_0x55f2e1);let _0x11bc4d,_0x46f2ff,_0x4b1172,_0x51a5d9,_0x4f2cfc=_0x13b5e2.scrollY;_0x13b5e2.addEventListener('scroll',_0x2bb2e2(()=>{_0x4d8c40();const _0x474e61=_0x13b5e2.scrollY,_0x4ce2ea=Math.abs(_0x474e61-_0x4f2cfc);if(_0x4ce2ea>=_0x55f2e1.scrollChunk){const _0x3a8b3d=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight),_0x580abe=_0x13b5e2.innerHeight,_0x56f5c2=_0x474e61/(_0x3a8b3d-_0x580abe)*100;_0x257a1e.debug('Событие скролла:',{position:_0x474e61,delta:_0x4ce2ea,percent:_0x56f5c2.toFixed(2)+'%'}),_0x40c77a.scroll_chunks||(_0x40c77a.scroll_chunks=[]),_0x40c77a.user_behavior.scroll_depth_percentages||(_0x40c77a.user_behavior.scroll_depth_percentages=[]),_0x40c77a.scroll_chunks.push({timestamp:Date.now(),position:_0x474e61,delta:_0x4ce2ea,viewport_height:_0x580abe,document_height:_0x3a8b3d,percent:_0x56f5c2}),_0x40c77a.user_behavior.scroll_depth_percentages.push({depth:_0x56f5c2,timestamp:Date.now()}),_0x40c77a.scroll_depth_max=Math.max(_0x40c77a.scroll_depth_max||0,_0x56f5c2),_0x1e9bd1('scroll'),_0x4f2cfc=_0x474e61}_0x11bc4d&&clearTimeout(_0x11bc4d),_0x11bc4d=setTimeout(()=>{const _0x5c9a57=Math.max(..._0x40c77a.user_behavior.scroll_depth_percentages.map(_0x5aa38a=>_0x5aa38a.depth));_0x257a1e.debug('Max scroll depth:',_0x5c9a57.toFixed(2)+'%')},1e3),_0x5dd0e5()&&(_0x257a1e.info('Sending data after accumulating events'),_0x3dbf4e('scroll_events'))},100)),document.addEventListener('mouseover',_0x2bb2e2(_0x3d4e1f=>{_0x4d8c40();const _0x15d20f=_0x3d4e1f.target;_0x4f1433(_0x15d20f)&&(_0x46f2ff=Date.now(),_0x4b1172=_0x15d20f,_0x257a1e.debug('Hover event started:',{element:_0x28e5f1(_0x15d20f)})),_0x5dd0e5()&&(_0x257a1e.info('Sending data after accumulating events'),_0x3dbf4e('mouseover_events'))},100)),document.addEventListener('mouseout',_0x2bb2e2(_0x13af32=>{_0x4d8c40();const _0x2071af=_0x13af32.target;if(_0x4f1433(_0x2071af)&&_0x46f2ff&&_0x2071af===_0x4b1172){const _0x2c7c73=Date.now()-_0x46f2ff;_0x257a1e.debug('Hover event completed:',{element:_0x28e5f1(_0x2071af),duration:_0x2c7c73+'ms'}),_0x40c77a.hover_events.push({timestamp:Date.now(),element:_0x28e5f1(_0x2071af),duration:_0x2c7c73,start_time:_0x46f2ff}),_0x46f2ff=null,_0x4b1172=null}},100)),document.addEventListener('click',_0x3a03dc=>{_0x4d8c40();let _0x2eeda7=_0x3a03dc.target,_0x1de17f=null;for(;_0x2eeda7&&_0x2eeda7!==document;){if(_0x3f9e56(_0x2eeda7)){_0x1de17f=_0x2eeda7;break}_0x2eeda7=_0x2eeda7.parentElement}const _0x10d6bd=_0x1de17f||_0x3a03dc.target,_0x4f42ca=_0x10d6bd.getBoundingClientRect(),_0x3b6c12=_0x13b5e2.pageXOffset||document.documentElement.scrollLeft,_0x1452d4=_0x13b5e2.pageYOffset||document.documentElement.scrollTop,_0x18b3dd=Date.now(),_0x585dc2={timestamp:_0x18b3dd,element:_0x28e5f1(_0x10d6bd),element_text:(_0x10d6bd.textContent||_0x10d6bd.value||'').trim(),position:{x:Math.round(_0x3a03dc.clientX+_0x3b6c12),y:Math.round(_0x3a03dc.clientY+_0x1452d4),relative:{x:Math.round(_0x3a03dc.clientX),y:Math.round(_0x3a03dc.clientY)},element:{top:Math.round(_0x4f42ca.top+_0x1452d4),left:Math.round(_0x4f42ca.left+_0x3b6c12),width:Math.round(_0x4f42ca.width),height:Math.round(_0x4f42ca.height)}},is_cta:_0x3f9e56(_0x10d6bd),page_url:_0x13b5e2.location.href,page_title:document.title||'',element_type:_0x10d6bd.tagName||'',element_id:_0x10d6bd.id||'',element_class:_0x10d6bd.className||'',has_href:'A'===_0x10d6bd.tagName&&!!_0x10d6bd.href,href:'A'===_0x10d6bd.tagName?_0x10d6bd.href:null};_0x257a1e.debug('🖱️ Зафиксирован клик:',_0x585dc2),_0x40c77a.cta_clicks.push(_0x585dc2),_0x1e9bd1('click'),_0x40c77a.user_behavior.time_between_clicks||(_0x40c77a.user_behavior.time_between_clicks=[]);const _0x5c03da=_0x40c77a.user_behavior.time_between_clicks,_0x58c851=_0x5c03da.length>0?_0x5c03da[_0x5c03da.length-1]:null;if(_0x58c851){const _0x356ece=_0x18b3dd-_0x58c851.timestamp;if(_0x356ece>=_0x55f2e1.minClick&&_0x356ece<=_0x3c8f0c.maxClickGap){_0x5c03da.push({timestamp:_0x18b3dd,delta:_0x356ece,element_type:_0x10d6bd.tagName||'',is_cta:_0x3f9e56(_0x10d6bd)});const _0xfdf24d=_0x5c03da.reduce((_0x42c75f,_0x1d0c89)=>_0x42c75f+(_0x1d0c89.delta||0),0)/_0x5c03da.length;_0x40c77a.user_behavior.avg_time_between_clicks=_0xfdf24d,_0x257a1e.debug('Обновлен интервал между кликами:',{last:_0x356ece,avg:_0xfdf24d})}}else _0x5c03da.push({timestamp:_0x18b3dd,delta:0,element_type:_0x10d6bd.tagName||'',is_cta:_0x3f9e56(_0x10d6bd)});_0x5dd0e5()&&(_0x257a1e.info('Накоплено достаточно событий, отправляю данные'),_0x21d84a('events_threshold').catch(_0x257a1e.error))});let _0x21bd23=new Map;document.addEventListener('mousemove',_0x2bb2e2(_0x50a7a8=>{_0x4d8c40();const _0x47c7f6=`${10*Math.floor(_0x50a7a8.clientX/10)},${10*Math.floor(_0x50a7a8.clientY/10)}`;_0x21bd23.set(_0x47c7f6,(_0x21bd23.get(_0x47c7f6)||0)+1),_0x51a5d9&&clearTimeout(_0x51a5d9),_0x51a5d9=setTimeout(()=>{_0x40c77a.user_behavior.mouse_movement_heatmap||(_0x40c77a.user_behavior.mouse_movement_heatmap=[]),_0x21bd23.forEach((_0x57dacd,_0x3db3dd)=>{const[_0x57c486,_0x44d4f5]=_0x3db3dd.split(',').map(Number);_0x40c77a.user_behavior.mouse_movement_heatmap.push({x:_0x57c486,y:_0x44d4f5,count:_0x57dacd,timestamp:Date.now()})}),_0x21bd23.clear()},5e3)},100)),document.addEventListener('submit',_0x55bd7b=>{
+  if(!_0x55bd7b.target||!_0x55bd7b.target.elements)return;
+  _0x40c77a.form_interactions||(_0x40c77a.form_interactions=[]);
+  const _0x47c77a={
+    timestamp:Date.now(),
+    form_id:_0x55bd7b.target.id||_0x55bd7b.target.name||'unknown',
+    fields:Array.from(_0x55bd7b.target.elements).filter(_0x51bbe6=>_0x51bbe6.name).map(_0x6dfcc1=>({
+      name:_0x6dfcc1.name,
+      type:_0x6dfcc1.type,
+      value:_0x6dfcc1.value
+    }))
+  };
+  _0x40c77a.form_interactions.push(_0x47c77a),
+  _0x5dd0e5()&&(_0x257a1e.info('Sending data after form submission'),_0x3dbf4e('form_submission'));
+});
+_0x257a1e.info('Event listeners setup complete')}(),_0x389cc6(),document.addEventListener('mousemove',_0x4d8c40),document.addEventListener('keydown',_0x4d8c40),document.addEventListener('scroll',_0x4d8c40),document.addEventListener('click',_0x4d8c40),setTimeout(()=>{'function'==typeof RIVOX.start&&(_0x257a1e.info('🟢 RIVOX tracking start'),RIVOX.start())},_0x30bad9.initDelay),function(){_0x5bc9e5&&clearInterval(_0x5bc9e5);_0x5bc9e5=setInterval(()=>{_0x3db7da&&_0xc58a7f()},_0x3c8f0c.sendDelay)}(),setInterval(()=>{Date.now()-_0x9af5fe>_0x3c8f0c.sessionTimeout&&(_0x257a1e.info('⏹️ Session timeout due to inactivity'),_0x3db7da=!1,_0x21d84a('session_timeout'))},6e4),function(){if(_0x4a3ce1())try{if(!_0x1f9cb3())return void _0x257a1e.warn('Не удалось определить ID счетчика Yandex.Metrika');if('function'!=typeof ym)return void _0x257a1e.warn('Функция ym не доступна');const _0x5c59ca=ym;_0x13b5e2.ym=function(_0x1b2c9f,_0x4c3a57,_0x8aed98,_0x38fbe9){const _0x3a6fa4=_0x5c59ca.apply(this,arguments);if('reachGoal'===_0x4c3a57&&_0x8aed98&&_0x40c77a&&(_0x257a1e.info(`🎯 Цель Metrika: ${_0x8aed98}`),_0x40c77a.metrika_goals||(_0x40c77a.metrika_goals=[]),_0x40c77a.metrika_goals.push({name:_0x8aed98,params:_0x38fbe9||{},timestamp:Date.now(),type:'goal'}),_0x389cc6(),_0x21d84a('metrika_goal').catch(_0x257a1e.error)),'ecommerce'===_0x4c3a57&&_0x8aed98&&_0x40c77a){const _0x23dda3=_0x8aed98;_0x257a1e.info(`🛒 Ecommerce Metrika: ${_0x23dda3}`,_0x38fbe9),_0x40c77a.ecommerce_events||(_0x40c77a.ecommerce_events=[]);const _0x50d6da={action:_0x23dda3,params:_0x38fbe9||{},timestamp:Date.now(),type:'ecommerce'};_0x40c77a.ecommerce_events.push(_0x50d6da),_0x40c77a.metrika_goals.push({name:`ecommerce_${_0x23dda3}`,params:_0x38fbe9||{},timestamp:Date.now(),type:'ecommerce',ecommerce_data:_0x50d6da}),'purchase'!==_0x23dda3&&'checkout'!==_0x23dda3||(_0x257a1e.info(`💰 Важное Ecommerce-событие: ${_0x23dda3}`,_0x38fbe9),_0x40c77a.conversion_data||(_0x40c77a.conversion_data={goals_reached:[],ecommerce_data:[],last_goal_timestamp:null,conversion_path:[]}),_0x40c77a.conversion_data.ecommerce_data.push(_0x50d6da),_0x40c77a.conversion_data.last_goal_timestamp=Date.now(),_0x40c77a.conversion_data.goals_reached.push(`ecommerce_${_0x23dda3}`),_0x40c77a.has_conversion=!0),_0x389cc6(),_0x21d84a('ecommerce_event').catch(_0x257a1e.error)}return _0x3a6fa4},_0x257a1e.info('✅ Отслеживание целей Metrika настроено (включая Ecommerce)')}catch(_0x37ae18){_0x257a1e.error('Ошибка при настройке отслеживания целей Metrika:',_0x37ae18)}else _0x257a1e.warn('Yandex.Metrika не найдена, отслеживание целей не будет работать')}(),_0x257a1e.info('✅ RIVOX SDK initialization completed')}
 
 // Light anti-debugging features
 (function(){
