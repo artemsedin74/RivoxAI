@@ -5,18 +5,6 @@
 // RIVOX SDK v4.6.3
 // Enhanced version with ML data collection capabilities
 
-// Вспомогательная функция для отправки через Image beacon
-function sendViaImageBeacon(url, jsonString) {
-  try {
-    const img = new Image();
-    img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
-    return true;
-  } catch (e) {
-    console.warn('Failed to send via Image beacon:', e);
-    return false;
-  }
-}
-
 function logEvent(eventName, payload = {}) {
   try {
     const data = {
@@ -31,28 +19,25 @@ function logEvent(eventName, payload = {}) {
     // Создаем URL для отправки данных
     const url = 'https://rivox-data-handler-779203791697.europe-central2.run.app/logs';
     
-    // Всегда сначала используем Image beacon - самый надежный способ
-    sendViaImageBeacon(url, jsonString);
+    // Используем ТОЛЬКО Image beacon - самый надежный метод обхода CORS
+    // Это полностью обходит проблемы с CORS и работает во всех браузерах
+    const img = new Image();
+    img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
     
-    // Дополнительно пробуем fetch для более важных событий
-    if (eventName === 'error' || eventName === 'warning') {
-      try {
-        fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          mode: 'no-cors',
-          credentials: 'omit',
-          body: jsonString,
-          keepalive: true
-        }).catch(() => {
-          // Игнорируем ошибки fetch - основной метод уже использован (Image beacon)
-        });
-      } catch (fetchError) {
-        // Игнорируем ошибки - основной метод уже использован (Image beacon)
+    // Добавляем обработчики для отладки, но не влияют на функциональность
+    img.onload = function() {
+      if (eventName === 'error' || eventName === 'warning') {
+        console.debug('Rivox log event sent successfully:', eventName);
       }
-    }
+    };
+    
+    img.onerror = function() {
+      // Даже если произошла ошибка, во многих случаях данные все равно будут отправлены
+      // Это особенность Image beacon
+      if (eventName === 'error' || eventName === 'warning') {
+        console.debug('Rivox log event may have failed:', eventName);
+      }
+    };
   } catch (e) {
     // Ошибки логирования не должны влиять на работу SDK
     console.warn('Error in Rivox log event:', e);
@@ -313,26 +298,8 @@ let Logger = {
     // НОВАЯ ФУНКЦИЯ: Обеспечение безопасного client_id (всегда строка)
     function safeClientId(id) {
         if (id === null || id === undefined) {
-            Logger.warn('Null/undefined client_id, создаю временный');
-            return 'temp_' + Date.now();
+            return 'unknown_' + Date.now().toString(36);
         }
-        
-        if (typeof id === 'object') {
-            if (id instanceof Promise) {
-                Logger.warn('Promise в client_id, создаю временный');
-                return 'promise_' + Date.now();
-            }
-            
-            if (id.toString && typeof id.toString === 'function' && id.toString() !== '[object Object]') {
-                Logger.warn('Object в client_id, преобразую в строку через toString');
-                return id.toString();
-            }
-            
-            Logger.warn('Невалидный object в client_id, создаю временный');
-            return 'obj_' + Date.now();
-        }
-        
-        // Гарантированно возвращаем строку
         return String(id);
     }
     
@@ -2284,8 +2251,8 @@ let Logger = {
         }
     }
 
-    // ОПТИМИЗИРОВАНО: Устранено дублирование с версией ниже (линия ~2851)
-    async function sendDataWithFallback(data) {
+    // Отправка данных с механизмами отказоустойчивости
+    async function sendDataWithFallback(data, endpoint, dataType) {
         // Проверка наличия данных (базовая валидация)
         if (!data || Object.keys(data).length === 0) {
             return {
@@ -2295,10 +2262,32 @@ let Logger = {
             };
         }
         
-        // Создаем копию данных, чтобы не модифицировать оригинал
-        const cleanData = {...data};
+        // Проверка на большие данные - разделяем на части
+        try {
+            // Если указан endpoint, используем Image beacon напрямую
+            if (endpoint) {
+                return sendDataViaBeacon(data, endpoint, dataType);
+            }
+            
+            const dataSize = JSON.stringify(data).length;
+            if (dataSize > 100000) { // ~100KB - предел для безопасной отправки
+                Logger.warn(`Данные слишком большие (${(dataSize/1024).toFixed(1)}KB), переключаемся на сегментированную отправку`);
+                return sendLargeDataInSegments(data);
+            }
+        } catch (e) {
+            Logger.error('Ошибка при определении размера данных:', e);
+        }
         
-        // Проверяем и исправляем client_id перед отправкой
+        // Клонируем данные и очищаем от циклических ссылок
+        let cleanData;
+        try {
+            cleanData = JSON.parse(JSON.stringify(data));
+        } catch (e) {
+            Logger.warn('Ошибка при сериализации данных, очищаем от циклических ссылок:', e);
+            cleanData = cleanObject(data);
+        }
+        
+        // Проверка и обработка client_id - всегда должен быть строкой
         if (cleanData.client_id) {
             if (cleanData.client_id instanceof Promise) {
                 try {
@@ -2374,6 +2363,182 @@ let Logger = {
                 error: error.message, 
                 queued: true 
             };
+        }
+    }
+    
+    // Вспомогательная функция для отправки данных через Image Beacon
+    function sendDataViaBeacon(data, endpoint, dataType) {
+        try {
+            // Обработка случая, когда client_id еще не загружен (Promise)
+            if (data.client_id && data.client_id instanceof Promise) {
+                Logger.debug('client_id является Promise, ожидаю разрешения');
+                return data.client_id.then(id => {
+                    data.client_id = safeClientId(id);
+                    return sendDataViaBeacon(data, endpoint, dataType);
+                }).catch(error => {
+                    Logger.error('Не удалось получить client_id из Promise', error);
+                    data.client_id = 'promise_failed_' + Date.now().toString(36);
+                    return sendDataViaBeacon(data, endpoint, dataType);
+                });
+            }
+            
+            // Установка базового URL или использование значения по умолчанию
+            const baseUrl = config.apiBaseUrl || 'https://api.rivox.ai'; 
+            const url = endpoint ? `${baseUrl}/${endpoint}` : (config.apiEndpoint || config.endpoint);
+            
+            // Клонируем данные и очищаем от циклических ссылок
+            const cleanedData = cleanObject(data);
+            
+            // Убедимся, что client_id всегда строка
+            if (cleanedData.client_id) {
+                cleanedData.client_id = safeClientId(cleanedData.client_id);
+            }
+            
+            // Добавляем временную метку отправки
+            cleanedData.sent_at = Date.now();
+            
+            // Безопасная сериализация, избегаем циклических ссылок
+            let jsonData;
+            try {
+                jsonData = JSON.stringify(cleanedData);
+            } catch (e) {
+                // Удаляем проблемные поля если сериализация не удалась
+                const sanitizedData = { ...cleanedData };
+                if (sanitizedData.event_data && sanitizedData.event_data.target) {
+                    delete sanitizedData.event_data.target; // Часто содержит циклические ссылки
+                }
+                jsonData = JSON.stringify(sanitizedData);
+                Logger.warn('Некоторые поля были удалены из-за ошибки сериализации', e);
+            }
+            
+            // Кодируем данные для передачи через Image beacon
+            const encodedData = encodeURIComponent(jsonData);
+            
+            // Создаем уникальный идентификатор для этой отправки
+            const sendId = 'send_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2);
+            
+            // Параметры для URL
+            const params = {
+                data: jsonData,
+                t: Date.now().toString(),
+                id: sendId
+            };
+
+            // Создаем URL с параметрами в query string
+            const queryParams = Object.keys(params)
+                .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
+                .join('&');
+
+            // Формируем URL
+            const imageUrl = `${url}?${queryParams}`;
+            
+            // Отправляем через Image beacon
+            Logger.debug(`Отправка ${dataType} через Image beacon (${(jsonData.length / 1024).toFixed(2)}KB)`);
+            
+            const img = new Image();
+            let isTimedOut = false;
+            let isDone = false;
+            
+            // Таймаут для изображения
+            const timeout = setTimeout(() => {
+                if (!isDone) {
+                    isTimedOut = true;
+                    isDone = true;
+                    Logger.warn(`Таймаут отправки ${dataType} через Image beacon`);
+                    
+                    // Добавляем в очередь для повторной отправки, если dataQueue существует
+                    if (typeof dataQueue !== 'undefined') {
+                        dataQueue.push({
+                            data: cleanedData,
+                            endpoint,
+                            dataType,
+                            timestamp: Date.now(),
+                            attempt: 1
+                        });
+                        
+                        if (typeof processQueue === 'function') {
+                            processQueue(); // Пытаемся обработать очередь
+                        }
+                    }
+                    return { success: false, error: 'Timeout', queued: true };
+                }
+            }, 10000); // 10 секунд таймаут
+            
+            // Обработчик успешной загрузки
+            img.onload = function() {
+                if (!isDone) {
+                    isDone = true;
+                    clearTimeout(timeout);
+                    Logger.debug(`Успешно отправлены данные ${dataType} через Image beacon`);
+                    
+                    // Удаляем элемент из DOM, чтобы избежать утечек памяти
+                    setTimeout(() => {
+                        if (img.parentNode) {
+                            img.parentNode.removeChild(img);
+                        }
+                    }, 100);
+                }
+            };
+            
+            // Обработчик ошибки
+            img.onerror = function() {
+                if (!isDone) {
+                    isDone = true;
+                    clearTimeout(timeout);
+                    Logger.warn(`Ошибка отправки ${dataType} через Image beacon`);
+                    
+                    // Добавляем в очередь для повторной отправки, если dataQueue существует
+                    if (typeof dataQueue !== 'undefined') {
+                        dataQueue.push({
+                            data: cleanedData,
+                            endpoint,
+                            dataType,
+                            timestamp: Date.now(),
+                            attempt: 1
+                        });
+                        
+                        if (typeof processQueue === 'function') {
+                            processQueue(); // Пытаемся обработать очередь
+                        }
+                    }
+                }
+            };
+            
+            // Set source to start loading
+            img.src = imageUrl;
+            
+            // Добавляем изображение в DOM (важно для некоторых браузеров)
+            img.style.display = 'none';
+            if (document.body) {
+                document.body.appendChild(img);
+            }
+            
+            return { success: true, method: 'image_beacon' };
+        } catch (error) {
+            Logger.error(`Ошибка при подготовке или отправке данных ${dataType}:`, error);
+            
+            // Добавляем в очередь для повторной отправки, если dataQueue существует
+            if (typeof dataQueue !== 'undefined') {
+                dataQueue.push({
+                    data: {
+                        ...data,
+                        error_info: {
+                            message: error.message,
+                            time: Date.now()
+                        }
+                    },
+                    endpoint,
+                    dataType,
+                    timestamp: Date.now(),
+                    attempt: 1
+                });
+                
+                if (typeof processQueue === 'function') {
+                    processQueue();
+                }
+            }
+            
+            return { success: false, error: error.message, queued: true };
         }
     }
     
@@ -2866,5 +3031,379 @@ let Logger = {
         }
         
         throw new Error(`Failed to send ${dataType} data after ${maxRetries} attempts`);
+    }
+
+    // Вспомогательные функции безопасной обработки данных
+    
+    // Обеспечивает корректный формат ID клиента (всегда строка)
+    function safeClientId(id) {
+        if (id === null || id === undefined) {
+            return 'unknown_' + Date.now().toString(36);
+        }
+        return String(id);
+    }
+    
+    // Очищает объект от циклических ссылок и непригодных для JSON.stringify значений
+    function cleanObject(obj) {
+        const seen = new WeakSet();
+        
+        function replacer(key, value) {
+            // Примитивы и null всегда безопасны
+            if (value === null || typeof value !== 'object') {
+                return value;
+            }
+            
+            // Обнаружение циклических ссылок
+            if (seen.has(value)) {
+                return '[Circular Reference]';
+            }
+            
+            // Обработка DOM-элементов и других непреобразуемых объектов
+            if (value instanceof Element || value instanceof Node) {
+                return `[DOM:${value.nodeName}]`;
+            }
+            
+            if (value instanceof Error) {
+                return {
+                    error_message: value.message,
+                    error_name: value.name,
+                    error_stack: value.stack
+                };
+            }
+            
+            // Обработка специальных объектов
+            if (value instanceof Map) {
+                return Object.fromEntries(value);
+            }
+            
+            if (value instanceof Set) {
+                return Array.from(value);
+            }
+            
+            // Если это массив или объект, добавляем в seen и обрабатываем рекурсивно
+            if (typeof value === 'object') {
+                seen.add(value);
+            }
+            
+            return value;
+        }
+        
+        try {
+            // Проходим по объекту используя replacer для очистки
+            const cleaned = JSON.parse(JSON.stringify(obj, replacer));
+            return cleaned;
+        } catch (e) {
+            // В крайнем случае возвращаем упрощенный объект с базовой информацией
+            Logger.error('Невозможно очистить объект:', e);
+            return {
+                client_id: obj.client_id || 'unknown',
+                session_id: obj.session_id || 'unknown_session',
+                timestamp: Date.now(),
+                error: 'Data cleaning failed'
+            };
+        }
+    }
+
+    // Отправляет данные, используя только Image beacon
+    function sendDataWithFallback(data, endpoint, dataType) {
+        // Установка базового URL или использование значения по умолчанию
+        const baseUrl = config.apiBaseUrl || 'https://api.rivox.ai';
+        const url = `${baseUrl}/${endpoint}`;
+        
+        // Обработка случая, когда client_id еще не загружен (Promise)
+        if (data.client_id && data.client_id instanceof Promise) {
+            Logger.debug('client_id является Promise, ожидаю разрешения');
+            data.client_id.then(id => {
+                data.client_id = safeClientId(id);
+                sendDataWithFallback(data, endpoint, dataType);
+            }).catch(error => {
+                Logger.error('Не удалось получить client_id из Promise', error);
+                data.client_id = 'promise_failed_' + Date.now().toString(36);
+                sendDataWithFallback(data, endpoint, dataType);
+            });
+            return;
+        }
+        
+        // Клонируем данные и очищаем от циклических ссылок
+        const cleanedData = cleanObject(data);
+        
+        // Убедимся, что client_id всегда строка
+        cleanedData.client_id = safeClientId(cleanedData.client_id);
+        
+        // Добавляем временную метку отправки
+        cleanedData.sent_at = Date.now();
+        
+        try {
+            // Создаем данные для отправки
+            const dataToSend = JSON.stringify(cleanedData);
+            
+            // Проверка на большой размер данных
+            const sizeInKB = dataToSend.length / 1024;
+            if (sizeInKB > 100) {
+                Logger.warn(`Данные превышают 100KB (${sizeInKB.toFixed(2)}KB), разбиваю на части`);
+                
+                // Простая логика разбивки для больших данных
+                // Разбиваем только массивы событий, если они есть
+                if (cleanedData.events && Array.isArray(cleanedData.events) && cleanedData.events.length > 1) {
+                    const chunks = [];
+                    const chunkSize = Math.max(1, Math.floor(cleanedData.events.length / 2));
+                    
+                    for (let i = 0; i < cleanedData.events.length; i += chunkSize) {
+                        const chunk = {...cleanedData};
+                        chunk.events = cleanedData.events.slice(i, i + chunkSize);
+                        chunk.chunk_info = {
+                            index: Math.floor(i / chunkSize) + 1,
+                            total: Math.ceil(cleanedData.events.length / chunkSize),
+                            original_size: cleanedData.events.length
+                        };
+                        chunks.push(chunk);
+                    }
+                    
+                    // Отправляем каждый чанк отдельно
+                    chunks.forEach((chunk, index) => {
+                        Logger.debug(`Отправка части ${index + 1}/${chunks.length} данных типа ${dataType}`);
+                        setTimeout(() => {
+                            sendDataWithFallback(chunk, endpoint, `${dataType}_chunk${index + 1}`);
+                        }, index * 300); // Небольшая задержка между отправками
+                    });
+                    
+                    return; // Прерываем текущую отправку, т.к. отправляем по частям
+                }
+            }
+            
+            // Кодируем данные для передачи через Image beacon
+            const encodedData = encodeURIComponent(dataToSend);
+            
+            // Создаем уникальный идентификатор для этой отправки
+            const sendId = 'send_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2);
+            
+            // Отправляем через Image beacon
+            Logger.debug(`Отправка ${dataType} через Image beacon (${(dataToSend.length / 1024).toFixed(2)}KB)`);
+            
+            const img = new Image();
+            let isTimedOut = false;
+            let isDone = false;
+            
+            // Таймаут для изображения
+            const timeout = setTimeout(() => {
+                if (!isDone) {
+                    isTimedOut = true;
+                    isDone = true;
+                    Logger.warn(`Таймаут отправки ${dataType} через Image beacon`);
+                    
+                    // Добавляем в очередь для повторной отправки
+                    dataQueue.push({
+                        data: cleanedData,
+                        endpoint,
+                        dataType,
+                        timestamp: Date.now(),
+                        attempt: 1
+                    });
+                    
+                    processQueue(); // Пытаемся обработать очередь
+                }
+            }, 10000); // 10 секунд таймаут
+            
+            // Обработчик успешной загрузки
+            img.onload = function() {
+                if (!isDone) {
+                    isDone = true;
+                    clearTimeout(timeout);
+                    Logger.debug(`Успешно отправлены данные ${dataType} через Image beacon`);
+                    
+                    // Удаляем элемент из DOM, чтобы избежать утечек памяти
+                    setTimeout(() => {
+                        if (img.parentNode) {
+                            img.parentNode.removeChild(img);
+                        }
+                    }, 100);
+                }
+            };
+            
+            // Обработчик ошибки
+            img.onerror = function() {
+                if (!isDone) {
+                    isDone = true;
+                    clearTimeout(timeout);
+                    Logger.warn(`Ошибка отправки ${dataType} через Image beacon`);
+                    
+                    // Добавляем в очередь для повторной отправки
+                    dataQueue.push({
+                        data: cleanedData,
+                        endpoint,
+                        dataType,
+                        timestamp: Date.now(),
+                        attempt: 1
+                    });
+                    
+                    processQueue(); // Пытаемся обработать очередь
+                }
+            };
+            
+            // Append параметры к URL
+            const urlWithParams = `${url}?id=${sendId}&payload=${encodedData}`;
+            
+            // Set source to start loading
+            img.src = urlWithParams;
+            
+            // Добавляем изображение в DOM (важно для некоторых браузеров)
+            img.style.display = 'none';
+            if (document.body) {
+                document.body.appendChild(img);
+            }
+            
+            return true; // Отправка инициирована
+        } catch (error) {
+            Logger.error(`Ошибка при подготовке или отправке данных ${dataType}:`, error);
+            
+            // Добавляем в очередь для повторной отправки
+            dataQueue.push({
+                data: {
+                    ...cleanedData,
+                    error_info: {
+                        message: error.message,
+                        time: Date.now()
+                    }
+                },
+                endpoint,
+                dataType,
+                timestamp: Date.now(),
+                attempt: 1
+            });
+            
+            return false; // Не удалось отправить
+        }
+    }
+
+    // Обработка очереди данных
+    function processQueue() {
+        // Проверка, обрабатывается ли уже очередь
+        if (isProcessingQueue || dataQueue.length === 0) {
+            return;
+        }
+
+        isProcessingQueue = true;
+        Logger.debug(`Начало обработки очереди: ${dataQueue.length} элементов`);
+
+        // Берем следующий элемент из очереди
+        const queueItem = dataQueue.shift();
+        const { data, endpoint, dataType, timestamp, attempt } = queueItem;
+
+        // Если прошло больше часа с момента добавления в очередь - удаляем элемент
+        if (Date.now() - timestamp > 3600000) {
+            Logger.warn(`Элемент очереди ${dataType} удален из-за истечения времени ожидания (>1 час)`);
+            isProcessingQueue = false;
+            setTimeout(processQueue, 100);
+            return;
+        }
+
+        // Если было более 5 попыток - удаляем элемент
+        if (attempt > 5) {
+            Logger.warn(`Элемент очереди ${dataType} удален после ${attempt} неудачных попыток`);
+            isProcessingQueue = false;
+            setTimeout(processQueue, 100);
+            return;
+        }
+
+        // Отправляем данные через Image beacon
+        try {
+            // Используем новую функцию для отправки
+            sendDataWithFallback(data, endpoint, `${dataType}_retry${attempt}`);
+            
+            // Считаем, что данные отправлены успешно (обработка ошибок внутри sendDataWithFallback)
+            isProcessingQueue = false;
+            
+            // Продолжаем обработку очереди с небольшой задержкой
+            setTimeout(processQueue, 500);
+        } catch (error) {
+            // Если произошла ошибка, увеличиваем счетчик попыток и возвращаем элемент в очередь
+            Logger.error(`Ошибка при повторной отправке данных ${dataType}:`, error);
+            
+            // Добавляем информацию об ошибке
+            const updatedData = {
+                ...data,
+                retry_info: {
+                    attempt: attempt + 1,
+                    error: error.message,
+                    time: Date.now()
+                }
+            };
+            
+            // Вставляем обратно с инкрементом счетчика попыток
+            dataQueue.push({
+                data: updatedData,
+                endpoint,
+                dataType,
+                timestamp,
+                attempt: attempt + 1
+            });
+            
+            isProcessingQueue = false;
+            
+            // Делаем более длительную паузу перед следующей попыткой
+            setTimeout(processQueue, 2000 * attempt);
+        }
+    }
+
+    // Функция для логирования событий
+    function logEvent(eventType, eventData = {}) {
+        // Проверяем инициализацию SDK
+        if (!SDK_INITIALIZED) {
+            Logger.warn('SDK не инициализирован, событие не будет отправлено', eventType);
+            // При инициализации эти события буду обработаны
+            pendingEvents.push({ eventType, eventData, timestamp: Date.now() });
+            return;
+        }
+
+        // Получаем ID клиента из sessionStorage или генерируем новый
+        const clientId = getSessionStorage('rivox_client_id') || generateClientId();
+        
+        // Базовая информация о событии
+        const eventInfo = {
+            client_id: clientId,
+            client_token: config.token,
+            session_id: getSessionStorage('rivox_session_id') || null,
+            event_type: eventType,
+            page_title: document.title,
+            page_url: window.location.href,
+            page_referrer: document.referrer,
+            timestamp: Date.now(),
+            user_agent: navigator.userAgent,
+            host: window.location.host,
+            screen_size: `${window.screen.width}x${window.screen.height}`,
+            window_size: `${window.innerWidth}x${window.innerHeight}`,
+            event_data: eventData || {}
+        };
+
+        // Если тип события - ecommerce, добавляем дополнительные данные
+        if (eventData && eventData.ecommerce) {
+            eventInfo.ecommerce_data = eventData.ecommerce;
+        }
+
+        // Сохраняем событие в истории сессии
+        session.events.push(eventInfo);
+
+        // Отправка данных через Image beacon для всех типов событий
+        try {
+            Logger.debug('Отправка события через Image beacon', eventType, eventInfo);
+            sendDataWithFallback(eventInfo, '/log-event', eventType);
+        } catch (error) {
+            Logger.error('Ошибка при отправке события', error);
+            
+            // Добавляем в очередь для повторной отправки
+            dataQueue.push({
+                data: eventInfo,
+                endpoint: '/log-event',
+                dataType: `event_${eventType}`,
+                timestamp: Date.now(),
+                attempt: 1
+            });
+            
+            // Пытаемся обработать очередь
+            processQueue();
+        }
+
+        // Обновляем время последнего действия
+        setSessionStorage('rivox_last_activity', Date.now());
     }
 })(window); 
