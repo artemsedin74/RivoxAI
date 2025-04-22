@@ -13,9 +13,32 @@ function logEvent(eventName, payload = {}) {
       timestamp: Date.now(),
       host: window.location.hostname,
     };
-    navigator.sendBeacon('https://rivox-data-handler-779203791697.europe-central2.run.app/logs', JSON.stringify(data));
+    
+    // Улучшенная отправка логов через Beacon API
+    const jsonString = JSON.stringify(data);
+    
+    // Создаем blob с правильным типом контента
+    const blob = new Blob([jsonString], {
+      type: 'application/json'
+    });
+    
+    // Используем Beacon API для отправки данных
+    const success = navigator.sendBeacon('https://rivox-data-handler-779203791697.europe-central2.run.app/logs', blob);
+    
+    // Если отправка через Beacon не удалась, пробуем обычный fetch
+    if (!success) {
+      fetch('https://rivox-data-handler-779203791697.europe-central2.run.app/logs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: jsonString,
+        keepalive: true
+      }).catch(() => {/* Игнорируем ошибки fetch */});
+    }
   } catch (e) {
     // Ошибки логирования не должны влиять на работу SDK
+    console.warn('Error in Rivox log event:', e);
   }
 }
 
