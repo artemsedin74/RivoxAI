@@ -943,69 +943,96 @@ let Logger = {
     
     // Функция для настройки отслеживания целей Metrika - обновленная версия
     function setupMetrikaTracking() {
-        try {
-            // Проверяем существование Метрики
         if (!isYandexMetrikaReady()) {
-                // Настраиваем MutationObserver для отслеживания инициализации Метрики
-                setupMetrikaWatcher();
+            Logger.warn('Yandex.Metrika не найдена, отслеживание целей не будет работать');
             return;
         }
-        
-            // Получаем ID счетчика
+
+        try {
             const counterId = getYandexCounterId();
             if (!counterId) {
                 Logger.warn('Не удалось определить ID счетчика Yandex.Metrika');
-                // Также настраиваем наблюдатель, на случай если счетчик появится позже
-                setupMetrikaWatcher();
                 return;
             }
-            
-            // Убедимся, что функция ym доступна
+
             if (typeof ym !== 'function') {
                 Logger.warn('Функция ym не доступна');
-                setupMetrikaWatcher();
                 return;
             }
-            
-            // Создаем копию оригинальной функции
-            const originalYm = ym;
-            
-            // Флаг для отслеживания уже перехваченной функции
-            if (window._rivoxYmPatched) {
-                Logger.debug('Функция ym уже перехвачена, пропускаем настройку');
-                return;
-            }
-            
-            // Перехватываем вызовы Метрики
-            window.ym = function(counterId, method, goalNameOrAction, params) {
-                // Вызываем оригинальную функцию
-                const result = originalYm.apply(this, arguments);
-                
-                try {
-                    // Отслеживаем только цели
-                    if (method === 'reachGoal' && goalNameOrAction) {
-                        handleMetrikaGoal(counterId, goalNameOrAction, params);
+
+            const originalReachGoal = ym;
+
+            window.ym = function(counterId, method, goalName, params) {
+                const result = originalReachGoal.apply(this, arguments);
+
+                if (method === 'reachGoal' && goalName && sessionData) {
+                    Logger.info(`🎯 Цель Metrika: ${goalName}`);
+                    
+                    if (!sessionData.metrika_goals) {
+                        sessionData.metrika_goals = [];
                     }
-                    // Отслеживаем события электронной коммерции
-                    else if (method === 'ecommerce' && goalNameOrAction) {
-                        handleMetrikaEcommerce(counterId, goalNameOrAction, params);
-                    }
-                } catch (e) {
-                    Logger.error('Ошибка при обработке события Метрики:', e);
+                    
+                    sessionData.metrika_goals.push({
+                        name: goalName,
+                        params: params || {},
+                        timestamp: Date.now()
+                    });
+                    
+                    saveSessionToStorage();
+                    sendDataGuaranteed('metrika_goal').catch(Logger.error);
                 }
                 
                 return result;
             };
             
-            // Отмечаем, что мы перехватили функцию
-            window._rivoxYmPatched = true;
-            
-            Logger.info('✅ Отслеживание целей Metrika настроено успешно');
+            Logger.info('✅ Отслеживание целей Metrika настроено');
         } catch (error) {
             Logger.error('Ошибка при настройке отслеживания целей Metrika:', error);
         }
     }
-    
+
+    function waitForMetrika(callback) {
+        let attempts = 0;
+        const maxAttempts = 50;
+        
+        function check() {
+            attempts++;
+            
+            // Проверяем все возможные варианты существования Метрики
+            if (typeof ym !== 'undefined' && typeof ym.a !== 'undefined') {
+                Logger.info('Metrika ready (ym object)');
+                callback();
+                return;
+            }
+
+            if (window.Ya && window.Ya.Metrika) {
+                Logger.info('Metrika ready (Ya.Metrika)');
+                callback();
+                return;
+            }
+
+            // Ищем счетчик через объекты window
+            for (const key in window) {
+                if (key.startsWith('yaCounter')) {
+                    Logger.info('Metrika ready (counter object)');
+                    callback();
+                    return;
+                }
+            }
+
+            if (attempts >= maxAttempts) {
+                Logger.info('Proceeding without waiting for Metrika');
+                callback();
+                return;
+            }
+
+            Logger.debug(`Waiting for Metrika (attempt ${attempts}/${maxAttempts})...`);
+            setTimeout(check, 100);
+        }
+        
+        check();
+    }
+
     // Обработка цели Метрики
     function handleMetrikaGoal(counterId, goalName, params) {
         try {
