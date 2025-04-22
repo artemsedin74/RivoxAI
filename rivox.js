@@ -197,6 +197,9 @@ let Logger = {
         }
     };
 
+    // Максимальный размер очереди отправки
+    const MAX_SEND_QUEUE_SIZE = 100;
+
     // Re-define the global Logger with full functionality inside the IIFE
     Logger = {
         LEVELS: {
@@ -4442,8 +4445,7 @@ let Logger = {
     // Запускаем инициализацию SDK
     Logger.info('Rivox SDK инициализирован, версия:', SDK_VERSION);
 
-    // Максимальный размер очереди отправки
-    const MAX_SEND_QUEUE_SIZE = 100;
+    // Удаляем дублирующее объявление
     
     // Батчинг данных для оптимизации отправки
     let dataBatchQueue = [];
