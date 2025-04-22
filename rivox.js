@@ -960,32 +960,187 @@ let Logger = {
                 return;
             }
 
-            const originalReachGoal = ym;
-
-            window.ym = function(counterId, method, goalName, params) {
-                const result = originalReachGoal.apply(this, arguments);
-
-                if (method === 'reachGoal' && goalName && sessionData) {
-                    Logger.info(`🎯 Цель Metrika: ${goalName}`);
-                    
-                    if (!sessionData.metrika_goals) {
-                        sessionData.metrika_goals = [];
+            // Расширенная интеграция с Метрикой - перехват всех целей
+            (function wrapYM() {
+                if (typeof ym !== 'function') return;
+                
+                const originalYM = ym;
+                
+                window.ym = function (...args) {
+                    try {
+                        // Перехватываем все reachGoal вызовы
+                        if (args[1] === 'reachGoal') {
+                            const goal = args[2];
+                            const params = args[3] || {};
+                            const timestamp = Date.now();
+                            
+                            if (goal && sessionData) {
+                                Logger.info(`🎯 Цель Metrika: ${goal}`, params);
+                                
+                                if (!sessionData.metrika_goals) {
+                                    sessionData.metrika_goals = [];
+                                }
+                                
+                                // Сохраняем информацию о цели
+                                const goalData = {
+                                    name: goal,
+                                    params: params,
+                                    timestamp: timestamp,
+                                    counter_id: args[0],
+                                    type: 'goal',
+                                    page_url: window.location.href
+                                };
+                                
+                                sessionData.metrika_goals.push(goalData);
+                                
+                                // Помечаем сессию как конверсионную для важных целей
+                                sessionData.has_conversion = true;
+                                
+                                // Обновляем conversion_data
+                                if (!sessionData.conversion_data) {
+                                    sessionData.conversion_data = {
+                                        goals_reached: [],
+                                        ecommerce_data: [],
+                                        last_goal_timestamp: null,
+                                        conversion_path: []
+                                    };
+                                }
+                                
+                                sessionData.conversion_data.goals_reached.push(goal);
+                                sessionData.conversion_data.last_goal_timestamp = timestamp;
+                                
+                                // Добавляем текущий URL в путь конверсии
+                                sessionData.conversion_data.conversion_path.push({
+                                    url: window.location.href,
+                                    timestamp: timestamp,
+                                    goal: goal
+                                });
+                                
+                                saveSessionToStorage();
+                                
+                                // Добавляем в очередь для гарантированной отправки
+                                addToSendQueue({
+                                    client_id: sessionData.client_id,
+                                    client_token: config.token,
+                                    session_id: sessionData.session_id,
+                                    goal_data: goalData,
+                                    timestamp: timestamp,
+                                    sdk_version: SDK_VERSION,
+                                    page_url: window.location.href,
+                                    page_title: document.title,
+                                    data_type: 'metrika_goal'
+                                }, `${config.endpoint}/goals`, 'critical');
+                                
+                                console.log('Rivox intercepted goal:', {
+                                    type: 'metrika_goal',
+                                    goal_name: goal,
+                                    goal_params: params,
+                                    timestamp: timestamp
+                                });
+                            }
+                        }
+                        // Перехватываем ecommerce события
+                        else if (args[1] === 'ecommerce' && sessionData) {
+                            const action = args[2];
+                            const ecommerceData = args[3] || {};
+                            const timestamp = Date.now();
+                            
+                            Logger.info(`🛒 Ecommerce Metrika: ${action}`, ecommerceData);
+                            
+                            // Создаем массивы для ecommerce_events и metrika_goals, если необходимо
+                            if (!sessionData.ecommerce_events) {
+                                sessionData.ecommerce_events = [];
+                            }
+                            if (!sessionData.metrika_goals) {
+                                sessionData.metrika_goals = [];
+                            }
+                            
+                            // Создаем объект с информацией о событии ecommerce
+                            const ecommerceEvent = {
+                                action: action,
+                                counter_id: args[0],
+                                params: ecommerceData,
+                                timestamp: timestamp,
+                                type: 'ecommerce',
+                                page_url: window.location.href
+                            };
+                            
+                            // Сохраняем в основной массив ecommerce_events
+                            sessionData.ecommerce_events.push(ecommerceEvent);
+                            
+                            // Также добавляем в metrika_goals для обеспечения совместимости
+                            sessionData.metrika_goals.push({
+                                name: `ecommerce_${action}`,
+                                counter_id: args[0],
+                                params: ecommerceData,
+                                timestamp: timestamp,
+                                type: 'ecommerce',
+                                ecommerce_data: ecommerceEvent,
+                                page_url: window.location.href
+                            });
+                            
+                            // Обновляем conversion_data
+                            if (!sessionData.conversion_data) {
+                                sessionData.conversion_data = {
+                                    goals_reached: [],
+                                    ecommerce_data: [],
+                                    last_goal_timestamp: null,
+                                    conversion_path: []
+                                };
+                            }
+                            
+                            // Добавляем событие в ecommerce_data
+                            sessionData.conversion_data.ecommerce_data.push(ecommerceEvent);
+                            
+                            // Помечаем сессию как конверсионную для важных событий
+                            const importantActions = ['purchase', 'checkout', 'add', 'order'];
+                            if (importantActions.some(key => action === key || action.includes(key))) {
+                                sessionData.has_conversion = true;
+                                sessionData.conversion_data.goals_reached.push(`ecommerce_${action}`);
+                                sessionData.conversion_data.last_goal_timestamp = timestamp;
+                                
+                                // Добавляем в путь конверсии
+                                sessionData.conversion_data.conversion_path.push({
+                                    url: window.location.href,
+                                    timestamp: timestamp,
+                                    type: 'ecommerce',
+                                    action: action
+                                });
+                            }
+                            
+                            saveSessionToStorage();
+                            
+                            // Добавляем в очередь для гарантированной отправки
+                            addToSendQueue({
+                                client_id: sessionData.client_id,
+                                client_token: config.token,
+                                session_id: sessionData.session_id,
+                                ecommerce_data: ecommerceEvent,
+                                timestamp: timestamp,
+                                sdk_version: SDK_VERSION,
+                                page_url: window.location.href,
+                                page_title: document.title,
+                                data_type: 'ecommerce'
+                            }, `${config.endpoint}/ecommerce`, 'critical');
+                            
+                            console.log('Rivox intercepted ecommerce:', {
+                                type: 'metrika_ecommerce',
+                                action: action,
+                                params: ecommerceData,
+                                timestamp: timestamp
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('Rivox YM wrap failed', e);
+                        Logger.error('Ошибка при перехвате цели Метрики:', e);
                     }
                     
-                    sessionData.metrika_goals.push({
-                        name: goalName,
-                        params: params || {},
-                        timestamp: Date.now()
-                    });
-                    
-                    saveSessionToStorage();
-                    sendDataGuaranteed('metrika_goal').catch(Logger.error);
-                }
+                    // Вызываем оригинальную функцию
+                    return originalYM.apply(this, args);
+                };
                 
-                return result;
-            };
-            
-            Logger.info('✅ Отслеживание целей Metrika настроено');
+                Logger.info('✅ Расширенное отслеживание целей Метрики настроено');
+            })();
         } catch (error) {
             Logger.error('Ошибка при настройке отслеживания целей Metrika:', error);
         }
@@ -4747,4 +4902,78 @@ let Logger = {
             }
         })();
     }
+
+    // Ранний запуск перехвата Яндекс.Метрики, даже до полной инициализации SDK
+    (function earlyMetrikaInit() {
+        try {
+            // Проверяем, существует ли уже ym и сохраняем оригинальную функцию
+            let originalYM = null;
+            if (typeof window.ym === 'function') {
+                originalYM = window.ym;
+            }
+            
+            // Устанавливаем временный перехватчик, даже если SDK еще не инициализирован
+            window.ym = function(...args) {
+                try {
+                    // Проверяем тип вызова
+                    if (args[1] === 'reachGoal' || args[1] === 'ecommerce') {
+                        // Регистрируем вызов
+                        const eventType = args[1] === 'reachGoal' ? 'goal' : 'ecommerce';
+                        const eventName = args[1] === 'reachGoal' ? args[2] : args[2];
+                        const eventParams = args[3] || {};
+                        
+                        // Сохраняем информацию о событии для последующей обработки SDK
+                        if (!window._rivoxPendingYmEvents) {
+                            window._rivoxPendingYmEvents = [];
+                        }
+                        
+                        window._rivoxPendingYmEvents.push({
+                            type: eventType,
+                            counterId: args[0],
+                            name: eventName,
+                            params: eventParams,
+                            timestamp: Date.now()
+                        });
+                        
+                        console.log(`Rivox early capture: ${eventType} "${eventName}"`);
+                    }
+                } catch (e) {
+                    console.warn('Early YM wrap failed', e);
+                }
+                
+                // Вызываем оригинальную функцию, если она существует
+                if (originalYM) {
+                    return originalYM.apply(this, args);
+                }
+            };
+            
+            // Настраиваем проверку наличия SDK и передачу событий
+            const checkSDKInterval = setInterval(function() {
+                if (window.RIVOX && window.RIVOX.isSessionActive && window._rivoxPendingYmEvents && window._rivoxPendingYmEvents.length) {
+                    console.log(`Передача ${window._rivoxPendingYmEvents.length} ранних событий в SDK`);
+                    
+                    // Обрабатываем накопленные события
+                    window._rivoxPendingYmEvents.forEach(event => {
+                        if (event.type === 'goal') {
+                            if (typeof handleMetrikaGoal === 'function') {
+                                handleMetrikaGoal(event.counterId, event.name, event.params);
+                            }
+                        } else if (event.type === 'ecommerce') {
+                            if (typeof handleMetrikaEcommerce === 'function') {
+                                handleMetrikaEcommerce(event.counterId, event.name, event.params);
+                            }
+                        }
+                    });
+                    
+                    // Очищаем накопленные события
+                    window._rivoxPendingYmEvents = [];
+                    
+                    // Прекращаем проверку
+                    clearInterval(checkSDKInterval);
+                }
+            }, 1000);
+        } catch (e) {
+            console.error('Error in early Metrika setup:', e);
+        }
+    })();
 })(window); 
