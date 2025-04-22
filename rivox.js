@@ -105,6 +105,11 @@ let Logger = {
 
     const SDK_VERSION = '4.6.3';
     
+    // Добавляем флаг инициализации SDK
+    let SDK_INITIALIZED = false;
+    // Добавляем массив для хранения отложенных событий
+    const pendingEvents = [];
+    
     // Добавляем переменные для контроля отправки данных
     let lastSendTime = 0;
     let dataSubmissionInProgress = false;
@@ -1204,6 +1209,20 @@ let Logger = {
         }, 60000);
 
         setupMetrikaTracking();
+        
+        // Устанавливаем флаг инициализированного SDK
+        SDK_INITIALIZED = true;
+        
+        // Обрабатываем отложенные события
+        if (pendingEvents.length > 0) {
+            Logger.info(`Обработка ${pendingEvents.length} отложенных событий`);
+            pendingEvents.forEach(event => {
+                logEvent(event.eventType, event.eventData);
+            });
+            // Очищаем массив после обработки
+            pendingEvents.length = 0;
+        }
+        
         Logger.info('✅ RIVOX SDK initialization completed');
     }
 
