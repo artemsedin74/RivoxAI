@@ -5,6 +5,18 @@
 // RIVOX SDK v4.6.3
 // Enhanced version with ML data collection capabilities
 
+// Вспомогательная функция для отправки через Image beacon
+function sendViaImageBeacon(url, jsonString) {
+  try {
+    const img = new Image();
+    img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
+    return true;
+  } catch (e) {
+    console.warn('Failed to send via Image beacon:', e);
+    return false;
+  }
+}
+
 function logEvent(eventName, payload = {}) {
   try {
     const data = {
@@ -19,42 +31,27 @@ function logEvent(eventName, payload = {}) {
     // Создаем URL для отправки данных
     const url = 'https://rivox-data-handler-779203791697.europe-central2.run.app/logs';
     
-    // Используем Image beacon вместо navigator.sendBeacon для надежности
-    // Этот метод обходит CORS вообще и работает надежнее
+    // Всегда сначала используем Image beacon - самый надежный способ
+    sendViaImageBeacon(url, jsonString);
+    
+    // Дополнительно пробуем fetch для более важных событий
     if (eventName === 'error' || eventName === 'warning') {
-      // Для важных сообщений используем AJAX с повторными попытками
-      fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        // ВАЖНО! Отключаем использование credentials
-        credentials: 'omit',
-        mode: 'no-cors', // Добавляем режим no-cors для обхода CORS-ошибок
-        body: jsonString,
-        keepalive: true
-      }).catch(() => {
-        // Если и это не работает, используем Image beacon как запасной вариант
-        const img = new Image();
-        img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
-      });
-    } else {
-      // Для обычных сообщений используем fetch с режимом no-cors
-      fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        credentials: 'omit', // Отключаем использование credentials
-        mode: 'no-cors', // Добавляем режим no-cors для обхода CORS-ошибок
-        body: jsonString,
-        keepalive: true
-      }).catch((error) => {
-        // При ошибке переходим на запасной вариант - Image beacon
-        console.warn('Rivox fetch failed, using Image beacon fallback:', error?.message || 'unknown error');
-        const img = new Image();
-        img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
-      });
+      try {
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          mode: 'no-cors',
+          credentials: 'omit',
+          body: jsonString,
+          keepalive: true
+        }).catch(() => {
+          // Игнорируем ошибки fetch - основной метод уже использован (Image beacon)
+        });
+      } catch (fetchError) {
+        // Игнорируем ошибки - основной метод уже использован (Image beacon)
+      }
     }
   } catch (e) {
     // Ошибки логирования не должны влиять на работу SDK
