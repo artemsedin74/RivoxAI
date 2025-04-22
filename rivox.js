@@ -614,14 +614,14 @@ let Logger = {
         if (config.batchEnabled) {
             sendWithBatching(data, null, 'event');
         } else {
-            queuedData.push({
-                timestamp: new Date().toISOString(),
-                data: data
-            });
+        queuedData.push({
+            timestamp: new Date().toISOString(),
+            data: data
+        });
 
-            // If queue is getting large, send immediately
-            if (queuedData.length >= 5) {
-                sendQueuedData();
+        // If queue is getting large, send immediately
+        if (queuedData.length >= 5) {
+            sendQueuedData();
             }
         }
     }
@@ -942,12 +942,12 @@ let Logger = {
     function setupMetrikaTracking() {
         try {
             // Проверяем существование Метрики
-            if (!isYandexMetrikaReady()) {
+        if (!isYandexMetrikaReady()) {
                 // Настраиваем MutationObserver для отслеживания инициализации Метрики
                 setupMetrikaWatcher();
-                return;
-            }
-            
+            return;
+        }
+        
             // Получаем ID счетчика
             const counterId = getYandexCounterId();
             if (!counterId) {
@@ -1027,15 +1027,15 @@ let Logger = {
             });
             
             // Инициализируем массив целей, если необходимо
-            if (!sessionData.metrika_goals) {
-                sessionData.metrika_goals = [];
-            }
-            
+                    if (!sessionData.metrika_goals) {
+                        sessionData.metrika_goals = [];
+                    }
+                    
             // Создаем объект с информацией о цели
             const goalData = {
-                name: goalName,
+                        name: goalName,
                 counter_id: counterId,
-                params: params || {},
+                        params: params || {},
                 timestamp: Date.now(),
                 type: 'goal',
                 page_url: window.location.href
@@ -1068,7 +1068,7 @@ let Logger = {
             });
             
             // Сохраняем сессию в localStorage
-            saveSessionToStorage();
+                    saveSessionToStorage();
             
             // Отправляем данные о цели немедленно с повторными попытками
             sendGoalToServer(goalData).catch(error => {
@@ -1342,7 +1342,7 @@ let Logger = {
             if (window._rivoxProcessingGoals) {
                 return;
             }
-            
+
             window._rivoxProcessingGoals = true;
             
             // Получаем список неотправленных целей
@@ -1364,7 +1364,7 @@ let Logger = {
                 window._rivoxProcessingGoals = false;
                 return;
             }
-            
+
             Logger.info(`Обработка неотправленных целей (${goalsQueue.length})`);
             
             // Обрабатываем цели
@@ -1430,8 +1430,8 @@ let Logger = {
         try {
             // Проверяем, идет ли уже обработка
             if (window._rivoxProcessingEcommerce) {
-                return;
-            }
+                    return;
+                }
             
             window._rivoxProcessingEcommerce = true;
             
@@ -1454,7 +1454,7 @@ let Logger = {
                 window._rivoxProcessingEcommerce = false;
                 return;
             }
-            
+
             Logger.info(`Обработка неотправленных ecommerce событий (${ecommerceQueue.length})`);
             
             // Обрабатываем события
@@ -2074,11 +2074,11 @@ let Logger = {
             // Используем батчинг вместо прямой отправки
             if (config.batchEnabled) {
                 return sendWithBatching(dataToSend, config.endpoint + '/session', 'regular');
-            } else {
+                    } else {
                 // Используем старый метод, если батчинг отключен
                 return sendDataWithFallback(dataToSend, config.endpoint + '/session', 'regular');
             }
-        } catch (error) {
+                } catch (error) {
             Logger.error('Error sending session summary:', error);
             return { success: false, error: error.message };
         }
@@ -4442,6 +4442,9 @@ let Logger = {
     // Запускаем инициализацию SDK
     Logger.info('Rivox SDK инициализирован, версия:', SDK_VERSION);
 
+    // Максимальный размер очереди отправки
+    const MAX_SEND_QUEUE_SIZE = 100;
+    
     // Батчинг данных для оптимизации отправки
     let dataBatchQueue = [];
     let batchTimeout = null;
