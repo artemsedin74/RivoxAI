@@ -1800,6 +1800,49 @@ let Logger = {
                     // Инкрементируем счетчик последовательных ошибок
                     if (error.message.includes('500')) {
                         consecErrorCount++;
+                        Logger.error(`Server error (500) detected. This may indicate problems with data format or server load.`);
+                        
+                        // Попытка отправить через Image beacon, если ошибка 500
+                        try {
+                            Logger.info('Attempting fallback via Image beacon due to 500 error...');
+                            
+                            // Создаем более компактную версию данных
+                            const compactData = {
+                                client_id: summary.client_id,
+                                client_token: summary.client_token,
+                                session_id: summary.session_id,
+                                timestamp: summary.timestamp,
+                                error_info: {
+                                    original_error: error.message,
+                                    retry_count: retryCount,
+                                    data_size: dataSize
+                                },
+                                // Критические данные, которые нужно отправить в любом случае
+                                metrika_goals: summary.metrika_goals || [],
+                                ml_features: summary.ml_features || {},
+                                // Тип запроса для понимания на сервере
+                                type: 'error_fallback_500'
+                            };
+                            
+                            // Отправляем через Image beacon
+                            const beaconUrl = endpoint;
+                            const encodedData = encodeURIComponent(JSON.stringify(compactData)).substring(0, 2000);
+                            const img = new Image();
+                            
+                            // Промис для отслеживания загрузки
+                            const beaconResult = await new Promise((resolve) => {
+                                img.onload = () => resolve(true);
+                                img.onerror = () => resolve(false);
+                                img.src = `${beaconUrl}?data=${encodedData}&fallback=true&error=500`;
+                            });
+                            
+                            if (beaconResult) {
+                                Logger.info('✅ Fallback via Image beacon successful');
+                                return { success: true, method: 'image_beacon_fallback' };
+                            }
+                        } catch (beaconError) {
+                            Logger.error('Image beacon fallback also failed:', beaconError);
+                        }
                     }
                     
                     // If we're out of retries, try beacon API as last resort
