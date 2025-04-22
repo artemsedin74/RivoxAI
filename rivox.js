@@ -65,13 +65,24 @@ async function _0x3dda1e(){const _0x13a9b9=_0x13b5e2.location.hostname;if(!_0x4c
         } catch {}
     };
     
+    // Protect only SDK internals, don't block console globally
     if (_0x47e4c2()) {
-        window.console.clear();
-        window.console.log = function(){};
-        window.console.debug = function(){};
-        window.console.info = function(){};
-        window.console.warn = function(){};
-        window.console.error = function(){};
+        const originalConsole = { ...console };
+        const sdkPrefix = '[RIVOX]';
+        
+        // Only intercept SDK-related logs
+        window.console = new Proxy(console, {
+            get: function(target, prop) {
+                if (['log', 'debug', 'info', 'warn', 'error'].includes(prop)) {
+                    return function(...args) {
+                        if (!args[0] || typeof args[0] !== 'string' || !args[0].includes(sdkPrefix)) {
+                            originalConsole[prop].apply(console, args);
+                        }
+                    }
+                }
+                return target[prop];
+            }
+        });
     }
     
     setInterval(() => {
