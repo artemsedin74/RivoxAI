@@ -948,22 +948,66 @@ let Logger = {
                 
                 // Если это вызов reachGoal, добавляем в наши данные
                 if (method === 'reachGoal' && goalNameOrAction && sessionData) {
-                    Logger.info(`🎯 Цель Metrika: ${goalNameOrAction}`);
+                    Logger.info(`🎯 Цель Metrika: ${goalNameOrAction}`, {
+                        goal: goalNameOrAction,
+                        params: params || {},
+                        session_id: sessionData.session_id
+                    });
+                    
+                    // Пропускаем тестовые цели
+                    if (goalNameOrAction === 'test_goal') {
+                        Logger.debug('Пропускаю тестовую цель');
+                        return result;
+                    }
                     
                     if (!sessionData.metrika_goals) {
                         sessionData.metrika_goals = [];
                     }
                     
+                    // Добавляем цель в массив
                     sessionData.metrika_goals.push({
                         name: goalNameOrAction,
                         params: params || {},
                         timestamp: Date.now(),
-                        type: 'goal'
+                        type: 'goal',
+                        page_url: window.location.href
                     });
                     
-                    // Сохраняем сессию и отправляем данные
+                    // Помечаем сессию как конверсионную
+                    sessionData.has_conversion = true;
+                    
+                    // Обновляем conversion_data
+                    if (!sessionData.conversion_data) {
+                        sessionData.conversion_data = {
+                            goals_reached: [],
+                            ecommerce_data: [],
+                            last_goal_timestamp: null,
+                            conversion_path: []
+                        };
+                    }
+                    
+                    sessionData.conversion_data.goals_reached.push(goalNameOrAction);
+                    sessionData.conversion_data.last_goal_timestamp = Date.now();
+                    
+                    // Добавляем текущий URL в путь конверсии
+                    sessionData.conversion_data.conversion_path.push({
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        goal: goalNameOrAction
+                    });
+                    
+                    // Сохраняем сессию и немедленно отправляем данные
                     saveSessionToStorage();
-                    sendDataGuaranteed('metrika_goal').catch(Logger.error);
+                    sendDataGuaranteed('metrika_goal').catch(error => {
+                        Logger.error('Ошибка при отправке цели:', error);
+                        // Добавляем в очередь неотправленных
+                        addToFailedQueue({
+                            type: 'goal',
+                            goal: goalNameOrAction,
+                            session_id: sessionData.session_id,
+                            timestamp: Date.now()
+                        });
+                    });
                 }
                 
                 // Если это вызов ecommerce (для отслеживания электронной коммерции)
@@ -971,7 +1015,11 @@ let Logger = {
                     // Обрабатываем все типы событий Ecommerce
                     const ecommerceAction = goalNameOrAction; // например: 'detail', 'add', 'remove', 'purchase' и т.д.
                     
-                    Logger.info(`🛒 Ecommerce Metrika: ${ecommerceAction}`, params);
+                    Logger.info(`🛒 Ecommerce Metrika: ${ecommerceAction}`, {
+                        action: ecommerceAction,
+                        params: params || {},
+                        session_id: sessionData.session_id
+                    });
                     
                     // Создаем массив ecommerce_events, если его еще нет
                     if (!sessionData.ecommerce_events) {
@@ -988,48 +1036,66 @@ let Logger = {
                         action: ecommerceAction,
                         params: params || {},
                         timestamp: Date.now(),
-                        type: 'ecommerce'
+                        type: 'ecommerce',
+                        page_url: window.location.href
                     };
                     
                     // Сохраняем в основной массив ecommerce_events
                     sessionData.ecommerce_events.push(ecommerceEvent);
                     
                     // Также добавляем в metrika_goals для обеспечения совместимости
-                    // со всей обработкой конверсий
                     sessionData.metrika_goals.push({
                         name: `ecommerce_${ecommerceAction}`,
                         params: params || {},
                         timestamp: Date.now(),
                         type: 'ecommerce',
-                        ecommerce_data: ecommerceEvent
+                        ecommerce_data: ecommerceEvent,
+                        page_url: window.location.href
                     });
                     
-                    // Добавляем специальную обработку для наиболее важных Ecommerce-целей
-                    if (ecommerceAction === 'purchase' || ecommerceAction === 'checkout') {
-                        Logger.info(`💰 Важное Ecommerce-событие: ${ecommerceAction}`, params);
-                        
-                        // Обновляем conversion_data в сессии
-                        if (!sessionData.conversion_data) {
-                            sessionData.conversion_data = {
-                                goals_reached: [],
-                                ecommerce_data: [],
-                                last_goal_timestamp: null,
-                                conversion_path: []
-                            };
-                        }
-                        
-                        // Добавляем в conversion_data
-                        sessionData.conversion_data.ecommerce_data.push(ecommerceEvent);
-                        sessionData.conversion_data.last_goal_timestamp = Date.now();
-                        sessionData.conversion_data.goals_reached.push(`ecommerce_${ecommerceAction}`);
-                        
-                        // Помечаем сессию как имеющую конверсию
+                    // Добавляем в conversion_data
+                    if (!sessionData.conversion_data) {
+                        sessionData.conversion_data = {
+                            goals_reached: [],
+                            ecommerce_data: [],
+                            last_goal_timestamp: null,
+                            conversion_path: []
+                        };
+                    }
+                    
+                    // Добавляем событие в ecommerce_data
+                    sessionData.conversion_data.ecommerce_data.push(ecommerceEvent);
+                    
+                    // Помечаем сессию как конверсионную для важных событий
+                    if (ecommerceAction === 'purchase' || 
+                        ecommerceAction === 'checkout' || 
+                        ecommerceAction === 'add' || 
+                        ecommerceAction.includes('order')) {
                         sessionData.has_conversion = true;
+                        sessionData.conversion_data.goals_reached.push(`ecommerce_${ecommerceAction}`);
+                        sessionData.conversion_data.last_goal_timestamp = Date.now();
+                        
+                        // Добавляем в путь конверсии
+                        sessionData.conversion_data.conversion_path.push({
+                            url: window.location.href,
+                            timestamp: Date.now(),
+                            type: 'ecommerce',
+                            action: ecommerceAction
+                        });
                     }
                     
                     // Сохраняем сессию и отправляем данные
                     saveSessionToStorage();
-                    sendDataGuaranteed('ecommerce_event').catch(Logger.error);
+                    sendDataGuaranteed('ecommerce_event').catch(error => {
+                        Logger.error('Ошибка при отправке ecommerce события:', error);
+                        // Добавляем в очередь неотправленных
+                        addToFailedQueue({
+                            type: 'ecommerce',
+                            action: ecommerceAction,
+                            session_id: sessionData.session_id,
+                            timestamp: Date.now()
+                        });
+                    });
                 }
                 
                 return result;
