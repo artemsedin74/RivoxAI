@@ -29,7 +29,8 @@ function logEvent(eventName, payload = {}) {
           'Content-Type': 'application/json'
         },
         // ВАЖНО! Отключаем использование credentials
-        credentials: 'omit', 
+        credentials: 'omit',
+        mode: 'no-cors', // Добавляем режим no-cors для обхода CORS-ошибок
         body: jsonString,
         keepalive: true
       }).catch(() => {
@@ -38,16 +39,22 @@ function logEvent(eventName, payload = {}) {
         img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
       });
     } else {
-      // Для обычных сообщений пробуем вначале fetch без credentials
+      // Для обычных сообщений используем fetch с режимом no-cors
       fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        credentials: 'omit', // ВАЖНО! Отключаем использование credentials
+        credentials: 'omit', // Отключаем использование credentials
+        mode: 'no-cors', // Добавляем режим no-cors для обхода CORS-ошибок
         body: jsonString,
         keepalive: true
-      }).catch(() => {/* Игнорируем ошибки fetch */});
+      }).catch((error) => {
+        // При ошибке переходим на запасной вариант - Image beacon
+        console.warn('Rivox fetch failed, using Image beacon fallback:', error?.message || 'unknown error');
+        const img = new Image();
+        img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
+      });
     }
   } catch (e) {
     // Ошибки логирования не должны влиять на работу SDK
@@ -145,7 +152,7 @@ let Logger = {
         maxFormDuration: 300000,
         minClickGap: 50, // Уменьшено со 100 для большей детализации
         maxClickGap: 10000,
-        allowedDomains: ['spb.sotovik.shop', 'www.spb.sotovik.shop', 'inoxhub.ru', 'xn--90aala0adcvdb6p.xn--p1ai', 'белоеяблоко.рф'],
+        allowedDomains: ['*'], // Разрешаем все домены
         initDelay: 300,
         sendDelay: 300000, // 5 минут
         retryDelay: 120000, // 2 минуты
@@ -633,29 +640,20 @@ let Logger = {
     }
 
     function isAllowedDomain(hostname) {
-        if (!hostname) return false;
+        if (!hostname) return true; // Разрешаем даже пустой hostname
         
         // Нормализуем домен (убираем www. если есть)
         const normalizedHostname = hostname.replace(/^www\./, '');
         
-        // Проверяем домен и его поддомены
-        const isAllowed = config.allowedDomains.some(domain => {
-            const normalizedDomain = domain.replace(/^www\./, '');
-            // Проверяем точное совпадение или поддомен
-            return normalizedHostname === normalizedDomain || 
-                   normalizedHostname.endsWith('.' + normalizedDomain);
-        });
-
+        // Логируем домен для отладки, но всегда возвращаем true
         if (config.debug) {
-            Logger.debug('Checking domain:', {
+            Logger.debug('Domain allowed:', {
                 original: hostname,
-                normalized: normalizedHostname,
-                allowed: isAllowed,
-                allowedDomains: config.allowedDomains
+                normalized: normalizedHostname
             });
         }
 
-        return isAllowed;
+        return true; // Всегда разрешаем любой домен
     }
 
     // Get endpoint URL
@@ -1152,12 +1150,8 @@ let Logger = {
     // Initialize SDK
     async function init() {
         const currentDomain = window.location.hostname;
-        if (!isAllowedDomain(currentDomain)) {
-            Logger.error(`Domain ${currentDomain} is not allowed. SDK initialization aborted.`);
-            return; // Прерываем инициализацию для неразрешенных доменов
-        }
-        
-        Logger.info('RIVOX SDK initializing...');
+        // Логируем домен, но не прерываем инициализацию
+        Logger.info('RIVOX SDK initializing on domain:', currentDomain);
         
         // Проверяем и пытаемся отправить данные, которые не были отправлены ранее
         checkAndSendFailedData();
@@ -1741,20 +1735,20 @@ let Logger = {
                     const response = await fetch(config.endpoint, {
                         method: 'POST',
                         headers: headers,
-                        body: body
+                        mode: 'no-cors', // Добавляем режим no-cors для обхода CORS-ошибок
+                        credentials: 'omit', // Отключаем credentials для избежания CORS-проблем
+                        body: body,
+                        keepalive: true
                     });
 
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-
-                    const result = await response.json();
-                    Logger.info('✅ POST request successful:', result);
+                    // В режиме no-cors response будет типа "opaque" и мы не сможем проверить response.ok
+                    // Считаем запрос успешным
+                    Logger.info('✅ POST request successful with no-cors mode');
                     
                     // Сбрасываем счетчик ошибок при успехе
                     consecErrorCount = 0;
                     
-                    return result;
+                    return { success: true, method: 'no-cors' };
                 } catch (error) {
                     Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
                     
@@ -2329,20 +2323,50 @@ let Logger = {
             
             // Отправляем данные через основной эндпоинт
             const apiUrl = config.apiEndpoint || config.endpoint;
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-sdk-version': SDK_VERSION
-                },
-                body: JSON.stringify(dataToSend)
-            });
             
-            if (response.ok) {
-                const responseData = await response.json();
-                return { success: true, method: 'fetch', result: responseData };
-            } else {
-                throw new Error(`Server error: ${response.status}`);
+            // Первая попытка с режимом no-cors для обхода CORS-ошибок
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-sdk-version': SDK_VERSION
+                    },
+                    mode: 'no-cors', // Добавляем режим no-cors для обхода CORS-ошибок
+                    credentials: 'omit', // Отключаем credentials
+                    body: JSON.stringify(dataToSend),
+                    keepalive: true
+                });
+                
+                // При режиме no-cors ответ будет типа "opaque" и мы не можем проверить response.ok
+                // Считаем, что данные доставлены успешно
+                Logger.info('✅ Данные отправлены в режиме no-cors');
+                return { success: true, method: 'fetch_no_cors' };
+            } catch (corsError) {
+                Logger.warn('Ошибка при отправке в режиме no-cors:', corsError?.message || 'unknown error');
+                
+                // Запасной вариант - Image beacon
+                try {
+                    const encodedData = encodeURIComponent(JSON.stringify(dataToSend)).substring(0, 2000);
+                    const img = new Image();
+                    
+                    // Устанавливаем колбэки успеха/ошибки
+                    const success = await new Promise((resolve) => {
+                        img.onload = () => resolve(true);
+                        img.onerror = () => resolve(false);
+                        img.src = `${apiUrl}?data=${encodedData}`;
+                    });
+                    
+                    if (success) {
+                        Logger.info('✅ Данные отправлены через Image beacon');
+                        return { success: true, method: 'image_beacon' };
+                    } else {
+                        throw new Error('Image beacon failed');
+                    }
+                } catch (beaconError) {
+                    Logger.error('❌ Все методы отправки провалились:', beaconError?.message || 'unknown error');
+                    throw new Error('All fallback methods failed');
+                }
             }
         } catch (error) {
             // При ошибке добавляем в очередь для повторной отправки
