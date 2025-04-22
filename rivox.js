@@ -5,8 +5,12 @@
 // RIVOX SDK v4.6.3
 // Enhanced version with ML data collection capabilities
 
+// Функция для базового логирования (без рекурсии)
 function logEvent(eventName, payload = {}) {
   try {
+    // Предотвращаем рекурсию
+    if (isLogging) return;
+    
     const data = {
       event: eventName,
       payload,
@@ -110,6 +114,9 @@ let Logger = {
     // Добавляем массив для хранения отложенных событий
     const pendingEvents = [];
     
+    // Флаг для предотвращения рекурсивных вызовов логирования
+    let isLogging = false;
+    
     // Добавляем переменные для контроля отправки данных
     let lastSendTime = 0;
     let dataSubmissionInProgress = false;
@@ -193,25 +200,53 @@ let Logger = {
         
         debug: function(msg, data) {
             if (this.level <= this.LEVELS.DEBUG && config.debug) {
-                logEvent('debug', { message: msg, data: data || '' });
+                // Предотвращаем рекурсию
+                if (isLogging) return;
+                isLogging = true;
+                try {
+                    logEvent('debug', { message: msg, data: data || '' });
+                } finally {
+                    isLogging = false;
+                }
             }
         },
         
         info: function(msg, data) {
             if (this.level <= this.LEVELS.INFO && config.debug) { 
-                logEvent('info', { message: msg, data: data || '' });
+                // Предотвращаем рекурсию
+                if (isLogging) return;
+                isLogging = true;
+                try {
+                    logEvent('info', { message: msg, data: data || '' });
+                } finally {
+                    isLogging = false;
+                }
             }
         },
         
         warn: function(msg, data) {
             if (this.level <= this.LEVELS.WARN) {
-                logEvent('warning', { message: msg, data: data || '' });
+                // Предотвращаем рекурсию
+                if (isLogging) return;
+                isLogging = true;
+                try {
+                    logEvent('warning', { message: msg, data: data || '' });
+                } finally {
+                    isLogging = false;
+                }
             }
         },
         
         error: function(msg, error) {
             if (this.level <= this.LEVELS.ERROR) {
-                logEvent('error', { message: msg, error: error?.message || error || '' });
+                // Предотвращаем рекурсию
+                if (isLogging) return;
+                isLogging = true;
+                try {
+                    logEvent('error', { message: msg, error: error?.message || error || '' });
+                } finally {
+                    isLogging = false;
+                }
             }
         }
     };
@@ -3366,9 +3401,12 @@ let Logger = {
 
     // Функция для логирования событий
     function logEvent(eventType, eventData = {}) {
+        // Предотвращаем рекурсию
+        if (isLogging) return;
+        
         // Проверяем инициализацию SDK
         if (!SDK_INITIALIZED) {
-            Logger.warn('SDK не инициализирован, событие не будет отправлено', eventType);
+            console.warn('SDK не инициализирован, событие не будет отправлено', eventType);
             // При инициализации эти события буду обработаны
             pendingEvents.push({ eventType, eventData, timestamp: Date.now() });
             return;
