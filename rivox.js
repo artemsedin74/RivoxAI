@@ -168,6 +168,12 @@ let Logger = {
         maxEventsPerBatch: 50,        // Макс событий в одной отправке
         errorBackoffTime: 60000,      // Задержка после ошибок (1 минута)
         maxRequestSize: 500000,       // Макс размер запроса (500KB)
+        
+        // Новые параметры батчинга
+        batchEnabled: true,           // Включить батчинг данных
+        batchMaxSize: 20,             // Максимальное количество событий в батче
+        batchDelay: 5000,             // Задержка батчинга (мс)
+        batchMaxBytes: 100000,        // Максимальный размер батча в байтах (~100KB)
 
         // ML-оптимизированные параметры с улучшенными порогами
         formInteractionThreshold: 1, 
@@ -211,7 +217,7 @@ let Logger = {
                 if (isLogging) return;
                 isLogging = true;
                 try {
-                    logEvent('debug', { message: msg, data: data || '' });
+                logEvent('debug', { message: msg, data: data || '' });
                 } finally {
                     isLogging = false;
                 }
@@ -224,7 +230,7 @@ let Logger = {
                 if (isLogging) return;
                 isLogging = true;
                 try {
-                    logEvent('info', { message: msg, data: data || '' });
+                logEvent('info', { message: msg, data: data || '' });
                 } finally {
                     isLogging = false;
                 }
@@ -237,7 +243,7 @@ let Logger = {
                 if (isLogging) return;
                 isLogging = true;
                 try {
-                    logEvent('warning', { message: msg, data: data || '' });
+                logEvent('warning', { message: msg, data: data || '' });
                 } finally {
                     isLogging = false;
                 }
@@ -250,7 +256,7 @@ let Logger = {
                 if (isLogging) return;
                 isLogging = true;
                 try {
-                    logEvent('error', { message: msg, error: error?.message || error || '' });
+                logEvent('error', { message: msg, error: error?.message || error || '' });
                 } finally {
                     isLogging = false;
                 }
@@ -605,14 +611,18 @@ let Logger = {
 
     // Queue data for sending
     function queueData(data) {
-        queuedData.push({
-            timestamp: new Date().toISOString(),
-            data: data
-        });
+        if (config.batchEnabled) {
+            sendWithBatching(data, null, 'event');
+        } else {
+            queuedData.push({
+                timestamp: new Date().toISOString(),
+                data: data
+            });
 
-        // If queue is getting large, send immediately
-        if (queuedData.length >= 5) {
-            sendQueuedData();
+            // If queue is getting large, send immediately
+            if (queuedData.length >= 5) {
+                sendQueuedData();
+            }
         }
     }
 
@@ -928,234 +938,639 @@ let Logger = {
         return false;
     }
     
-    // Функция для настройки отслеживания целей Metrika
+    // Функция для настройки отслеживания целей Metrika - обновленная версия
     function setupMetrikaTracking() {
-        if (!isYandexMetrikaReady()) {
-            Logger.warn('Yandex.Metrika не найдена, отслеживание целей не будет работать');
-            return;
-        }
-        
         try {
+            // Проверяем существование Метрики
+            if (!isYandexMetrikaReady()) {
+                // Настраиваем MutationObserver для отслеживания инициализации Метрики
+                setupMetrikaWatcher();
+                return;
+            }
+            
+            // Получаем ID счетчика
             const counterId = getYandexCounterId();
             if (!counterId) {
                 Logger.warn('Не удалось определить ID счетчика Yandex.Metrika');
+                // Также настраиваем наблюдатель, на случай если счетчик появится позже
+                setupMetrikaWatcher();
                 return;
             }
             
-            // Проверяем, что функция ym доступна
+            // Убедимся, что функция ym доступна
             if (typeof ym !== 'function') {
                 Logger.warn('Функция ym не доступна');
+                setupMetrikaWatcher();
                 return;
             }
             
-            // Переопределяем функцию ym для отслеживания всех целей
+            // Создаем копию оригинальной функции
             const originalYm = ym;
             
+            // Флаг для отслеживания уже перехваченной функции
+            if (window._rivoxYmPatched) {
+                Logger.debug('Функция ym уже перехвачена, пропускаем настройку');
+                return;
+            }
+            
+            // Перехватываем вызовы Метрики
             window.ym = function(counterId, method, goalNameOrAction, params) {
                 // Вызываем оригинальную функцию
                 const result = originalYm.apply(this, arguments);
                 
-                // Если это вызов reachGoal, добавляем в наши данные
-                if (method === 'reachGoal' && goalNameOrAction && sessionData) {
-                    Logger.info(`🎯 Цель Metrika: ${goalNameOrAction}`, {
-                        goal: goalNameOrAction,
-                        params: params || {},
-                        session_id: sessionData.session_id
-                    });
-                    
-                    // Пропускаем тестовые цели
-                    if (goalNameOrAction === 'test_goal') {
-                        Logger.debug('Пропускаю тестовую цель');
-                        return result;
+                try {
+                    // Отслеживаем только цели
+                    if (method === 'reachGoal' && goalNameOrAction) {
+                        handleMetrikaGoal(counterId, goalNameOrAction, params);
                     }
-                    
-                    if (!sessionData.metrika_goals) {
-                        sessionData.metrika_goals = [];
+                    // Отслеживаем события электронной коммерции
+                    else if (method === 'ecommerce' && goalNameOrAction) {
+                        handleMetrikaEcommerce(counterId, goalNameOrAction, params);
                     }
-                    
-                    // Добавляем цель в массив
-                    sessionData.metrika_goals.push({
-                        name: goalNameOrAction,
-                        params: params || {},
-                        timestamp: Date.now(),
-                        type: 'goal',
-                        page_url: window.location.href
-                    });
-                    
-                    // Помечаем сессию как конверсионную
-                    sessionData.has_conversion = true;
-                    
-                    // Обновляем conversion_data
-                    if (!sessionData.conversion_data) {
-                        sessionData.conversion_data = {
-                            goals_reached: [],
-                            ecommerce_data: [],
-                            last_goal_timestamp: null,
-                            conversion_path: []
-                        };
-                    }
-                    
-                    sessionData.conversion_data.goals_reached.push(goalNameOrAction);
-                    sessionData.conversion_data.last_goal_timestamp = Date.now();
-                    
-                    // Добавляем текущий URL в путь конверсии
-                    sessionData.conversion_data.conversion_path.push({
-                        url: window.location.href,
-                        timestamp: Date.now(),
-                        goal: goalNameOrAction
-                    });
-                    
-                    // Сохраняем сессию и немедленно отправляем данные
-                    saveSessionToStorage();
-                    sendDataGuaranteed('metrika_goal').catch(error => {
-                        Logger.error('Ошибка при отправке цели:', error);
-                        // Добавляем в очередь неотправленных
-                        addToFailedQueue({
-                            type: 'goal',
-                            goal: goalNameOrAction,
-                            session_id: sessionData.session_id,
-                            timestamp: Date.now()
-                        });
-                    });
-                }
-                
-                // Если это вызов ecommerce (для отслеживания электронной коммерции)
-                if (method === 'ecommerce' && goalNameOrAction && sessionData) {
-                    // Обрабатываем все типы событий Ecommerce
-                    const ecommerceAction = goalNameOrAction; // например: 'detail', 'add', 'remove', 'purchase' и т.д.
-                    
-                    Logger.info(`🛒 Ecommerce Metrika: ${ecommerceAction}`, {
-                        action: ecommerceAction,
-                        params: params || {},
-                        session_id: sessionData.session_id
-                    });
-                    
-                    // Создаем массив ecommerce_events, если его еще нет
-                    if (!sessionData.ecommerce_events) {
-                        sessionData.ecommerce_events = [];
-                    }
-                    
-                    // Убедимся, что массив metrika_goals существует
-                    if (!sessionData.metrika_goals) {
-                        sessionData.metrika_goals = [];
-                    }
-                    
-                    // Добавляем событие ecommerce
-                    const ecommerceEvent = {
-                        action: ecommerceAction,
-                        params: params || {},
-                        timestamp: Date.now(),
-                        type: 'ecommerce',
-                        page_url: window.location.href
-                    };
-                    
-                    // Сохраняем в основной массив ecommerce_events
-                    sessionData.ecommerce_events.push(ecommerceEvent);
-                    
-                    // Также добавляем в metrika_goals для обеспечения совместимости
-                    sessionData.metrika_goals.push({
-                        name: `ecommerce_${ecommerceAction}`,
-                        params: params || {},
-                        timestamp: Date.now(),
-                        type: 'ecommerce',
-                        ecommerce_data: ecommerceEvent,
-                        page_url: window.location.href
-                    });
-                    
-                    // Добавляем в conversion_data
-                    if (!sessionData.conversion_data) {
-                        sessionData.conversion_data = {
-                            goals_reached: [],
-                            ecommerce_data: [],
-                            last_goal_timestamp: null,
-                            conversion_path: []
-                        };
-                    }
-                    
-                    // Добавляем событие в ecommerce_data
-                    sessionData.conversion_data.ecommerce_data.push(ecommerceEvent);
-                    
-                    // Помечаем сессию как конверсионную для важных событий
-                    if (ecommerceAction === 'purchase' || 
-                        ecommerceAction === 'checkout' || 
-                        ecommerceAction === 'add' || 
-                        ecommerceAction.includes('order')) {
-                        sessionData.has_conversion = true;
-                        sessionData.conversion_data.goals_reached.push(`ecommerce_${ecommerceAction}`);
-                        sessionData.conversion_data.last_goal_timestamp = Date.now();
-                        
-                        // Добавляем в путь конверсии
-                        sessionData.conversion_data.conversion_path.push({
-                            url: window.location.href,
-                            timestamp: Date.now(),
-                            type: 'ecommerce',
-                            action: ecommerceAction
-                        });
-                    }
-                    
-                    // Сохраняем сессию и отправляем данные
-                    saveSessionToStorage();
-                    sendDataGuaranteed('ecommerce_event').catch(error => {
-                        Logger.error('Ошибка при отправке ecommerce события:', error);
-                        // Добавляем в очередь неотправленных
-                        addToFailedQueue({
-                            type: 'ecommerce',
-                            action: ecommerceAction,
-                            session_id: sessionData.session_id,
-                            timestamp: Date.now()
-                        });
-                    });
+                } catch (e) {
+                    Logger.error('Ошибка при обработке события Метрики:', e);
                 }
                 
                 return result;
             };
             
-            Logger.info('✅ Отслеживание целей Metrika настроено (включая Ecommerce)');
+            // Отмечаем, что мы перехватили функцию
+            window._rivoxYmPatched = true;
+            
+            Logger.info('✅ Отслеживание целей Metrika настроено успешно');
         } catch (error) {
             Logger.error('Ошибка при настройке отслеживания целей Metrika:', error);
         }
     }
-
-    function waitForMetrika(callback) {
-        let attempts = 0;
-        const maxAttempts = 50;
-        
-        function check() {
-            attempts++;
+    
+    // Обработка цели Метрики
+    function handleMetrikaGoal(counterId, goalName, params) {
+        try {
+            // Проверка на тестовые цели
+            if (goalName === 'test_goal') {
+                Logger.debug('Пропускаю тестовую цель');
+                return;
+            }
             
-            // Проверяем все возможные варианты существования Метрики
-            if (typeof ym !== 'undefined' && typeof ym.a !== 'undefined') {
-                Logger.info('Metrika ready (ym object)');
-                callback();
+            // Проверяем инициализацию сессии
+            if (!sessionData) {
+                Logger.warn(`Цель ${goalName} получена, но сессия не инициализирована`);
+                saveGoalToLocalStorage(counterId, goalName, params);
                 return;
             }
-
-            if (window.Ya && window.Ya.Metrika) {
-                Logger.info('Metrika ready (Ya.Metrika)');
-                callback();
+            
+            Logger.info(`🎯 Цель Metrika: ${goalName}`, {
+                counterId,
+                goal: goalName,
+                params: params || {},
+                session_id: sessionData.session_id
+            });
+            
+            // Инициализируем массив целей, если необходимо
+            if (!sessionData.metrika_goals) {
+                sessionData.metrika_goals = [];
+            }
+            
+            // Создаем объект с информацией о цели
+            const goalData = {
+                name: goalName,
+                counter_id: counterId,
+                params: params || {},
+                timestamp: Date.now(),
+                type: 'goal',
+                page_url: window.location.href
+            };
+            
+            // Добавляем цель в массив
+            sessionData.metrika_goals.push(goalData);
+            
+            // Помечаем сессию как конверсионную
+            sessionData.has_conversion = true;
+            
+            // Обновляем conversion_data
+            if (!sessionData.conversion_data) {
+                sessionData.conversion_data = {
+                    goals_reached: [],
+                    ecommerce_data: [],
+                    last_goal_timestamp: null,
+                    conversion_path: []
+                };
+            }
+            
+            sessionData.conversion_data.goals_reached.push(goalName);
+            sessionData.conversion_data.last_goal_timestamp = Date.now();
+            
+            // Добавляем текущий URL в путь конверсии
+            sessionData.conversion_data.conversion_path.push({
+                url: window.location.href,
+                timestamp: Date.now(),
+                goal: goalName
+            });
+            
+            // Сохраняем сессию в localStorage
+            saveSessionToStorage();
+            
+            // Отправляем данные о цели немедленно с повторными попытками
+            sendGoalToServer(goalData).catch(error => {
+                Logger.error('Ошибка при отправке цели:', error);
+                
+                // Сохраняем цель для повторной отправки
+                saveGoalToLocalStorage(counterId, goalName, params);
+            });
+        } catch (error) {
+            Logger.error('Ошибка при обработке цели Metrika:', error);
+            
+            // Сохраняем цель для повторной отправки
+            saveGoalToLocalStorage(counterId, goalName, params);
+        }
+    }
+    
+    // Обработка события ecommerce Метрики
+    function handleMetrikaEcommerce(counterId, action, params) {
+        try {
+            Logger.info(`🛒 Ecommerce Metrika: ${action}`, {
+                counterId,
+                action: action,
+                params: params || {},
+                session_id: sessionData?.session_id
+            });
+            
+            // Проверяем инициализацию сессии
+            if (!sessionData) {
+                Logger.warn(`Ecommerce событие ${action} получено, но сессия не инициализирована`);
+                saveEcommerceToLocalStorage(counterId, action, params);
                 return;
             }
-
-            // Ищем счетчик через объекты window
-            for (const key in window) {
-                if (key.startsWith('yaCounter')) {
-                    Logger.info('Metrika ready (counter object)');
-                    callback();
-                    return;
+            
+            // Создаем массивы для ecommerce_events и metrika_goals, если необходимо
+            if (!sessionData.ecommerce_events) {
+                sessionData.ecommerce_events = [];
+            }
+            if (!sessionData.metrika_goals) {
+                sessionData.metrika_goals = [];
+            }
+            
+            // Создаем объект с информацией о событии ecommerce
+            const ecommerceEvent = {
+                action: action,
+                counter_id: counterId,
+                params: params || {},
+                timestamp: Date.now(),
+                type: 'ecommerce',
+                page_url: window.location.href
+            };
+            
+            // Сохраняем в основной массив ecommerce_events
+            sessionData.ecommerce_events.push(ecommerceEvent);
+            
+            // Также добавляем в metrika_goals для обеспечения совместимости
+            sessionData.metrika_goals.push({
+                name: `ecommerce_${action}`,
+                counter_id: counterId,
+                params: params || {},
+                timestamp: Date.now(),
+                type: 'ecommerce',
+                ecommerce_data: ecommerceEvent,
+                page_url: window.location.href
+            });
+            
+            // Обновляем conversion_data
+            if (!sessionData.conversion_data) {
+                sessionData.conversion_data = {
+                    goals_reached: [],
+                    ecommerce_data: [],
+                    last_goal_timestamp: null,
+                    conversion_path: []
+                };
+            }
+            
+            // Добавляем событие в ecommerce_data
+            sessionData.conversion_data.ecommerce_data.push(ecommerceEvent);
+            
+            // Помечаем сессию как конверсионную для важных событий
+            const importantActions = ['purchase', 'checkout', 'add', 'order'];
+            if (importantActions.some(key => action === key || action.includes(key))) {
+                sessionData.has_conversion = true;
+                sessionData.conversion_data.goals_reached.push(`ecommerce_${action}`);
+                sessionData.conversion_data.last_goal_timestamp = Date.now();
+                
+                // Добавляем в путь конверсии
+                sessionData.conversion_data.conversion_path.push({
+                    url: window.location.href,
+                    timestamp: Date.now(),
+                    type: 'ecommerce',
+                    action: action
+                });
+            }
+            
+            // Сохраняем сессию в localStorage
+            saveSessionToStorage();
+            
+            // Отправляем данные о событии ecommerce немедленно с высоким приоритетом
+            sendEcommerceToServer(ecommerceEvent).catch(error => {
+                Logger.error('Ошибка при отправке ecommerce события:', error);
+                
+                // Сохраняем ecommerce событие для повторной отправки
+                saveEcommerceToLocalStorage(counterId, action, params);
+            });
+        } catch (error) {
+            Logger.error('Ошибка при обработке события Ecommerce Metrika:', error);
+            
+            // Сохраняем для повторной отправки
+            saveEcommerceToLocalStorage(counterId, action, params);
+        }
+    }
+    
+    // Сохранение цели для повторной отправки
+    function saveGoalToLocalStorage(counterId, goalName, params) {
+        try {
+            // Получаем текущий список неотправленных целей
+            let goalsQueue = [];
+            try {
+                const goalsQueueJson = localStorage.getItem('rivox_unsent_goals');
+                if (goalsQueueJson) {
+                    goalsQueue = JSON.parse(goalsQueueJson);
+                    if (!Array.isArray(goalsQueue)) {
+                        goalsQueue = [];
+                    }
+                }
+            } catch (e) {
+                Logger.error('Ошибка при чтении очереди целей:', e);
+                goalsQueue = [];
+            }
+            
+            // Добавляем новую цель в очередь
+            goalsQueue.push({
+                counter_id: counterId,
+                name: goalName,
+                params: params || {},
+                timestamp: Date.now(),
+                page_url: window.location.href,
+                attempts: 0
+            });
+            
+            // Ограничиваем размер очереди (максимум 20 элементов)
+            if (goalsQueue.length > 20) {
+                goalsQueue = goalsQueue.slice(-20);
+            }
+            
+            // Сохраняем обновленную очередь
+            localStorage.setItem('rivox_unsent_goals', JSON.stringify(goalsQueue));
+            
+            Logger.info(`Цель ${goalName} сохранена для повторной отправки`);
+            
+            // Запускаем обработку через 5 секунд
+            setTimeout(processSavedGoals, 5000);
+        } catch (error) {
+            Logger.error('Ошибка при сохранении цели для повторной отправки:', error);
+        }
+    }
+    
+    // Сохранение ecommerce события для повторной отправки
+    function saveEcommerceToLocalStorage(counterId, action, params) {
+        try {
+            // Получаем текущий список неотправленных ecommerce событий
+            let ecommerceQueue = [];
+            try {
+                const ecommerceQueueJson = localStorage.getItem('rivox_unsent_ecommerce');
+                if (ecommerceQueueJson) {
+                    ecommerceQueue = JSON.parse(ecommerceQueueJson);
+                    if (!Array.isArray(ecommerceQueue)) {
+                        ecommerceQueue = [];
+                    }
+                }
+            } catch (e) {
+                Logger.error('Ошибка при чтении очереди ecommerce событий:', e);
+                ecommerceQueue = [];
+            }
+            
+            // Добавляем новое событие в очередь
+            ecommerceQueue.push({
+                counter_id: counterId,
+                action: action,
+                params: params || {},
+                timestamp: Date.now(),
+                page_url: window.location.href,
+                attempts: 0
+            });
+            
+            // Ограничиваем размер очереди (максимум 20 элементов)
+            if (ecommerceQueue.length > 20) {
+                ecommerceQueue = ecommerceQueue.slice(-20);
+            }
+            
+            // Сохраняем обновленную очередь
+            localStorage.setItem('rivox_unsent_ecommerce', JSON.stringify(ecommerceQueue));
+            
+            Logger.info(`Ecommerce событие ${action} сохранено для повторной отправки`);
+            
+            // Запускаем обработку через 5 секунд
+            setTimeout(processSavedEcommerce, 5000);
+        } catch (error) {
+            Logger.error('Ошибка при сохранении ecommerce события для повторной отправки:', error);
+        }
+    }
+    
+    // Отправка цели на сервер с использованием батчинга
+    async function sendGoalToServer(goalData) {
+        try {
+            // Формируем данные для отправки
+            const dataToSend = {
+                client_id: sessionData.client_id,
+                client_token: config.token,
+                session_id: sessionData.session_id,
+                goal_data: goalData,
+                timestamp: Date.now(),
+                sdk_version: SDK_VERSION,
+                page_url: window.location.href,
+                page_title: document.title,
+                data_type: 'goal'
+            };
+            
+            // Цели всегда критичны, поэтому используем прямую отправку
+            const result = await sendDataWithFallback(dataToSend, `${config.endpoint}/goals`, 'critical');
+            
+            if (result.success) {
+                Logger.info(`✅ Цель ${goalData.name} успешно отправлена на сервер`);
+                return true;
+            } else {
+                Logger.warn(`⚠️ Ошибка при отправке цели ${goalData.name}:`, result.error);
+                return false;
+            }
+        } catch (error) {
+            Logger.error(`❌ Не удалось отправить цель ${goalData.name}:`, error);
+            return false;
+        }
+    }
+    
+    // Отправка ecommerce события на сервер
+    async function sendEcommerceToServer(ecommerceData) {
+        try {
+            // Формируем данные для отправки
+            const dataToSend = {
+                client_id: sessionData.client_id,
+                client_token: config.token,
+                session_id: sessionData.session_id,
+                ecommerce_data: ecommerceData,
+                timestamp: Date.now(),
+                sdk_version: SDK_VERSION,
+                page_url: window.location.href,
+                page_title: document.title,
+                data_type: 'ecommerce'
+            };
+            
+            // Отправляем с высоким приоритетом
+            const result = await sendDataWithFallback(dataToSend, `${config.endpoint}/ecommerce`, 'critical');
+            
+            if (result.success) {
+                Logger.info(`✅ Ecommerce событие ${ecommerceData.action} успешно отправлено на сервер`);
+                return true;
+            } else {
+                Logger.warn(`⚠️ Ошибка при отправке ecommerce события ${ecommerceData.action}:`, result.error);
+                return false;
+            }
+        } catch (error) {
+            Logger.error(`❌ Не удалось отправить ecommerce событие ${ecommerceData.action}:`, error);
+            return false;
+        }
+    }
+    
+    // Обработка сохраненных целей
+    async function processSavedGoals() {
+        try {
+            // Проверяем, идет ли уже обработка
+            if (window._rivoxProcessingGoals) {
+                return;
+            }
+            
+            window._rivoxProcessingGoals = true;
+            
+            // Получаем список неотправленных целей
+            let goalsQueue = [];
+            try {
+                const goalsQueueJson = localStorage.getItem('rivox_unsent_goals');
+                if (goalsQueueJson) {
+                    goalsQueue = JSON.parse(goalsQueueJson);
+                    if (!Array.isArray(goalsQueue)) {
+                        goalsQueue = [];
+                    }
+                }
+            } catch (e) {
+                Logger.error('Ошибка при чтении очереди целей:', e);
+                goalsQueue = [];
+            }
+            
+            if (goalsQueue.length === 0) {
+                window._rivoxProcessingGoals = false;
+                return;
+            }
+            
+            Logger.info(`Обработка неотправленных целей (${goalsQueue.length})`);
+            
+            // Обрабатываем цели
+            const remainingGoals = [];
+            
+            for (const goal of goalsQueue) {
+                try {
+                    // Увеличиваем счетчик попыток
+                    goal.attempts = (goal.attempts || 0) + 1;
+                    
+                    // Формируем данные для отправки
+                    const goalData = {
+                        name: goal.name,
+                        counter_id: goal.counter_id,
+                        params: goal.params || {},
+                        timestamp: goal.timestamp,
+                        type: 'goal',
+                        page_url: goal.page_url || window.location.href
+                    };
+                    
+                    // Пытаемся отправить цель
+                    const success = await sendGoalToServer(goalData);
+                    
+                    if (!success) {
+                        // Если не удалось отправить и попыток мало, оставляем в очереди
+                        if (goal.attempts < 5) {
+                            remainingGoals.push(goal);
+                        } else {
+                            Logger.warn(`Цель ${goal.name} удалена после 5 неудачных попыток`);
+                        }
+                    }
+                } catch (error) {
+                    Logger.error(`Ошибка при обработке цели ${goal.name}:`, error);
+                    
+                    // Сохраняем цель в очередь, если попыток еще мало
+                    if (goal.attempts < 5) {
+                        remainingGoals.push(goal);
+                    }
                 }
             }
-
-            if (attempts >= maxAttempts) {
-                Logger.info('Proceeding without waiting for Metrika');
-                callback();
+            
+            // Обновляем очередь
+            if (remainingGoals.length > 0) {
+                localStorage.setItem('rivox_unsent_goals', JSON.stringify(remainingGoals));
+                
+                // Планируем следующую попытку
+                setTimeout(processSavedGoals, 60000);
+            } else {
+                localStorage.removeItem('rivox_unsent_goals');
+            }
+            
+            Logger.info(`Обработка целей завершена, осталось: ${remainingGoals.length}`);
+            
+            window._rivoxProcessingGoals = false;
+        } catch (error) {
+            Logger.error('Ошибка при обработке сохраненных целей:', error);
+            window._rivoxProcessingGoals = false;
+        }
+    }
+    
+    // Обработка сохраненных ecommerce событий
+    async function processSavedEcommerce() {
+        try {
+            // Проверяем, идет ли уже обработка
+            if (window._rivoxProcessingEcommerce) {
                 return;
             }
-
-            Logger.debug(`Waiting for Metrika (attempt ${attempts}/${maxAttempts})...`);
-            setTimeout(check, 100);
+            
+            window._rivoxProcessingEcommerce = true;
+            
+            // Получаем список неотправленных ecommerce событий
+            let ecommerceQueue = [];
+            try {
+                const ecommerceQueueJson = localStorage.getItem('rivox_unsent_ecommerce');
+                if (ecommerceQueueJson) {
+                    ecommerceQueue = JSON.parse(ecommerceQueueJson);
+                    if (!Array.isArray(ecommerceQueue)) {
+                        ecommerceQueue = [];
+                    }
+                }
+            } catch (e) {
+                Logger.error('Ошибка при чтении очереди ecommerce событий:', e);
+                ecommerceQueue = [];
+            }
+            
+            if (ecommerceQueue.length === 0) {
+                window._rivoxProcessingEcommerce = false;
+                return;
+            }
+            
+            Logger.info(`Обработка неотправленных ecommerce событий (${ecommerceQueue.length})`);
+            
+            // Обрабатываем события
+            const remainingEvents = [];
+            
+            for (const event of ecommerceQueue) {
+                try {
+                    // Увеличиваем счетчик попыток
+                    event.attempts = (event.attempts || 0) + 1;
+                    
+                    // Формируем данные для отправки
+                    const ecommerceData = {
+                        action: event.action,
+                        counter_id: event.counter_id,
+                        params: event.params || {},
+                        timestamp: event.timestamp,
+                        type: 'ecommerce',
+                        page_url: event.page_url || window.location.href
+                    };
+                    
+                    // Пытаемся отправить событие
+                    const success = await sendEcommerceToServer(ecommerceData);
+                    
+                    if (!success) {
+                        // Если не удалось отправить и попыток мало, оставляем в очереди
+                        if (event.attempts < 5) {
+                            remainingEvents.push(event);
+                        } else {
+                            Logger.warn(`Ecommerce событие ${event.action} удалено после 5 неудачных попыток`);
+                        }
+                    }
+                } catch (error) {
+                    Logger.error(`Ошибка при обработке ecommerce события ${event.action}:`, error);
+                    
+                    // Сохраняем событие в очередь, если попыток еще мало
+                    if (event.attempts < 5) {
+                        remainingEvents.push(event);
+                    }
+                }
+            }
+            
+            // Обновляем очередь
+            if (remainingEvents.length > 0) {
+                localStorage.setItem('rivox_unsent_ecommerce', JSON.stringify(remainingEvents));
+                
+                // Планируем следующую попытку
+                setTimeout(processSavedEcommerce, 60000);
+            } else {
+                localStorage.removeItem('rivox_unsent_ecommerce');
+            }
+            
+            Logger.info(`Обработка ecommerce событий завершена, осталось: ${remainingEvents.length}`);
+            
+            window._rivoxProcessingEcommerce = false;
+        } catch (error) {
+            Logger.error('Ошибка при обработке сохраненных ecommerce событий:', error);
+            window._rivoxProcessingEcommerce = false;
+        }
+    }
+    
+    // Настройка наблюдателя за появлением Метрики
+    function setupMetrikaWatcher() {
+        // Проверяем, уже настроен ли наблюдатель
+        if (window._rivoxMetrikaWatcher) {
+            return;
         }
         
-        check();
+        Logger.info('Настраиваю наблюдатель за появлением Метрики');
+        
+        // Функция для проверки существования Метрики
+        const checkMetrika = () => {
+            if (isYandexMetrikaReady()) {
+                Logger.info('Метрика обнаружена, настраиваю отслеживание');
+                setupMetrikaTracking();
+                
+                // Очищаем интервал
+                if (window._rivoxMetrikaWatcherInterval) {
+                    clearInterval(window._rivoxMetrikaWatcherInterval);
+                    window._rivoxMetrikaWatcherInterval = null;
+                }
+            }
+        };
+        
+        // Устанавливаем интервал для проверки
+        window._rivoxMetrikaWatcherInterval = setInterval(checkMetrika, 1000);
+        
+        // Также пытаемся перехватить момент инициализации с помощью MutationObserver
+        if (typeof MutationObserver !== 'undefined') {
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    if (mutation.type === 'childList' && mutation.addedNodes.length) {
+                        for (const node of mutation.addedNodes) {
+                            if (node.tagName === 'SCRIPT' && 
+                                (node.src && (node.src.includes('metrika') || node.src.includes('metrica')))) {
+                                // Скрипт Метрики добавлен, проверяем через некоторое время
+                                setTimeout(checkMetrika, 1000);
+                                setTimeout(checkMetrika, 2000);
+                                setTimeout(checkMetrika, 3000);
+                            }
+                        }
+                    }
+                }
+                
+                // В любом случае периодически проверяем
+                checkMetrika();
+            });
+            
+            // Наблюдаем за всем документом
+            observer.observe(document, { childList: true, subtree: true });
+            
+            // Сохраняем ссылку на наблюдателя
+            window._rivoxMetrikaWatcher = observer;
+        }
+        
+        // Также проверяем сразу
+        setTimeout(checkMetrika, 0);
     }
 
     // Initialize SDK
@@ -1641,242 +2056,31 @@ let Logger = {
 
     // Modify sendSessionSummary to add logging and optimize sending
     async function sendSessionSummary() {
-        if (!sessionData || !isSessionActive) {
-            Logger.warn('No session data to send or session not active');
-            return;
-        }
-
-        // Предотвращаем параллельные запросы
-        if (dataSubmissionInProgress) {
-            Logger.info('Отправка данных уже выполняется, пропускаю запрос');
-            return;
-        }
-        
         try {
-            dataSubmissionInProgress = true;
-            
-            Logger.info('Preparing to send session data...');
-            
-            // Проверяем и исправляем client_id перед отправкой
-            if (sessionData.client_id) {
-                if (sessionData.client_id instanceof Promise) {
-                    try {
-                        sessionData.client_id = safeClientId(await sessionData.client_id);
-                    } catch(e) {
-                        sessionData.client_id = safeClientId(null);
-                    }
-                } else {
-                    sessionData.client_id = safeClientId(sessionData.client_id);
-                }
+            if (!sessionData) {
+                Logger.warn('Cannot send session summary: no session data');
+                return { success: false, error: 'No session data' };
             }
-            
-            // Update final duration before sending
-            const now = Date.now();
-            sessionData.duration = now - sessionData.start_time;
-            sessionData.end_time = new Date(now).toISOString();
-            sessionData.last_send_time = now; // Обновляем время последней отправки
-            
-            // Добавляем подробное логирование данных сессии
-            Logger.info('Current session data:', {
-                client_id: sessionData.client_id,
-                session_id: sessionData.session_id,
-                goals_count: sessionData.metrika_goals?.length || 0,
-                goals: sessionData.metrika_goals || [],
-                conversion_data: sessionData.conversion_data || {},
-                duration: sessionData.duration
-            });
 
-            // Проверяем и логируем состояние целей
-            if (sessionData.metrika_goals && sessionData.metrika_goals.length > 0) {
-                Logger.info('Goals found in session data:', sessionData.metrika_goals);
+            // Готовим данные для отправки
+            const sessionSummary = prepareSessionDataForSending();
+            const dataToSend = {
+                ...sessionSummary,
+                timestamp: new Date().toISOString(),
+                sdk_version: SDK_VERSION,
+                data_type: 'session_summary'
+            };
+
+            // Используем батчинг вместо прямой отправки
+            if (config.batchEnabled) {
+                return sendWithBatching(dataToSend, config.endpoint + '/session', 'regular');
             } else {
-                Logger.warn('No goals found in session data');
+                // Используем старый метод, если батчинг отключен
+                return sendDataWithFallback(dataToSend, config.endpoint + '/session', 'regular');
             }
-
-            // Update ML features before sending
-            updateMLFeatures();
-
-            // Prepare data for sending - используем функцию для ограничения размера данных
-            const summary = prepareSessionDataForSending();
-
-            // Проверяем и логируем данные перед отправкой
-            Logger.info('Data to be sent:', {
-                goals_count: summary.metrika_goals?.length || 0,
-                goals: summary.metrika_goals || [],
-                conversion_data: summary.conversion_data || {}
-            });
-
-            // Получаем размер данных для отправки
-            const jsonData = JSON.stringify(summary);
-            const dataSize = jsonData.length;
-            
-            // Если размер данных слишком большой - обрезаем
-            if (dataSize > config.maxRequestSize) {
-                Logger.warn(`Размер данных (${dataSize}) превышает лимит (${config.maxRequestSize}), данные будут обрезаны`);
-                return await sendLargeDataInChunks(summary);
-            }
-            
-            // Используем сжатие если включено и доступно LZString
-            const useCompression = config.useCompression && typeof LZString !== 'undefined';
-            let compressedData = null;
-            
-            if (useCompression) {
-                try {
-                    compressedData = LZString.compressToUTF16(jsonData);
-                    const compressionRatio = Math.round((compressedData.length / jsonData.length) * 100);
-                    Logger.info(`Данные сжаты: ${dataSize} → ${compressedData.length} байт (${compressionRatio}%)`);
-                } catch (e) {
-                    Logger.warn('Ошибка сжатия данных, отправляю несжатые:', e);
-                    compressedData = null;
-                }
-            }
-
-            let retryCount = 0;
-            const maxRetries = config.maxRetries;
-
-            while (retryCount < maxRetries) {
-                try {
-                    Logger.info(`Attempting POST request (attempt ${retryCount + 1}/${maxRetries})...`);
-                    
-                    // Формируем заголовки и тело запроса
-                    const headers = {
-                        'Content-Type': 'application/json',
-                        'Origin': window.location.origin
-                    };
-                    
-                    let body;
-                    
-                    // Если используем сжатие и оно работает
-                    if (useCompression && compressedData) {
-                        headers['x-compression'] = 'true';
-                        body = JSON.stringify({ data: compressedData });
-                    } else {
-                        body = jsonData;
-                    }
-                    
-                    // Добавляем заголовок с размером для отладки
-                    headers['x-data-size'] = dataSize.toString();
-                    
-                    // Проверяем валидность URL
-                    const endpoint = config.endpoint || config.apiEndpoint;
-                    if (!endpoint) {
-                        throw new Error('Endpoint URL is not defined');
-                    }
-                    
-                    // Проверяем валидность формата данных
-                    if (!body) {
-                        throw new Error('Invalid data format or empty body');
-                    }
-                    
-                    // Отправляем запрос с обработкой исключений
-                    try {
-                        const response = await fetch(endpoint, {
-                            method: 'POST',
-                            headers: headers,
-                            mode: 'no-cors', // Режим no-cors для обхода CORS-ошибок
-                            credentials: 'omit', // Отключаем credentials
-                            body: body,
-                            keepalive: true
-                        });
-    
-                        // В режиме no-cors response.ok всегда false, поэтому не проверяем
-                        // Считаем запрос успешным, потому что отсутствие исключения означает успех
-                        Logger.info('✅ POST request successful with no-cors mode');
-                        
-                        // Сбрасываем счетчик ошибок при успехе
-                        consecErrorCount = 0;
-                        
-                        return { success: true, method: 'no-cors' };
-                    } catch (fetchError) {
-                        // Добавляем подробности об ошибке
-                        Logger.warn(`Fetch error: ${fetchError.message || 'Unknown fetch error'}`, fetchError);
-                        
-                        // Пробуем альтернативный метод отправки
-                        throw new Error(`Fetch failed: ${fetchError.message}`);
-                    }
-                } catch (error) {
-                    Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
-                    
-                    // Инкрементируем счетчик последовательных ошибок
-                    if (error.message.includes('500')) {
-                        consecErrorCount++;
-                        Logger.error(`Server error (500) detected. This may indicate problems with data format or server load.`);
-                        
-                        // Попытка отправить через Image beacon, если ошибка 500
-                        try {
-                            Logger.info('Attempting fallback via Image beacon due to 500 error...');
-                            
-                            // Создаем более компактную версию данных
-                            const compactData = {
-                                client_id: summary.client_id,
-                                client_token: summary.client_token,
-                                session_id: summary.session_id,
-                                timestamp: summary.timestamp,
-                                error_info: {
-                                    original_error: error.message,
-                                    retry_count: retryCount,
-                                    data_size: dataSize
-                                },
-                                // Критические данные, которые нужно отправить в любом случае
-                                metrika_goals: summary.metrika_goals || [],
-                                ml_features: summary.ml_features || {},
-                                // Тип запроса для понимания на сервере
-                                type: 'error_fallback_500'
-                            };
-                            
-                            // Отправляем через Image beacon
-                            const beaconUrl = endpoint;
-                            const encodedData = encodeURIComponent(JSON.stringify(compactData)).substring(0, 2000);
-                            const img = new Image();
-                            
-                            // Промис для отслеживания загрузки
-                            const beaconResult = await new Promise((resolve) => {
-                                img.onload = () => resolve(true);
-                                img.onerror = () => resolve(false);
-                                img.src = `${beaconUrl}?data=${encodedData}&fallback=true&error=500`;
-                            });
-                            
-                            if (beaconResult) {
-                                Logger.info('✅ Fallback via Image beacon successful');
-                                return { success: true, method: 'image_beacon_fallback' };
-                            }
-                        } catch (beaconError) {
-                            Logger.error('Image beacon fallback also failed:', beaconError);
-                        }
-                    }
-                    
-                    // If we're out of retries, try beacon API as last resort
-                    if (retryCount === maxRetries - 1 && navigator.sendBeacon && config.beaconSupport) {
-                        try {
-                            Logger.info('Trying beacon API as last resort...');
-                            const blob = new Blob([jsonData], {
-                                type: 'application/json'
-                            });
-                            const success = navigator.sendBeacon(config.endpoint, blob);
-                            if (success) {
-                                Logger.info('✅ Data sent via beacon API');
-                                return { success: true, method: 'beacon' };
-                            }
-                        } catch (beaconError) {
-                            Logger.error('Beacon API failed:', beaconError);
-                        }
-                    }
-                    
-                    // Wait before retry with exponential backoff
-                    const backoffTime = retryStrategy.initialDelay * Math.pow(retryStrategy.backoffFactor, retryCount);
-                    Logger.info(`Waiting ${backoffTime}ms before retry...`);
-                    await new Promise(resolve => setTimeout(resolve, backoffTime));
-                    retryCount++;
-                }
-            }
-
-            // Если все попытки неудачны - добавляем в очередь неудавшихся отправок
-            Logger.error(`Failed to send data after ${maxRetries} attempts, queueing for later retry`);
-            addToFailedQueue(summary);
-            
-            throw new Error(`Failed to send data after ${maxRetries} attempts`);
-        } finally {
-            dataSubmissionInProgress = false;
+        } catch (error) {
+            Logger.error('Error sending session summary:', error);
+            return { success: false, error: error.message };
         }
     }
 
@@ -2376,121 +2580,6 @@ let Logger = {
     }
 
     // Отправка данных с механизмами отказоустойчивости
-    async function sendDataWithFallback(data, endpoint, dataType) {
-        // Проверка наличия данных (базовая валидация)
-        if (!data || Object.keys(data).length === 0) {
-            return {
-                success: false,
-                error: 'No data provided',
-                code: 'EMPTY_DATA'
-            };
-        }
-        
-        // Проверка на большие данные - разделяем на части
-        try {
-            // Если указан endpoint, используем Image beacon напрямую
-            if (endpoint) {
-                return sendDataViaBeacon(data, endpoint, dataType);
-            }
-            
-            const dataSize = JSON.stringify(data).length;
-            if (dataSize > 100000) { // ~100KB - предел для безопасной отправки
-                Logger.warn(`Данные слишком большие (${(dataSize/1024).toFixed(1)}KB), переключаемся на сегментированную отправку`);
-                return sendLargeDataInSegments(data);
-            }
-        } catch (e) {
-            Logger.error('Ошибка при определении размера данных:', e);
-        }
-        
-        // Клонируем данные и очищаем от циклических ссылок
-        let cleanData;
-        try {
-            cleanData = JSON.parse(JSON.stringify(data));
-        } catch (e) {
-            Logger.warn('Ошибка при сериализации данных, очищаем от циклических ссылок:', e);
-            cleanData = cleanObject(data);
-        }
-        
-        // Проверка и обработка client_id - всегда должен быть строкой
-        if (cleanData.client_id) {
-            if (cleanData.client_id instanceof Promise) {
-                try {
-                    cleanData.client_id = safeClientId(await cleanData.client_id);
-                } catch(e) {
-                    cleanData.client_id = safeClientId(null);
-                }
-            } else {
-                cleanData.client_id = safeClientId(cleanData.client_id);
-            }
-        }
-        
-        try {
-            // Формируем данные для отправки
-            const dataToSend = {
-                ...cleanData,
-                event_timestamp: cleanData.event_timestamp || Date.now()
-            };
-            
-            // Отправляем данные через основной эндпоинт
-            const apiUrl = config.apiEndpoint || config.endpoint;
-            
-            // Первая попытка с режимом no-cors для обхода CORS-ошибок
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-sdk-version': SDK_VERSION
-                    },
-                    mode: 'no-cors', // Добавляем режим no-cors для обхода CORS-ошибок
-                    credentials: 'omit', // Отключаем credentials
-                    body: JSON.stringify(dataToSend),
-                    keepalive: true
-                });
-                
-                // При режиме no-cors ответ будет типа "opaque" и мы не можем проверить response.ok
-                // Считаем, что данные доставлены успешно
-                Logger.info('✅ Данные отправлены в режиме no-cors');
-                return { success: true, method: 'fetch_no_cors' };
-            } catch (corsError) {
-                Logger.warn('Ошибка при отправке в режиме no-cors:', corsError?.message || 'unknown error');
-                
-                // Запасной вариант - Image beacon
-                try {
-                    const encodedData = encodeURIComponent(JSON.stringify(dataToSend)).substring(0, 2000);
-                    const img = new Image();
-                    
-                    // Устанавливаем колбэки успеха/ошибки
-                    const success = await new Promise((resolve) => {
-                        img.onload = () => resolve(true);
-                        img.onerror = () => resolve(false);
-                        img.src = `${apiUrl}?data=${encodedData}`;
-                    });
-                    
-                    if (success) {
-                        Logger.info('✅ Данные отправлены через Image beacon');
-                        return { success: true, method: 'image_beacon' };
-                    } else {
-                        throw new Error('Image beacon failed');
-                    }
-                } catch (beaconError) {
-                    Logger.error('❌ Все методы отправки провалились:', beaconError?.message || 'unknown error');
-                    throw new Error('All fallback methods failed');
-                }
-            }
-        } catch (error) {
-            // При ошибке добавляем в очередь для повторной отправки
-            Logger.warn(`Не удалось отправить данные: ${error.message}`);
-            addToFailedQueue(data);
-            return {
-                success: false, 
-                error: error.message, 
-                queued: true 
-            };
-        }
-    }
-    
-    // Вспомогательная функция для отправки данных через Image Beacon
     function sendDataViaBeacon(data, endpoint, dataType) {
         try {
             // Обработка случая, когда client_id еще не загружен (Promise)
@@ -2822,10 +2911,41 @@ let Logger = {
             // Логируем обновление признаков
             Logger.debug('ML features updated:', sessionData.ml_features);
             
+            // [Future] Здесь будет вызов функции виртуальных конверсий
+            // checkAndFireVirtualConversion();
+            
         } catch (error) {
             Logger.error('Error updating ML features:', error);
         }
     }
+    
+    // [Future] Виртуальные конверсии для ML-модели:
+    // - Сбор поведенческих метрик и вычисление скора вероятности конверсии
+    // - Проверка порога конверсии на основе weighted_score и правил
+    // - Вызов ym(counter_id, 'reachGoal', 'virtual_conversion', params) с параметрами
+    // - Блокировка повторных срабатываний в рамках одной сессии
+    // - Сохранение информации о виртуальных конверсиях в сессионном хранилище
+    // function checkAndFireVirtualConversion() {
+    //     try {
+    //         if (!sessionData || !sessionData.ml_features) return;
+    //         
+    //         // 1. Вычисление скора конверсии на основе метрик:
+    //         //    - Взаимодействия с формами
+    //         //    - Время до первого взаимодействия
+    //         //    - Тайминг кликов
+    //         //    - Глубина скролла
+    //         //    - Количество событий скролла
+    //
+    //         // 2. Проверка порога конверсии
+    //
+    //         // 3. Вызов цели в Яндекс.Метрике при превышении порога
+    //         // ym(counterId, 'reachGoal', 'virtual_conversion', params);
+    //
+    //         // 4. Сохранение информации в сессии для предотвращения повторных вызовов
+    //     } catch (error) {
+    //         Logger.error('Error in virtual conversion processing:', error);
+    //     }
+    // }
     
     // Вспомогательная функция для определения типа устройства
     function getDeviceType() {
@@ -3160,14 +3280,6 @@ let Logger = {
     // Вспомогательные функции безопасной обработки данных
     
     // Обеспечивает корректный формат ID клиента (всегда строка)
-    function safeClientId(id) {
-        if (id === null || id === undefined) {
-            return 'unknown_' + Date.now().toString(36);
-        }
-        return String(id);
-    }
-    
-    // Очищает объект от циклических ссылок и непригодных для JSON.stringify значений
     function cleanObject(obj) {
         const seen = new WeakSet();
         
@@ -3229,177 +3341,6 @@ let Logger = {
     }
 
     // Отправляет данные, используя только Image beacon
-    function sendDataWithFallback(data, endpoint, dataType) {
-        // Установка базового URL или использование значения по умолчанию
-        const baseUrl = config.apiBaseUrl || 'https://api.rivox.ai';
-        const url = `${baseUrl}/${endpoint}`;
-        
-        // Обработка случая, когда client_id еще не загружен (Promise)
-        if (data.client_id && data.client_id instanceof Promise) {
-            Logger.debug('client_id является Promise, ожидаю разрешения');
-            data.client_id.then(id => {
-                data.client_id = safeClientId(id);
-                sendDataWithFallback(data, endpoint, dataType);
-            }).catch(error => {
-                Logger.error('Не удалось получить client_id из Promise', error);
-                data.client_id = 'promise_failed_' + Date.now().toString(36);
-                sendDataWithFallback(data, endpoint, dataType);
-            });
-            return;
-        }
-        
-        // Клонируем данные и очищаем от циклических ссылок
-        const cleanedData = cleanObject(data);
-        
-        // Убедимся, что client_id всегда строка
-        cleanedData.client_id = safeClientId(cleanedData.client_id);
-        
-        // Добавляем временную метку отправки
-        cleanedData.sent_at = Date.now();
-        
-        try {
-            // Создаем данные для отправки
-            const dataToSend = JSON.stringify(cleanedData);
-            
-            // Проверка на большой размер данных
-            const sizeInKB = dataToSend.length / 1024;
-            if (sizeInKB > 100) {
-                Logger.warn(`Данные превышают 100KB (${sizeInKB.toFixed(2)}KB), разбиваю на части`);
-                
-                // Простая логика разбивки для больших данных
-                // Разбиваем только массивы событий, если они есть
-                if (cleanedData.events && Array.isArray(cleanedData.events) && cleanedData.events.length > 1) {
-                    const chunks = [];
-                    const chunkSize = Math.max(1, Math.floor(cleanedData.events.length / 2));
-                    
-                    for (let i = 0; i < cleanedData.events.length; i += chunkSize) {
-                        const chunk = {...cleanedData};
-                        chunk.events = cleanedData.events.slice(i, i + chunkSize);
-                        chunk.chunk_info = {
-                            index: Math.floor(i / chunkSize) + 1,
-                            total: Math.ceil(cleanedData.events.length / chunkSize),
-                            original_size: cleanedData.events.length
-                        };
-                        chunks.push(chunk);
-                    }
-                    
-                    // Отправляем каждый чанк отдельно
-                    chunks.forEach((chunk, index) => {
-                        Logger.debug(`Отправка части ${index + 1}/${chunks.length} данных типа ${dataType}`);
-                        setTimeout(() => {
-                            sendDataWithFallback(chunk, endpoint, `${dataType}_chunk${index + 1}`);
-                        }, index * 300); // Небольшая задержка между отправками
-                    });
-                    
-                    return; // Прерываем текущую отправку, т.к. отправляем по частям
-                }
-            }
-            
-            // Кодируем данные для передачи через Image beacon
-            const encodedData = encodeURIComponent(dataToSend);
-            
-            // Создаем уникальный идентификатор для этой отправки
-            const sendId = 'send_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2);
-            
-            // Отправляем через Image beacon
-            Logger.debug(`Отправка ${dataType} через Image beacon (${(dataToSend.length / 1024).toFixed(2)}KB)`);
-            
-            const img = new Image();
-            let isTimedOut = false;
-            let isDone = false;
-            
-            // Таймаут для изображения
-            const timeout = setTimeout(() => {
-                if (!isDone) {
-                    isTimedOut = true;
-                    isDone = true;
-                    Logger.warn(`Таймаут отправки ${dataType} через Image beacon`);
-                    
-                    // Добавляем в очередь для повторной отправки
-                    dataQueue.push({
-                        data: cleanedData,
-                        endpoint,
-                        dataType,
-                        timestamp: Date.now(),
-                        attempt: 1
-                    });
-                    
-                    processQueue(); // Пытаемся обработать очередь
-                }
-            }, 10000); // 10 секунд таймаут
-            
-            // Обработчик успешной загрузки
-            img.onload = function() {
-                if (!isDone) {
-                    isDone = true;
-                    clearTimeout(timeout);
-                    Logger.debug(`Успешно отправлены данные ${dataType} через Image beacon`);
-                    
-                    // Удаляем элемент из DOM, чтобы избежать утечек памяти
-                    setTimeout(() => {
-                        if (img.parentNode) {
-                            img.parentNode.removeChild(img);
-                        }
-                    }, 100);
-                }
-            };
-            
-            // Обработчик ошибки
-            img.onerror = function() {
-                if (!isDone) {
-                    isDone = true;
-                    clearTimeout(timeout);
-                    Logger.warn(`Ошибка отправки ${dataType} через Image beacon`);
-                    
-                    // Добавляем в очередь для повторной отправки
-                    dataQueue.push({
-                        data: cleanedData,
-                        endpoint,
-                        dataType,
-                        timestamp: Date.now(),
-                        attempt: 1
-                    });
-                    
-                    processQueue(); // Пытаемся обработать очередь
-                }
-            };
-            
-            // Append параметры к URL
-            const urlWithParams = `${url}?id=${sendId}&payload=${encodedData}`;
-            
-            // Set source to start loading
-            img.src = urlWithParams;
-            
-            // Добавляем изображение в DOM (важно для некоторых браузеров)
-            img.style.display = 'none';
-            if (document.body) {
-                document.body.appendChild(img);
-            }
-            
-            return true; // Отправка инициирована
-        } catch (error) {
-            Logger.error(`Ошибка при подготовке или отправке данных ${dataType}:`, error);
-            
-            // Добавляем в очередь для повторной отправки
-            dataQueue.push({
-                data: {
-                    ...cleanedData,
-                    error_info: {
-                        message: error.message,
-                        time: Date.now()
-                    }
-                },
-                endpoint,
-                dataType,
-                timestamp: Date.now(),
-                attempt: 1
-            });
-            
-            return false; // Не удалось отправить
-        }
-    }
-
-    // Обработка очереди данных
     function processQueue() {
         // Проверка, обрабатывается ли уже очередь
         if (isProcessingQueue || dataQueue.length === 0) {
@@ -3470,67 +3411,1308 @@ let Logger = {
     }
 
     // Функция для логирования событий
-    function logEvent(eventType, eventData = {}) {
-        // Предотвращаем рекурсию
-        if (isLogging) return;
-        
-        // Проверяем инициализацию SDK
-        if (!SDK_INITIALIZED) {
-            console.warn('SDK не инициализирован, событие не будет отправлено', eventType);
-            // При инициализации эти события буду обработаны
-            pendingEvents.push({ eventType, eventData, timestamp: Date.now() });
-            return;
-        }
-
-        // Получаем ID клиента из sessionStorage или генерируем новый
-        const clientId = getSessionStorage('rivox_client_id') || generateClientId();
-        
-        // Базовая информация о событии
-        const eventInfo = {
-            client_id: clientId,
-            client_token: config.token,
-            session_id: getSessionStorage('rivox_session_id') || null,
-            event_type: eventType,
-            page_title: document.title,
-            page_url: window.location.href,
-            page_referrer: document.referrer,
-            timestamp: Date.now(),
-            user_agent: navigator.userAgent,
-            host: window.location.host,
-            screen_size: `${window.screen.width}x${window.screen.height}`,
-            window_size: `${window.innerWidth}x${window.innerHeight}`,
-            event_data: eventData || {}
-        };
-
-        // Если тип события - ecommerce, добавляем дополнительные данные
-        if (eventData && eventData.ecommerce) {
-            eventInfo.ecommerce_data = eventData.ecommerce;
-        }
-
-        // Сохраняем событие в истории сессии
-        session.events.push(eventInfo);
-
-        // Отправка данных через Image beacon для всех типов событий
+    async function sendDataWithFallback(data, endpoint, priority = 'normal') {
         try {
-            Logger.debug('Отправка события через Image beacon', eventType, eventInfo);
-            sendDataWithFallback(eventInfo, '/log-event', eventType);
-        } catch (error) {
-            Logger.error('Ошибка при отправке события', error);
+            // Базовая валидация данных
+            if (!data || typeof data !== 'object') {
+                Logger.error('sendDataWithFallback: данные должны быть объектом', { data });
+                return { success: false, error: 'invalid_data' };
+            }
             
-            // Добавляем в очередь для повторной отправки
-            dataQueue.push({
-                data: eventInfo,
-                endpoint: '/log-event',
-                dataType: `event_${eventType}`,
-                timestamp: Date.now(),
-                attempt: 1
+            // Создаем копию данных, добавляем уникальный идентификатор запроса
+            const requestId = generateUUID();
+            
+            // Нормализуем данные - делаем глубокую копию, исключая циклические ссылки
+            let dataToSend;
+            try {
+                // Проверка и принудительное преобразование типов данных для критичных полей
+                const safeData = { ...data };
+                
+                if (safeData.client_id === undefined || safeData.client_id === null) {
+                    safeData.client_id = generateClientId();
+                } else if (typeof safeData.client_id !== 'string') {
+                    safeData.client_id = String(safeData.client_id);
+                }
+                
+                if (safeData.session_id === undefined || safeData.session_id === null) {
+                    safeData.session_id = generateSessionId();
+                } else if (typeof safeData.session_id !== 'string') {
+                    safeData.session_id = String(safeData.session_id);
+                }
+                
+                if (safeData.client_token === undefined || safeData.client_token === null) {
+                    safeData.client_token = config.clientToken || '';
+                } else if (typeof safeData.client_token !== 'string') {
+                    safeData.client_token = String(safeData.client_token);
+                }
+                
+                // Используем безопасную версию копирования
+                dataToSend = JSON.parse(JSON.stringify(safeData, (key, value) => {
+                    // Предотвращаем включение DOM-элементов, функций и других проблемных типов
+                    if (value instanceof Node || value instanceof Window) return undefined;
+                    if (typeof value === 'function') return undefined;
+                    if (typeof value === 'bigint') return value.toString();
+                    // Защита от некорректных значений
+                    if (key === 'timestamp' && (typeof value !== 'number' || isNaN(value))) {
+                        return Date.now();
+                    }
+                    return value;
+                }));
+            } catch (e) {
+                Logger.error('Ошибка при сериализации данных:', e);
+                
+                // Создаем базовую копию с необходимыми полями
+                dataToSend = {
+                    client_id: data.client_id ? String(data.client_id) : generateClientId(),
+                    session_id: data.session_id ? String(data.session_id) : generateSessionId(),
+                    client_token: data.client_token ? String(data.client_token) : (config.clientToken || ''),
+                    data_type: data.data_type || 'event',
+                    timestamp: Date.now(),
+                    error_info: {
+                        message: 'Data serialization failed',
+                        original_type: typeof data,
+                        error: e.message
+                    }
+                };
+                
+                // Пытаемся сохранить основные поля
+                if (data.event_type) dataToSend.event_type = String(data.event_type);
+                if (data.event_data && typeof data.event_data === 'object') {
+                    dataToSend.event_data = { error: 'Failed to serialize event data' };
+                }
+            }
+            
+            // Гарантируем, что client_id и session_id существуют и являются строками
+            if (!dataToSend.client_id) {
+                dataToSend.client_id = generateClientId();
+            } else if (typeof dataToSend.client_id !== 'string') {
+                dataToSend.client_id = String(dataToSend.client_id);
+            }
+            
+            if (!dataToSend.session_id) {
+                dataToSend.session_id = generateSessionId();
+            } else if (typeof dataToSend.session_id !== 'string') {
+                dataToSend.session_id = String(dataToSend.session_id);
+            }
+            
+            if (!dataToSend.client_token) {
+                dataToSend.client_token = config.clientToken || '';
+            } else if (typeof dataToSend.client_token !== 'string') {
+                dataToSend.client_token = String(dataToSend.client_token);
+            }
+            
+            // Добавляем/проверяем timestamp
+            if (!dataToSend.timestamp || typeof dataToSend.timestamp !== 'number' || isNaN(dataToSend.timestamp)) {
+                dataToSend.timestamp = Date.now();
+            }
+            
+            // Добавляем служебную информацию
+            dataToSend.user_agent = navigator.userAgent;
+            dataToSend.sdk_version = SDK_VERSION;
+            dataToSend.request_id = requestId;
+            
+            // Добавляем информацию о соединении, если доступна
+            try {
+                const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+                if (connection) {
+                    dataToSend.connection_info = {
+                        type: connection.effectiveType || connection.type,
+                        downlink: connection.downlink,
+                        rtt: connection.rtt
+                    };
+                }
+            } catch (e) {
+                // Игнорируем ошибки при получении информации о соединении
+            }
+            
+            // Устанавливаем endpoint, если не указан
+            endpoint = endpoint || config.endpoint;
+            if (!endpoint) {
+                Logger.error('Endpoint не указан');
+                return { success: false, error: 'missing_endpoint' };
+            }
+            
+            // Определяем время ожидания в зависимости от приоритета
+            const timeoutMs = priority === 'critical' ? 7000 : 3000;
+            
+            Logger.debug(`📤 Отправка данных [${requestId}]`, {
+                size: JSON.stringify(dataToSend).length,
+                endpoint: endpoint,
+                priority: priority
             });
             
-            // Пытаемся обработать очередь
-            processQueue();
+            // Преобразуем данные в JSON
+            let jsonData;
+            try {
+                jsonData = JSON.stringify(dataToSend);
+            } catch (e) {
+                Logger.error('Критическая ошибка при преобразовании в JSON:', e);
+                
+                // Создаем минимальный набор данных
+                const minimalData = {
+                    client_id: dataToSend.client_id,
+                    client_token: dataToSend.client_token || (config.clientToken || ''),
+                    session_id: dataToSend.session_id,
+                    data_type: 'error',
+                    timestamp: Date.now(),
+                    request_id: requestId,
+                    error: 'Failed to JSON stringify data: ' + e.message
+                };
+                
+                try {
+                    jsonData = JSON.stringify(minimalData);
+                } catch (jsonError) {
+                    // Крайний случай, если даже минимальные данные не могут быть сериализованы
+                    Logger.error('Невозможно сериализовать даже минимальные данные:', jsonError);
+                    return { success: false, error: 'critical_json_error', message: jsonError.message };
+                }
+            }
+            
+            // Проверка размера данных
+            const MAX_PAYLOAD_SIZE = 1000000; // 1MB
+            if (jsonData.length > MAX_PAYLOAD_SIZE) {
+                Logger.warn(`Размер данных превышает лимит (${jsonData.length} / ${MAX_PAYLOAD_SIZE} байт)`);
+                
+                if (typeof sendLargeDataInSegments === 'function') {
+                    return await sendLargeDataInSegments(dataToSend);
+                } else {
+                    // Если функция сегментирования недоступна, добавляем в очередь для последующей обработки
+                    addToSendQueue(dataToSend, endpoint, 'payload_too_large');
+                    return { success: false, error: 'payload_too_large' };
+                }
+            }
+            
+            // Пытаемся использовать Beacon API для некритичных данных
+            if (navigator.sendBeacon && priority !== 'critical' && jsonData.length < 64000) {
+                try {
+                    // Проверяем, что данные корректны для отправки
+                    if (!dataToSend.client_id || !dataToSend.session_id) {
+                        throw new Error('Отсутствуют обязательные поля для Beacon API');
+                    }
+                    
+                    // Создаем безопасную копию данных для Beacon
+                    const beaconData = {
+                        client_id: String(dataToSend.client_id),
+                        session_id: String(dataToSend.session_id),
+                        client_token: String(dataToSend.client_token || config.clientToken || ''),
+                        timestamp: dataToSend.timestamp || Date.now(),
+                        request_id: requestId,
+                        sdk_version: SDK_VERSION
+                    };
+                    
+                    // Добавляем остальные поля, если они есть
+                    if (dataToSend.data_type) beaconData.data_type = String(dataToSend.data_type);
+                    if (dataToSend.event_type) beaconData.event_type = String(dataToSend.event_type);
+                    
+                    // Безопасно обрабатываем event_data
+                    if (dataToSend.event_data) {
+                        try {
+                            // Максимальный размер event_data для Beacon
+                            const MAX_EVENT_DATA_SIZE = 16000; // ~16KB
+                            
+                            // Преобразуем event_data в строку с обработкой ошибок
+                            let eventDataStr = '';
+                            try {
+                                eventDataStr = JSON.stringify(dataToSend.event_data);
+                            } catch (jsonError) {
+                                // Если JSON.stringify не сработал, создаем безопасный объект
+                                eventDataStr = JSON.stringify({
+                                    error: 'Failed to serialize event_data',
+                                    event_type: dataToSend.event_type || 'unknown'
+                                });
+                            }
+                            
+                            // Проверяем размер
+                            if (eventDataStr.length <= MAX_EVENT_DATA_SIZE) {
+                                // Обычный случай - данные помещаются
+                                const parsedEventData = JSON.parse(eventDataStr);
+                                beaconData.event_data = parsedEventData;
+                            } else {
+                                // Если данные слишком большие, отправляем минимальную информацию
+                                beaconData.event_data = {
+                                    truncated: true,
+                                    original_size: eventDataStr.length,
+                                    summary: dataToSend.event_type || 'large_event'
+                                };
+                                
+                                // Добавляем данные в очередь для полной отправки через другой метод
+                                if (priority === 'critical') {
+                                    addToSendQueue(dataToSend, endpoint, 'beacon_size_exceeded');
+                                }
+                            }
+                        } catch (e) {
+                            beaconData.event_data = { error: 'Failed to process event_data: ' + e.message };
+                        }
+                    }
+                    
+                    // Важно: добавляем поле для отслеживания целей Метрики, если оно есть
+                    if (dataToSend.metrika_goals) {
+                        try {
+                            // Копируем цели без изменений
+                            beaconData.metrika_goals = JSON.parse(JSON.stringify(dataToSend.metrika_goals));
+                        } catch (e) {
+                            // Игнорируем ошибки при добавлении параметров
+                        }
+                    }
+                    
+                    const imgUrl = `${endpoint}?${params.toString()}&pixel=1&rid=${requestId}`;
+                    
+                    // Создаем изображение и отправляем через него запрос
+                    const img = new Image();
+                    img.src = imgUrl;
+                    img.onload = () => {
+                        Logger.debug(`✅ Минимальные данные [${requestId}] отправлены через Image`);
+                    };
+                    img.onerror = () => {
+                        Logger.warn(`❌ Ошибка отправки через Image [${requestId}]`);
+                    };
+                    
+                    // Возвращаем условный успех, поскольку мы не знаем результата асинхронной операции
+                    return { success: true, method: 'image', partial: true };
+                } catch (e) {
+                    Logger.error(`Ошибка при использовании Image Beacon [${requestId}]:`, e);
+                }
+            }
+            
+            // Если все методы отправки не удались
+            Logger.error(`❌ Не удалось отправить данные [${requestId}] никаким методом`);
+            
+            // Добавляем в очередь для всех критических данных
+            if (priority === 'critical') {
+                addToSendQueue(dataToSend, endpoint, 'all_methods_failed');
+            }
+            
+            return { success: false, error: 'all_methods_failed' };
+        } catch (e) {
+            Logger.error('Неожиданная ошибка при отправке данных:', e);
+            return { success: false, error: 'unexpected_error', message: e.message };
         }
+    }
+    
+    // Функция для рекурсивного копирования объекта без циклических ссылок
+    function deepCopy(obj, seen = new WeakMap()) {
+        // Обработка примитивов и null
+        if (obj === null || typeof obj !== 'object') {
+            return obj;
+        }
+        
+        // Проверка на циклические ссылки
+        if (seen.has(obj)) {
+            return '[Circular]'; // Возвращаем маркер вместо undefined
+        }
+        
+        // Добавляем объект в множество просмотренных
+        seen.set(obj, true);
+        
+        // Обработка Date, RegExp, и других встроенных объектов
+        if (obj instanceof Date) return new Date(obj);
+        if (obj instanceof RegExp) return new RegExp(obj);
+        if (obj instanceof URL) return new URL(obj.toString());
+        if (obj instanceof Blob) return obj.slice(0, obj.size, obj.type);
+        if (obj instanceof File) return new File([obj.slice(0, obj.size)], obj.name, { type: obj.type });
+        if (obj instanceof ArrayBuffer) return obj.slice(0);
+        
+        // Проверка на DOM элементы и объекты окна
+        if (typeof window !== 'undefined') {
+            if (obj instanceof Node || obj instanceof Window) {
+                return '[DOM]'; // Возвращаем маркер для DOM элементов
+            }
+        }
+        
+        // Обработка массивов
+        if (Array.isArray(obj)) {
+            const arr = [];
+            for (let i = 0; i < obj.length; i++) {
+                try {
+                    arr[i] = deepCopy(obj[i], seen);
+                } catch (e) {
+                    arr[i] = null; // Заменяем проблемные значения на null
+                }
+            }
+            return arr;
+        }
+        
+        // Обработка функций
+        if (typeof obj === 'function') {
+            return '[Function]'; // Возвращаем маркер вместо null
+        }
+        
+        // Обработка объектов с методом toJSON (например, для DOM-элементов)
+        if (typeof obj.toJSON === 'function') {
+            try {
+                return JSON.parse(JSON.stringify(obj));
+            } catch (e) {
+                return '[Object]';
+            }
+        }
+        
+        // Обработка BigInt
+        if (typeof obj === 'bigint') {
+            return obj.toString();
+        }
+        
+        // Обработка обычных объектов
+        const copy = {};
+        
+        // Копируем только собственные свойства
+        for (const key of Object.keys(obj)) {
+            try {
+                // Пропускаем функции и специальные свойства
+                if (typeof obj[key] === 'function' || key.startsWith('_')) {
+                    continue;
+                }
+                
+                // Рекурсивно копируем вложенные объекты
+                copy[key] = deepCopy(obj[key], seen);
+            } catch (e) {
+                copy[key] = '[Error]'; // Маркируем проблемные свойства
+            }
+        }
+        
+        return copy;
+    }
+    
+    // Буфер для повторных отправок данных
+    let sendQueue = [];
+    const maxQueueSize = 20;
+    let queueTimer = null;
+    
+    // Добавление данных в очередь отправки
+    function saveQueueToStorage() {
+        try {
+            // Ограничиваем размер очереди перед сохранением
+            if (sendQueue.length > maxQueueSize) {
+                sendQueue = sendQueue.slice(-maxQueueSize);
+            }
+            
+            // Сохраняем очередь в localStorage
+            localStorage.setItem('rivox_send_queue', JSON.stringify(sendQueue));
+        } catch (e) {
+            Logger.error('Ошибка при сохранении очереди в localStorage:', e);
+        }
+    }
+    
+    // Загрузка очереди из localStorage
+    function loadQueueFromStorage() {
+        try {
+            const queueJson = localStorage.getItem('rivox_send_queue');
+            if (queueJson) {
+                const loadedQueue = JSON.parse(queueJson);
+                if (Array.isArray(loadedQueue)) {
+                    sendQueue = loadedQueue;
+                    Logger.info(`Загружена очередь отправки (${sendQueue.length} элементов)`);
+                    
+                    // Запускаем обработку очереди
+                    if (sendQueue.length > 0 && !queueTimer) {
+                        queueTimer = setTimeout(processSendQueue, 5000);
+                    }
+                }
+            }
+        } catch (e) {
+            Logger.error('Ошибка при загрузке очереди из localStorage:', e);
+            sendQueue = [];
+        }
+    }
+    
+    // Обработка очереди отправки
+    async function processSendQueue() {
+        // Очищаем таймер
+        queueTimer = null;
+        
+        try {
+            // Проверяем, есть ли элементы в очереди
+            if (sendQueue.length === 0) {
+                return;
+            }
+            
+            Logger.info(`Обработка очереди отправки (${sendQueue.length} элементов)`);
+            
+            // Копируем очередь для итерации
+            const currentQueue = [...sendQueue];
+            sendQueue = [];
+            
+            // Обрабатываем каждый элемент
+            for (const item of currentQueue) {
+                try {
+                    // Увеличиваем счетчик попыток
+                    item.attempts = (item.attempts || 0) + 1;
+                    
+                    // Пропускаем элементы, которые пытались отправить более 5 раз
+                    if (item.attempts > 5) {
+                        Logger.warn('Элемент удален из очереди после 5 неудачных попыток:', {
+                            endpoint: item.endpoint,
+                            timestamp: item.timestamp
+                        });
+                        continue;
+                    }
+                    
+                    // Добавляем информацию о повторной попытке
+                    item.data.retry_attempt = item.attempts;
+                    item.data.original_timestamp = item.data.timestamp || item.timestamp;
+                    item.data.retry_timestamp = Date.now();
+                    
+                    // Пытаемся отправить данные
+                    Logger.debug(`Повторная отправка данных (попытка ${item.attempts}/5)`, {
+                        endpoint: item.endpoint,
+                        original: item.timestamp,
+                        reason: item.reason
+                    });
+                    
+                    // Используем только Fetch API для повторных отправок
+                    try {
+                        const response = await fetch(item.endpoint, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-Retry-Attempt': String(item.attempts)
+                            },
+                            body: JSON.stringify(item.data),
+                            keepalive: true
+                        });
+                        
+                        if (response.ok) {
+                            Logger.info('✅ Повторная отправка успешна', {
+                                endpoint: item.endpoint,
+                                status: response.status
+                            });
+                            continue; // Успешно отправлено, переходим к следующему элементу
+                        } else {
+                            Logger.warn('⚠️ Сервер вернул ошибку при повторной отправке:', {
+                                status: response.status,
+                                statusText: response.statusText
+                            });
+                            sendQueue.push(item); // Возвращаем в очередь
+                        }
+                    } catch (e) {
+                        Logger.warn('❌ Ошибка при повторной отправке:', e);
+                        sendQueue.push(item); // Возвращаем в очередь
+                    }
+                } catch (e) {
+                    Logger.error('Ошибка при обработке элемента очереди:', e);
+                }
+            }
+            
+            // Сохраняем оставшиеся элементы
+            saveQueueToStorage();
+            
+            // Если остались элементы, планируем следующую попытку
+            if (sendQueue.length > 0) {
+                const nextAttemptDelay = 60000; // 1 минута
+                Logger.info(`Запланирована следующая попытка отправки через ${nextAttemptDelay/1000} сек`);
+                queueTimer = setTimeout(processSendQueue, nextAttemptDelay);
+            }
+        } catch (e) {
+            Logger.error('Неожиданная ошибка при обработке очереди отправки:', e);
+            
+            // Восстанавливаем таймер в случае ошибки
+            if (sendQueue.length > 0 && !queueTimer) {
+                queueTimer = setTimeout(processSendQueue, 60000);
+            }
+        }
+    }
 
-        // Обновляем время последнего действия
-        setSessionStorage('rivox_last_activity', Date.now());
+    // Функция для генерации UUID 
+    function generateUUID() {
+        try {
+            // Используем crypto API если доступен
+            if (window.crypto && window.crypto.randomUUID) {
+                return window.crypto.randomUUID();
+            }
+            
+            // Резервный вариант
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        } catch (e) {
+            // Максимально простой резервный вариант
+            return 'r' + Date.now() + Math.random().toString(36).substring(2, 15);
+        }
+    }
+
+    // ВАЖНО: Не переопределяем sendQueue, используем существующую переменную
+    // Максимальный размер очереди отправки установлен выше (MAX_SEND_QUEUE_SIZE)
+    
+    // Флаг, указывающий, обрабатывается ли сейчас очередь
+    let isProcessingSendQueue = false;
+
+    // Последнее время успешной отправки данных
+    let lastSuccessfulSendTime = 0;
+
+    // Загружаем очередь из localStorage при инициализации
+    function loadSendQueue() {
+        try {
+            const queueData = localStorage.getItem('rivox_send_queue');
+            if (queueData) {
+                const parsedQueue = JSON.parse(queueData);
+                if (Array.isArray(parsedQueue)) {
+                    sendQueue = parsedQueue.map(item => {
+                        // Обновляем timestamp последней попытки для предотвращения моментальной повторной отправки
+                        return {
+                            ...item,
+                            lastAttempt: Date.now() - (60000 * 5) // Даем 5 минут перед первой попыткой
+                        };
+                    });
+                    Logger.info(`Загружена очередь отправки из хранилища: ${sendQueue.length} записей`);
+                    
+                    // Проверяем, нет ли испорченных данных
+                    validateSendQueue();
+                }
+            }
+        } catch (e) {
+            Logger.error('Ошибка при загрузке очереди отправки:', e);
+            
+            // Пытаемся восстановить очередь из резервной копии
+            try {
+                const backupData = localStorage.getItem('rivox_send_queue_backup');
+                if (backupData) {
+                    sendQueue = JSON.parse(backupData);
+                    Logger.warn('Очередь восстановлена из резервной копии, размер:', sendQueue.length);
+                    saveSendQueue(); // Сохраняем восстановленную очередь
+                } else {
+                    // Если и резервная копия недоступна, создаем новую очередь
+                    sendQueue = [];
+                    saveSendQueue();
+                }
+            } catch (eBackup) {
+                Logger.error('Не удалось восстановить очередь из резервной копии:', eBackup);
+                sendQueue = []; // Создаем новую очередь
+                saveSendQueue();
+            }
+        }
+    }
+
+    // Проверяем очередь на наличие поврежденных данных
+    function validateSendQueue() {
+        let initialLength = sendQueue.length;
+        let validItems = [];
+        
+        for (let i = 0; i < sendQueue.length; i++) {
+            try {
+                const item = sendQueue[i];
+                
+                // Проверяем наличие обязательных полей
+                if (!item || !item.data || !item.endpoint) {
+                    continue;
+                }
+                
+                // Проверяем наличие минимально необходимых данных
+                if (!item.data.client_id || !item.data.session_id) {
+                    continue;
+                }
+                
+                // Проверяем, что item.data можно сериализовать
+                JSON.stringify(item.data);
+                
+                // Если все проверки прошли, добавляем элемент в валидный список
+                validItems.push(item);
+            } catch (e) {
+                Logger.warn(`Поврежденный элемент в очереди отправки в позиции ${i}:`, e);
+            }
+        }
+        
+        // Если были обнаружены поврежденные элементы, обновляем очередь
+        if (validItems.length < initialLength) {
+            Logger.warn(`Удалено ${initialLength - validItems.length} поврежденных элементов из очереди`);
+            sendQueue = validItems;
+            saveSendQueue();
+        }
+    }
+
+    // Сохраняем очередь в localStorage
+    function saveSendQueue() {
+        try {
+            // Ограничиваем размер очереди
+            if (sendQueue.length > MAX_SEND_QUEUE_SIZE) {
+                // Сортируем по приоритету, затем по времени
+                sendQueue.sort((a, b) => {
+                    // Сначала по приоритету (критический выше)
+                    if (a.priority === 'critical' && b.priority !== 'critical') return -1;
+                    if (a.priority !== 'critical' && b.priority === 'critical') return 1;
+                    
+                    // Затем по времени (более новые выше)
+                    return b.timestamp - a.timestamp;
+                });
+                
+                // Отсекаем лишние элементы, сохраняя более приоритетные
+                sendQueue = sendQueue.slice(0, MAX_SEND_QUEUE_SIZE);
+                Logger.warn(`Очередь отправки превысила лимит, обрезана до ${MAX_SEND_QUEUE_SIZE} элементов`);
+            }
+            
+            // Создаем резервную копию перед сохранением новой версии
+            const currentQueueData = localStorage.getItem('rivox_send_queue');
+            if (currentQueueData) {
+                localStorage.setItem('rivox_send_queue_backup', currentQueueData);
+            }
+            
+            // Сохраняем текущую версию
+            localStorage.setItem('rivox_send_queue', JSON.stringify(sendQueue));
+        } catch (e) {
+            Logger.error('Ошибка при сохранении очереди отправки:', e);
+            
+            // Пытаемся сохранить в упрощенном формате
+            try {
+                // Создаем упрощенную версию данных
+                const simplifiedQueue = sendQueue.map(item => {
+                    // Копируем только необходимые базовые поля
+                    return {
+                        timestamp: item.timestamp || Date.now(),
+                        lastAttempt: item.lastAttempt || 0,
+                        attempts: item.attempts || 0,
+                        endpoint: item.endpoint,
+                        priority: item.priority || 'normal',
+                        error: item.error,
+                        data: {
+                            client_id: item.data.client_id,
+                            session_id: item.data.session_id,
+                            data_type: item.data.data_type || 'event',
+                            timestamp: item.data.timestamp || Date.now(),
+                            // Добавляем информацию об ошибке сериализации
+                            error_recovery: true
+                        }
+                    };
+                });
+                
+                localStorage.setItem('rivox_send_queue', JSON.stringify(simplifiedQueue));
+                Logger.warn('Очередь сохранена в упрощенном формате из-за ошибки сериализации');
+            } catch (e2) {
+                Logger.error('Не удалось сохранить даже упрощенную очередь:', e2);
+            }
+        }
+    }
+
+    // Добавляем данные в очередь для повторной отправки
+    function addToSendQueue(data, endpoint, errorReason = null) {
+        // Проверяем, не достигнут ли предел очереди
+        if (sendQueue.length >= MAX_SEND_QUEUE_SIZE) {
+            // Находим наименее важный элемент для замены
+            let leastImportantIndex = -1;
+            let leastImportantPriority = 'critical';
+            
+            for (let i = 0; i < sendQueue.length; i++) {
+                // Пропускаем элементы с критическим приоритетом
+                if (sendQueue[i].priority !== 'critical' && 
+                    (leastImportantPriority === 'critical' || 
+                     sendQueue[i].timestamp < sendQueue[leastImportantIndex].timestamp)) {
+                    leastImportantIndex = i;
+                    leastImportantPriority = sendQueue[i].priority;
+                }
+            }
+            
+            // Если очередь заполнена критическими элементами, и новый не критический - пропускаем
+            if (leastImportantIndex === -1 && data.priority !== 'critical') {
+                Logger.warn('Очередь отправки заполнена критическими элементами, новый элемент отброшен');
+                return;
+            }
+            
+            // Если нашли некритический элемент или новый элемент критический - заменяем
+            if (leastImportantIndex !== -1) {
+                Logger.info('Заменяем наименее важный элемент в очереди отправки');
+                sendQueue[leastImportantIndex] = {
+                    data,
+                    endpoint,
+                    timestamp: Date.now(),
+                    lastAttempt: 0,
+                    attempts: 0,
+                    priority: data.priority || 'normal',
+                    error: errorReason
+                };
+            } else {
+                // Просто отбрасываем самый старый элемент
+                sendQueue.shift();
+                sendQueue.push({
+                    data,
+                    endpoint,
+                    timestamp: Date.now(),
+                    lastAttempt: 0,
+                    attempts: 0,
+                    priority: data.priority || 'normal',
+                    error: errorReason
+                });
+            }
+        } else {
+            // Если очередь не заполнена, просто добавляем новый элемент
+            sendQueue.push({
+                data,
+                endpoint,
+                timestamp: Date.now(),
+                lastAttempt: 0,
+                attempts: 0,
+                priority: data.priority || 'normal',
+                error: errorReason
+            });
+        }
+        
+        // Сохраняем обновленную очередь
+        saveSendQueue();
+        
+        // Запускаем обработку очереди
+        setTimeout(processSendQueue, 100);
+        
+        Logger.info(`Добавлены данные в очередь отправки. Текущий размер: ${sendQueue.length}`);
+    }
+
+    // Обрабатываем очередь отправки
+    async function processSendQueue() {
+        try {
+            // Проверяем, не обрабатывается ли очередь уже
+            if (isProcessingSendQueue) {
+                return;
+            }
+            
+            // Проверяем, есть ли данные в очереди
+            if (sendQueue.length === 0) {
+                return;
+            }
+            
+            // Устанавливаем флаг обработки
+            isProcessingSendQueue = true;
+            
+            // Вычисляем временной интервал до следующей попытки на основе количества попыток
+            // Используем экспоненциальную задержку: 5с, 15с, 45с, 2м, 5м, 15м, 30м, 1ч, 3ч, 6ч
+            function getRetryDelay(attempts) {
+                const base = 5000; // 5 секунд
+                if (attempts <= 0) return 0;
+                if (attempts > 10) attempts = 10; // Максимальная задержка после 10 попыток
+                
+                // Экспоненциальная задержка с множителем ~3
+                return base * Math.pow(3, attempts - 1);
+            }
+            
+            // Проверяем состояние сети
+            let isOnline = navigator.onLine !== false; // Считаем онлайн, если свойство не определено
+            
+            // Если в оффлайне - откладываем обработку
+            if (!isOnline) {
+                isProcessingSendQueue = false;
+                Logger.debug('Отложена обработка очереди из-за отсутствия сети');
+                return;
+            }
+            
+            // Обрабатываем по одному элементу за раз, чтобы не блокировать поток
+            for (let i = 0; i < sendQueue.length; i++) {
+                const item = sendQueue[i];
+                const now = Date.now();
+                
+                // Пропускаем, если прошло мало времени с последней попытки
+                const retryDelay = getRetryDelay(item.attempts);
+                if (item.lastAttempt && (now - item.lastAttempt) < retryDelay) {
+                    continue;
+                }
+                
+                // Обновляем время последней попытки и количество попыток
+                item.lastAttempt = now;
+                item.attempts = (item.attempts || 0) + 1;
+                
+                // Логируем информацию о попытке
+                Logger.debug(`Попытка #${item.attempts} отправки данных из очереди`, {
+                    timestamp: new Date(item.timestamp).toISOString(),
+                    endpoint: item.endpoint,
+                    dataType: item.data.data_type,
+                    priority: item.priority
+                });
+                
+                // Если число попыток превысило максимум - удаляем из очереди
+                const MAX_ATTEMPTS = 12;
+                if (item.attempts > MAX_ATTEMPTS) {
+                    Logger.warn(`Превышено максимальное количество попыток (${MAX_ATTEMPTS}), удаляем из очереди`, {
+                        dataType: item.data.data_type,
+                        client_id: item.data.client_id,
+                        session_id: item.data.session_id,
+                        timestamp: new Date(item.timestamp).toISOString()
+                    });
+                    
+                    // Удаляем элемент из очереди
+                    sendQueue.splice(i, 1);
+                    i--; // Корректируем индекс
+                    
+                    // Сохраняем очередь
+                    saveSendQueue();
+                    continue;
+                }
+                
+                // Отправляем данные
+                try {
+                    // Копируем данные чтобы избежать изменения исходных
+                    const dataCopy = JSON.parse(JSON.stringify(item.data));
+                    
+                    // Добавляем информацию о повторной отправке
+                    dataCopy.retry_info = {
+                        original_timestamp: item.timestamp,
+                        attempts: item.attempts,
+                        last_error: item.error
+                    };
+                    
+                    // Если прошло много времени, помечаем как историческую отправку
+                    if (now - item.timestamp > 3600000) { // 1 час
+                        dataCopy.is_historical = true;
+                    }
+                    
+                    // Отправляем с тем же приоритетом, что был у исходных данных
+                    const result = await sendDataWithFallback(
+                        dataCopy, 
+                        item.endpoint, 
+                        item.priority
+                    );
+                    
+                    // Если успешно - удаляем из очереди
+                    if (result.success) {
+                        Logger.info(`✅ Успешно отправлены данные из очереди (попытка #${item.attempts})`, {
+                            method: result.method,
+                            dataType: item.data.data_type
+                        });
+                        
+                        // Обновляем время последней успешной отправки
+                        lastSuccessfulSendTime = now;
+                        
+                        // Удаляем элемент из очереди
+                        sendQueue.splice(i, 1);
+                        i--; // Корректируем индекс
+                        
+                        // Сохраняем очередь
+                        saveSendQueue();
+                    } else {
+                        // Обновляем информацию об ошибке
+                        item.error = result.error;
+                        
+                        // Сохраняем очередь с обновленной информацией о попытке
+                        saveSendQueue();
+                        
+                        Logger.warn(`❌ Не удалось отправить данные из очереди (попытка #${item.attempts})`, {
+                            error: result.error,
+                            dataType: item.data.data_type,
+                            nextRetry: new Date(now + getRetryDelay(item.attempts)).toISOString()
+                        });
+                    }
+                } catch (e) {
+                    Logger.error('Ошибка при обработке элемента очереди:', e);
+                    
+                    // Обновляем информацию об ошибке
+                    item.error = e.message || 'unknown';
+                    
+                    // Сохраняем очередь с обновленной информацией о попытке
+                    saveSendQueue();
+                }
+                
+                // Делаем небольшую паузу между отправками элементов очереди
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Проверяем состояние сети после каждой отправки
+                isOnline = navigator.onLine !== false;
+                if (!isOnline) {
+                    Logger.debug('Прерываем обработку очереди из-за потери соединения');
+                    break;
+                }
+            }
+            
+            // Снимаем флаг обработки
+            isProcessingSendQueue = false;
+            
+            // Если в очереди остались элементы, планируем следующую обработку
+            if (sendQueue.length > 0) {
+                // Определяем время до следующей обработки
+                // Выбираем минимальное время ожидания из всех элементов
+                let nextProcessTime = Infinity;
+                for (const item of sendQueue) {
+                    const retryTime = item.lastAttempt + getRetryDelay(item.attempts);
+                    if (retryTime < nextProcessTime) {
+                        nextProcessTime = retryTime;
+                    }
+                }
+                
+                // Рассчитываем задержку (минимум 5 секунд, максимум 5 минут)
+                const delay = Math.max(5000, Math.min(300000, nextProcessTime - Date.now()));
+                
+                // Планируем следующую обработку
+                setTimeout(processSendQueue, delay);
+                
+                Logger.debug(`Следующая обработка очереди через ${Math.round(delay / 1000)} секунд`);
+            }
+        } catch (e) {
+            Logger.error('Неожиданная ошибка при обработке очереди отправки:', e);
+            
+            // Снимаем флаг обработки в любом случае
+            isProcessingSendQueue = false;
+            
+            // Планируем повторную попытку через 1 минуту
+            setTimeout(processSendQueue, 60000);
+        }
+    }
+
+    // Настраиваем обработчики событий для отслеживания сетевого подключения
+    function setupNetworkListeners() {
+        // Обработчик на получение онлайн-статуса
+        window.addEventListener('online', function() {
+            Logger.info('🌐 Подключение к сети восстановлено');
+            
+            // Запускаем обработку очереди при восстановлении соединения
+            if (sendQueue.length > 0) {
+                setTimeout(processSendQueue, 2000); // Небольшая задержка для стабилизации соединения
+            }
+        });
+        
+        // Обработчик на потерю соединения
+        window.addEventListener('offline', function() {
+            Logger.warn('🔌 Соединение с сетью потеряно');
+        });
+        
+        // Обработчик перед выгрузкой страницы
+        window.addEventListener('beforeunload', function() {
+            // Пытаемся отправить все критические данные с помощью Beacon API
+            if (sendQueue.length > 0 && navigator.sendBeacon) {
+                // Фильтруем и отправляем только критические данные
+                const criticalItems = sendQueue.filter(item => item.priority === 'critical');
+                
+                if (criticalItems.length > 0) {
+                    Logger.info(`Отправляем ${criticalItems.length} критических элементов перед выгрузкой страницы`);
+                    
+                    // Отправляем каждый элемент отдельно
+                    for (const item of criticalItems) {
+                        try {
+                            // Добавляем информацию о выгрузке страницы
+                            const dataCopy = JSON.parse(JSON.stringify(item.data));
+                            dataCopy.unload_dispatch = true;
+                            
+                            // Создаем blob для отправки
+                            const blob = new Blob([JSON.stringify(dataCopy)], { type: 'application/json' });
+                            
+                            // Отправляем через Beacon API
+                            navigator.sendBeacon(item.endpoint, blob);
+                        } catch (e) {
+                            // Ничего не делаем, так как страница выгружается
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Проверяем состояние очереди периодически
+        setInterval(function() {
+            // Если есть элементы в очереди и давно не было успешных отправок, пробуем снова
+            if (sendQueue.length > 0 && 
+                (Date.now() - lastSuccessfulSendTime) > 300000 && // 5 минут
+                !isProcessingSendQueue) {
+                
+                Logger.debug('Периодическая проверка очереди отправки');
+                processSendQueue();
+            }
+        }, 300000); // Каждые 5 минут
+    }
+
+    // Запускаем загрузку очереди и настройку слушателей при инициализации
+    function initSendQueueSystem() {
+        // Загружаем очередь из хранилища
+        loadSendQueue();
+        
+        // Настраиваем обработчики событий
+        setupNetworkListeners();
+        
+        // Запускаем обработку очереди, если есть данные
+        if (sendQueue.length > 0) {
+            setTimeout(processSendQueue, 5000); // Задержка для завершения загрузки страницы
+        }
+        
+        // Устанавливаем начальное время успешной отправки
+        lastSuccessfulSendTime = Date.now();
+        
+        Logger.info('Система очереди отправки инициализирована');
+    }
+
+    // Вызываем инициализацию очереди
+    initSendQueueSystem();
+
+    // Оптимизация дросселирования для событий мыши и скролла
+    const originalAddEventListener = window.addEventListener;
+    window.addEventListener = function(type, listener, options) {
+        // Применяем дросселирование к событиям мыши и скролла
+        if (type === 'mousemove' || type === 'scroll') {
+            const throttledListener = throttle(listener, type === 'mousemove' ? 100 : 200); // 100ms для мыши, 200ms для скролла
+            return originalAddEventListener.call(this, type, throttledListener, options);
+        }
+        return originalAddEventListener.call(this, type, listener, options);
+    };
+
+    // Заменяем console.log на условное логирование
+    if (!config.debug) {
+        // В production режиме блокируем логи
+        console.debug = function() {};
+        console.log = function() {};
+    }
+
+    // Запускаем инициализацию SDK
+    Logger.info('Rivox SDK инициализирован, версия:', SDK_VERSION);
+
+    // Батчинг данных для оптимизации отправки
+    let dataBatchQueue = [];
+    let batchTimeout = null;
+    let batchSizeBytes = 0;
+    
+    // Отправка данных с использованием батчинга
+    function sendWithBatching(data, endpoint, priority) {
+        // Пропускаем батчинг для критических данных и больших объектов
+        if (priority === 'critical' || 
+            !config.batchEnabled || 
+            JSON.stringify(data).length > config.batchMaxBytes / 2) {
+            // Для критических данных используем немедленную отправку
+            return sendDataWithFallback(data, endpoint, priority);
+        }
+        
+        // Оцениваем размер данных
+        const dataStr = JSON.stringify(data);
+        const dataSize = dataStr.length;
+        
+        // Добавляем данные в очередь
+        dataBatchQueue.push({
+            data,
+            endpoint: endpoint || config.endpoint,
+            priority,
+            size: dataSize,
+            timestamp: Date.now()
+        });
+        
+        // Обновляем общий размер батча
+        batchSizeBytes += dataSize;
+        
+        Logger.debug(`Добавлено в батч (${dataBatchQueue.length} событий, ${Math.round(batchSizeBytes / 1024)}KB)`);
+        
+        // Проверяем, нужно ли отправить батч немедленно
+        const shouldSendNow = 
+            dataBatchQueue.length >= config.batchMaxSize || 
+            batchSizeBytes >= config.batchMaxBytes;
+        
+        // Если нужно отправить сейчас, или это первое событие в батче
+        if (shouldSendNow || dataBatchQueue.length === 1) {
+            // Отменяем существующий таймаут, если он есть
+            if (batchTimeout) {
+                clearTimeout(batchTimeout);
+                batchTimeout = null;
+            }
+            
+            // Устанавливаем новый таймаут или отправляем сразу
+            if (shouldSendNow) {
+                // Отправляем немедленно, если достигли лимитов
+                processBatch();
+            } else {
+                // Устанавливаем таймаут для отправки
+                batchTimeout = setTimeout(processBatch, config.batchDelay);
+            }
+        }
+        
+        // Возвращаем промис, который разрешится после отправки
+        return Promise.resolve({ 
+            success: true, 
+            method: 'batched',
+            batchSize: dataBatchQueue.length,
+            message: 'Data queued for batch sending'
+        });
+    }
+    
+    // Обработка и отправка батча данных
+    async function processBatch() {
+        // Если очередь пуста, нечего отправлять
+        if (dataBatchQueue.length === 0) {
+            return;
+        }
+        
+        // Получаем текущую очередь и сбрасываем глобальную
+        const batchToSend = [...dataBatchQueue];
+        dataBatchQueue = [];
+        batchSizeBytes = 0;
+        batchTimeout = null;
+        
+        Logger.info(`Отправка батча: ${batchToSend.length} событий`);
+        
+        try {
+            // Группируем события по конечной точке
+            const endpointGroups = {};
+            
+            // Группируем события
+            batchToSend.forEach(item => {
+                const endpoint = item.endpoint || config.endpoint;
+                if (!endpointGroups[endpoint]) {
+                    endpointGroups[endpoint] = [];
+                }
+                endpointGroups[endpoint].push(item.data);
+            });
+            
+            // Отправляем каждую группу событий
+            const results = await Promise.all(
+                Object.entries(endpointGroups).map(async ([endpoint, dataArray]) => {
+                    // Формируем батч-пакет
+                    const batchData = {
+                        batch: true,
+                        client_id: sessionData?.client_id,
+                        session_id: sessionData?.session_id,
+                        timestamp: Date.now(),
+                        count: dataArray.length,
+                        items: dataArray
+                    };
+                    
+                    // Отправляем батч
+                    try {
+                        const result = await sendDataWithFallback(
+                            batchData, 
+                            endpoint + '/batch', 
+                            'batch'
+                        );
+                        
+                        return {
+                            endpoint,
+                            success: result.success,
+                            count: dataArray.length,
+                            method: result.method
+                        };
+                    } catch (e) {
+                        Logger.error(`Ошибка отправки батча на ${endpoint}:`, e);
+                        return {
+                            endpoint,
+                            success: false,
+                            count: dataArray.length,
+                            error: e.message
+                        };
+                    }
+                })
+            );
+            
+            // Логируем результаты
+            const successful = results.filter(r => r.success).reduce((sum, r) => sum + r.count, 0);
+            const failed = batchToSend.length - successful;
+            
+            Logger.info(`Результат отправки батча: успешно - ${successful}, неудачно - ${failed}`);
+            
+            // Если есть неудачные отправки, добавляем их в очередь повторных попыток
+            if (failed > 0) {
+                const failedItems = results
+                    .filter(r => !r.success)
+                    .flatMap(result => 
+                        batchToSend
+                            .filter(item => item.endpoint === result.endpoint)
+                            .map(item => ({ 
+                                ...item, 
+                                error: result.error,
+                                retryCount: (item.retryCount || 0) + 1
+                            }))
+                    );
+                
+                // Добавляем в очередь только те, которые не превысили лимит попыток
+                const itemsToRetry = failedItems.filter(item => 
+                    (item.retryCount || 1) <= config.maxRetries
+                );
+                
+                if (itemsToRetry.length > 0) {
+                    Logger.warn(`Добавляю ${itemsToRetry.length} элементов в очередь повторных попыток`);
+                    
+                    // Для каждого элемента добавляем в очередь отправки
+                    itemsToRetry.forEach(item => {
+                        addToSendQueue(item.data, item.endpoint, item.error);
+                    });
+                }
+            }
+            
+            return { 
+                success: successful > 0,
+                total: batchToSend.length,
+                successful,
+                failed
+            };
+        } catch (error) {
+            Logger.error('Критическая ошибка при обработке батча:', error);
+            
+            // В случае критической ошибки, добавляем все события в очередь отправки
+            batchToSend.forEach(item => {
+                addToSendQueue(item.data, item.endpoint, error.message);
+            });
+            
+            return { 
+                success: false, 
+                error: error.message,
+                total: batchToSend.length,
+                failed: batchToSend.length
+            };
+        }
+    }
+    
+    // Вызов в начале unload для отправки всех накопленных данных
+    function flushBatchQueue() {
+        if (dataBatchQueue.length > 0) {
+            // Отменяем существующий таймаут
+            if (batchTimeout) {
+                clearTimeout(batchTimeout);
+                batchTimeout = null;
+            }
+            
+            // Отправляем все накопленные данные
+            return processBatch();
+        }
+        return Promise.resolve({ success: true, message: 'No data to flush' });
+    }
+
+    // Добавляем обработку beforeunload для отправки батча
+    function setupBeforeUnloadHandler() {
+        window.addEventListener('beforeunload', function() {
+            // Отправляем все накопленные данные в батче
+            if (config.batchEnabled) {
+                flushBatchQueue();
+            }
+
+            // Отправляем критические данные через beacon API (существующий код)
+            if (sendQueue && sendQueue.length > 0 && navigator.sendBeacon) {
+                // Фильтруем и отправляем только критические данные
+                const criticalItems = sendQueue.filter(item => item.priority === 'critical');
+                
+                if (criticalItems.length > 0) {
+                    Logger.info(`Отправляем ${criticalItems.length} критических элементов перед выгрузкой страницы`);
+                    
+                    // Отправляем каждый элемент отдельно
+                    for (const item of criticalItems) {
+                        try {
+                            // Добавляем информацию о выгрузке страницы
+                            const dataCopy = JSON.parse(JSON.stringify(item.data));
+                            dataCopy.unload_dispatch = true;
+                            
+                            // Создаем blob для отправки
+                            const blob = new Blob([JSON.stringify(dataCopy)], { type: 'application/json' });
+                            
+                            // Отправляем через Beacon API
+                            navigator.sendBeacon(item.endpoint, blob);
+                        } catch (e) {
+                            // Ничего не делаем, так как страница выгружается
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    // Вызываем настройку обработчиков
+    setupBeforeUnloadHandler();
+
+    // Тестирование батчинга (запускается только в debug режиме)
+    if (config.debug) {
+        (function testBatch() {
+            try {
+                Logger.info('🧪 Тестирование батчинга данных');
+                
+                // Имитация отправки нескольких событий
+                for (let i = 0; i < 3; i++) {
+                    const testData = {
+                        event: `test_event_${i}`,
+                        timestamp: Date.now(),
+                        test_value: Math.random()
+                    };
+                    
+                    if (config.batchEnabled) {
+                        sendWithBatching(testData, null, 'test');
+                        Logger.debug(`Тестовое событие #${i} добавлено в батч`);
+                    } else {
+                        Logger.debug('Батчинг отключен, тест пропускается');
+                    }
+                }
+                
+                Logger.info('✅ Тест батчинга завершен, события добавлены в очередь');
+            } catch (e) {
+                Logger.error('❌ Ошибка при тестировании батчинга:', e);
+            }
+        })();
     }
 })(window); 
