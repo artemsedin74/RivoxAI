@@ -5,11 +5,19 @@
 // RIVOX SDK v4.6.3
 // Enhanced version with ML data collection capabilities
 
+// Глобальная переменная для предотвращения рекурсивных вызовов логирования
+let isLogging = false;
+// Глобальная переменная для хранения очереди данных для повторной отправки
+let dataQueue = [];
+// Флаг обработки очереди данных
+let isProcessingQueue = false;
+
 // Функция для базового логирования (без рекурсии)
 function logEvent(eventName, payload = {}) {
   try {
     // Предотвращаем рекурсию
     if (isLogging) return;
+    isLogging = true;
     
     const data = {
       event: eventName,
@@ -44,7 +52,9 @@ function logEvent(eventName, payload = {}) {
     };
   } catch (e) {
     // Ошибки логирования не должны влиять на работу SDK
-    console.warn('Error in Rivox log event:', e);
+    console.warn('Error in Rivox log event:', e.message || e);
+  } finally {
+    isLogging = false;
   }
 }
 
@@ -113,9 +123,6 @@ let Logger = {
     let SDK_INITIALIZED = false;
     // Добавляем массив для хранения отложенных событий
     const pendingEvents = [];
-    
-    // Флаг для предотвращения рекурсивных вызовов логирования
-    let isLogging = false;
     
     // Добавляем переменные для контроля отправки данных
     let lastSendTime = 0;
@@ -1750,23 +1757,43 @@ let Logger = {
                     // Добавляем заголовок с размером для отладки
                     headers['x-data-size'] = dataSize.toString();
                     
-                    const response = await fetch(config.endpoint, {
-                        method: 'POST',
-                        headers: headers,
-                        mode: 'no-cors', // Добавляем режим no-cors для обхода CORS-ошибок
-                        credentials: 'omit', // Отключаем credentials для избежания CORS-проблем
-                        body: body,
-                        keepalive: true
-                    });
-
-                    // В режиме no-cors response будет типа "opaque" и мы не сможем проверить response.ok
-                    // Считаем запрос успешным
-                    Logger.info('✅ POST request successful with no-cors mode');
+                    // Проверяем валидность URL
+                    const endpoint = config.endpoint || config.apiEndpoint;
+                    if (!endpoint) {
+                        throw new Error('Endpoint URL is not defined');
+                    }
                     
-                    // Сбрасываем счетчик ошибок при успехе
-                    consecErrorCount = 0;
+                    // Проверяем валидность формата данных
+                    if (!body) {
+                        throw new Error('Invalid data format or empty body');
+                    }
                     
-                    return { success: true, method: 'no-cors' };
+                    // Отправляем запрос с обработкой исключений
+                    try {
+                        const response = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: headers,
+                            mode: 'no-cors', // Режим no-cors для обхода CORS-ошибок
+                            credentials: 'omit', // Отключаем credentials
+                            body: body,
+                            keepalive: true
+                        });
+    
+                        // В режиме no-cors response.ok всегда false, поэтому не проверяем
+                        // Считаем запрос успешным, потому что отсутствие исключения означает успех
+                        Logger.info('✅ POST request successful with no-cors mode');
+                        
+                        // Сбрасываем счетчик ошибок при успехе
+                        consecErrorCount = 0;
+                        
+                        return { success: true, method: 'no-cors' };
+                    } catch (fetchError) {
+                        // Добавляем подробности об ошибке
+                        Logger.warn(`Fetch error: ${fetchError.message || 'Unknown fetch error'}`, fetchError);
+                        
+                        // Пробуем альтернативный метод отправки
+                        throw new Error(`Fetch failed: ${fetchError.message}`);
+                    }
                 } catch (error) {
                     Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
                     
