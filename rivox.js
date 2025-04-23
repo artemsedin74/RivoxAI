@@ -31,25 +31,56 @@ function logEvent(eventName, payload = {}) {
     // Создаем URL для отправки данных
     const url = 'https://rivox-data-handler-779203791697.europe-central2.run.app/logs';
     
-    // Используем ТОЛЬКО Image beacon - самый надежный метод обхода CORS
-    // Это полностью обходит проблемы с CORS и работает во всех браузерах
-    const img = new Image();
-    img.src = url + '?data=' + encodeURIComponent(jsonString).substring(0, 2000);
+    // Используем fetch с методом POST вместо Image beacon
+    // Это решит проблему 404 ошибок, так как бэкенд ожидает POST запросы
     
-    // Добавляем обработчики для отладки, но не влияют на функциональность
-    img.onload = function() {
-      if (eventName === 'error' || eventName === 'warning') {
-        console.debug('Rivox log event sent successfully:', eventName);
-      }
-    };
+    // Используем fallback на случай, если fetch не доступен
+    if (typeof fetch === 'function') {
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': window.location.origin
+        },
+        body: jsonString,
+        // Используем keepalive для гарантии отправки, даже если страница закрывается
+        keepalive: true
+      }).then(response => {
+        if (eventName === 'error' || eventName === 'warning') {
+          console.debug('Rivox log event sent successfully:', eventName, response.status);
+        }
+      }).catch(err => {
+        if (eventName === 'error' || eventName === 'warning') {
+          console.debug('Rivox log event failed:', eventName, err);
+        }
+        
+        // Если fetch не удался, используем резервный метод - Image beacon 
+        // но с указанием метода POST в URL
+        sendViaImageBeacon(url, data, eventName);
+      });
+    } else {
+      // Если fetch недоступен (IE11), используем резервный метод
+      sendViaImageBeacon(url, data, eventName);
+    }
     
-    img.onerror = function() {
-      // Даже если произошла ошибка, во многих случаях данные все равно будут отправлены
-      // Это особенность Image beacon
-      if (eventName === 'error' || eventName === 'warning') {
-        console.debug('Rivox log event may have failed:', eventName);
-      }
-    };
+    // Вспомогательная функция для отправки через Image beacon (для IE11)
+    function sendViaImageBeacon(url, data, eventName) {
+      const img = new Image();
+      // Добавляем параметр method=post для указания серверу, что это POST-запрос
+      img.src = url + '?method=post&data=' + encodeURIComponent(jsonString).substring(0, 2000);
+      
+      img.onload = function() {
+        if (eventName === 'error' || eventName === 'warning') {
+          console.debug('Rivox log event sent via image beacon successfully:', eventName);
+        }
+      };
+      
+      img.onerror = function() {
+        if (eventName === 'error' || eventName === 'warning') {
+          console.debug('Rivox log event via image beacon may have failed:', eventName);
+        }
+      };
+    }
   } catch (e) {
     // Ошибки логирования не должны влиять на работу SDK
     console.warn('Error in Rivox log event:', e.message || e);
@@ -947,19 +978,19 @@ let Logger = {
             Logger.warn('Yandex.Metrika не найдена, отслеживание целей не будет работать');
             return;
         }
-
+        
         try {
             const counterId = getYandexCounterId();
             if (!counterId) {
                 Logger.warn('Не удалось определить ID счетчика Yandex.Metrika');
                 return;
             }
-
+            
             if (typeof ym !== 'function') {
                 Logger.warn('Функция ym не доступна');
                 return;
             }
-
+            
             // Расширенная интеграция с Метрикой - перехват всех целей
             (function wrapYM() {
                 if (typeof ym !== 'function') return;
@@ -976,11 +1007,11 @@ let Logger = {
                             
                             if (goal && sessionData) {
                                 Logger.info(`🎯 Цель Metrika: ${goal}`, params);
-                                
-                                if (!sessionData.metrika_goals) {
-                                    sessionData.metrika_goals = [];
-                                }
-                                
+                    
+                    if (!sessionData.metrika_goals) {
+                        sessionData.metrika_goals = [];
+                    }
+                    
                                 // Сохраняем информацию о цели
                                 const goalData = {
                                     name: goal,
@@ -1069,7 +1100,7 @@ let Logger = {
                             sessionData.ecommerce_events.push(ecommerceEvent);
                             
                             // Также добавляем в metrika_goals для обеспечения совместимости
-                            sessionData.metrika_goals.push({
+                    sessionData.metrika_goals.push({
                                 name: `ecommerce_${action}`,
                                 counter_id: args[0],
                                 params: ecommerceData,
@@ -1108,7 +1139,7 @@ let Logger = {
                                 });
                             }
                             
-                            saveSessionToStorage();
+                    saveSessionToStorage();
                             
                             // Добавляем в очередь для гарантированной отправки
                             addToSendQueue({
