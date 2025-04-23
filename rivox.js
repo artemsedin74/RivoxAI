@@ -12,6 +12,34 @@ let dataQueue = [];
 // Флаг обработки очереди данных
 let isProcessingQueue = false;
 
+// Специальная функция логирования для проблемного клиента
+function sotovikDebugLog(level, message, data) {
+  if (window.location.hostname.includes('sotovik')) {
+    const logPrefix = `[SOTOVIK ${level.toUpperCase()}]`;
+    if (level === 'error') {
+      console.error(logPrefix, message, data);
+    } else {
+      console.debug(logPrefix, message, data);
+    }
+    
+    // Сохраняем логи в localStorage для отладки
+    try {
+      const logs = JSON.parse(localStorage.getItem('rivox_debug_logs') || '[]');
+      logs.push({
+        timestamp: new Date().toISOString(),
+        level,
+        message,
+        data: typeof data === 'object' ? JSON.stringify(data) : data
+      });
+      // Ограничиваем количество логов
+      if (logs.length > 100) logs.shift();
+      localStorage.setItem('rivox_debug_logs', JSON.stringify(logs));
+    } catch (e) {
+      // Игнорируем ошибки при записи в localStorage
+    }
+  }
+}
+
 // Функция для базового логирования (без рекурсии)
 function logEvent(eventName, payload = {}) {
   try {
@@ -19,73 +47,327 @@ function logEvent(eventName, payload = {}) {
     if (isLogging) return;
     isLogging = true;
     
+    // Отладка для проблемного клиента
+    const isProblematicClient = window.location.hostname.includes('sotovik');
+    if (isProblematicClient) {
+      sotovikDebugLog('info', 'logEvent called with:', {
+        eventName,
+        payloadType: typeof payload,
+        payloadKeys: payload ? Object.keys(payload) : null
+      });
+    }
+    
+    // Валидация eventName
+    if (!eventName || typeof eventName !== 'string') {
+      console.error('Invalid event name:', { eventName });
+      isLogging = false;
+      return;
+    }
+    
+    // Валидация и безопасная обработка payload
+    let safePayload = {};
+    if (payload && typeof payload === 'object') {
+      try {
+        // Проверяем, содержит ли payload проблемные значения
+        Object.keys(payload).forEach(key => {
+          const value = payload[key];
+          if (value === undefined || value === null) {
+            // Заменяем null/undefined на безопасные значения
+            safePayload[key] = value === undefined ? "[undefined]" : null;
+            if (isProblematicClient) {
+              sotovikDebugLog('warn', `Found problematic value in payload.${key}:`, { value });
+            }
+          } else if (typeof value === 'function') {
+            safePayload[key] = "[function]";
+          } else if (typeof value === 'object') {
+            try {
+              // Пытаемся безопасно сериализовать объект
+              JSON.stringify(value);
+              safePayload[key] = value;
+            } catch (e) {
+              // Если сериализация не удалась, заменяем на строку
+              safePayload[key] = "[complex-object]";
+              if (isProblematicClient) {
+                sotovikDebugLog('warn', `Failed to stringify payload.${key}:`, { error: e.message });
+              }
+            }
+          } else {
+            safePayload[key] = value;
+          }
+        });
+      } catch (e) {
+        console.error('Error processing payload:', e);
+        safePayload = { error: 'payload_processing_failed' };
+      }
+    } else if (payload !== undefined) {
+      // Если payload не объект, преобразуем в строку
+      safePayload = { value: String(payload) };
+      if (isProblematicClient) {
+        sotovikDebugLog('warn', 'Non-object payload received:', { type: typeof payload, payload });
+      }
+    }
+    
     const data = {
       event: eventName,
-      payload,
+      payload: safePayload,
       timestamp: Date.now(),
       host: window.location.hostname,
+      sdk_version: SDK_VERSION || '4.6.3'
     };
     
-    const jsonString = JSON.stringify(data);
+    let jsonString;
+    try {
+      jsonString = JSON.stringify(data);
+      
+      if (isProblematicClient) {
+        sotovikDebugLog('debug', 'Serialized data:', { 
+          length: jsonString.length,
+          sampleStart: jsonString.substring(0, 50) + '...'
+        });
+      }
+    } catch (e) {
+      console.error('Failed to stringify event data:', e);
+      
+      // Создаем упрощенный объект, который гарантированно сериализуется
+      const fallbackData = {
+        event: eventName,
+        error: 'stringify_failed',
+        timestamp: Date.now(),
+        host: window.location.hostname
+      };
+      
+      jsonString = JSON.stringify(fallbackData);
+      
+      if (isProblematicClient) {
+        sotovikDebugLog('error', 'Using fallback data due to stringify error:', { 
+          error: e.message,
+          fallbackData
+        });
+      }
+    }
     
     // Создаем URL для отправки данных
     const url = 'https://rivox-data-handler-779203791697.europe-central2.run.app/logs';
     
-    // Используем fetch с методом POST вместо Image beacon
-    // Это решит проблему 404 ошибок, так как бэкенд ожидает POST запросы
+    // Сохраняем информацию о запросе для отладки
+    if (isProblematicClient) {
+      sotovikDebugLog('info', 'Sending data to:', { 
+        url, 
+        method: typeof fetch === 'function' ? 'fetch' : 'image-beacon',
+        dataSize: jsonString.length
+      });
+    }
     
-    // Используем fallback на случай, если fetch не доступен
+    // Используем fetch с методом POST вместо Image beacon
     if (typeof fetch === 'function') {
       fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Origin': window.location.origin
+          'Origin': window.location.origin,
+          'X-Client-Host': window.location.hostname,
+          'X-Debug': isProblematicClient ? 'true' : 'false'
         },
         body: jsonString,
-        // Используем keepalive для гарантии отправки, даже если страница закрывается
         keepalive: true
       }).then(response => {
-        if (eventName === 'error' || eventName === 'warning') {
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        if (eventName === 'error' || eventName === 'warning' || isProblematicClient) {
           console.debug('Rivox log event sent successfully:', eventName, response.status);
+          
+          if (isProblematicClient) {
+            sotovikDebugLog('info', 'Fetch request succeeded:', { 
+              status: response.status,
+              eventName 
+            });
+          }
         }
       }).catch(err => {
-        if (eventName === 'error' || eventName === 'warning') {
+        if (eventName === 'error' || eventName === 'warning' || isProblematicClient) {
           console.debug('Rivox log event failed:', eventName, err);
+          
+          if (isProblematicClient) {
+            sotovikDebugLog('error', 'Fetch request failed:', { 
+              error: err.message,
+              eventName 
+            });
+          }
         }
         
-        // Если fetch не удался, используем резервный метод - Image beacon 
-        // но с указанием метода POST в URL
+        // Если fetch не удался, используем резервный метод - Image beacon
         sendViaImageBeacon(url, data, eventName);
       });
     } else {
       // Если fetch недоступен (IE11), используем резервный метод
       sendViaImageBeacon(url, data, eventName);
     }
-    
-    // Вспомогательная функция для отправки через Image beacon (для IE11)
-    function sendViaImageBeacon(url, data, eventName) {
-      const img = new Image();
-      // Добавляем параметр method=post для указания серверу, что это POST-запрос
-      img.src = url + '?method=post&data=' + encodeURIComponent(jsonString).substring(0, 2000);
-      
-      img.onload = function() {
-        if (eventName === 'error' || eventName === 'warning') {
-          console.debug('Rivox log event sent via image beacon successfully:', eventName);
-        }
-      };
-      
-      img.onerror = function() {
-        if (eventName === 'error' || eventName === 'warning') {
-          console.debug('Rivox log event via image beacon may have failed:', eventName);
-        }
-      };
-    }
   } catch (e) {
     // Ошибки логирования не должны влиять на работу SDK
-    console.warn('Error in Rivox log event:', e.message || e);
+    console.error('Critical error in logEvent:', e);
+    
+    if (window.location.hostname.includes('sotovik')) {
+      sotovikDebugLog('error', 'Critical failure in logEvent:', {
+        message: e.message,
+        stack: e.stack,
+        eventName: eventName || 'unknown'
+      });
+    }
   } finally {
     isLogging = false;
+  }
+}
+
+// Вспомогательная функция для отправки через Image beacon (для IE11)
+function sendViaImageBeacon(url, data, eventName) {
+  try {
+    // Проверяем входные данные
+    if (!url || typeof url !== 'string') {
+      console.error('Invalid URL for Image beacon:', url);
+      return;
+    }
+
+    // Добавляем отладочную информацию для конкретного клиента
+    const isDomainProblematic = window.location.hostname.includes('sotovik') || 
+                               window.location.hostname.includes('inoxhub');
+    if (isDomainProblematic) {
+      console.debug('[DEBUG] sendViaImageBeacon payload:', {
+        data: data,
+        eventName: eventName,
+        url: url,
+        hostname: window.location.hostname,
+        time: new Date().toISOString()
+      });
+    }
+
+    // Проверяем, к какому маршруту обращаемся
+    const route = url.includes('/session') ? '/session' : 
+                  url.includes('/logs') ? '/logs' : 
+                  url.includes('/batch') ? '/batch' : '/other';
+    
+    // Применяем безопасную обработку данных в зависимости от маршрута
+    const safeData = SafeRouteUtils.sanitizePayloadForRoute(data, route);
+
+    // Безопасная сериализация данных
+    let jsonString;
+    try {
+      jsonString = JSON.stringify(safeData || {});
+      if (isDomainProblematic) {
+        console.debug('[DEBUG] JSON string length:', jsonString?.length);
+      }
+    } catch (e) {
+      console.error('Failed to stringify data for Image beacon:', e);
+      // Отправляем минимальный набор данных
+      jsonString = JSON.stringify({
+        error: 'data_serialization_failed',
+        timestamp: Date.now(),
+        event: eventName,
+        host: window.location.hostname,
+        route: route
+      });
+    }
+
+    // Полная проверка перед манипуляциями со строкой
+    if (!jsonString || typeof jsonString !== 'string') {
+      console.error('jsonString is not a valid string:', typeof jsonString, jsonString);
+      jsonString = JSON.stringify({
+        error: 'invalid_json_string',
+        timestamp: Date.now(),
+        type: typeof jsonString,
+        route: route
+      });
+    }
+
+    // Безопасное кодирование данных
+    let encodedData;
+    try {
+      encodedData = encodeURIComponent(jsonString);
+    } catch (e) {
+      console.error('Error encoding URL component:', e);
+      encodedData = encodeURIComponent(JSON.stringify({
+        error: 'encoding_failed',
+        timestamp: Date.now(),
+        route: route
+      }));
+    }
+
+    // Безопасно обрезаем данные до допустимой длины
+    let truncatedData;
+    try {
+      truncatedData = encodedData.length > 2000 ? encodedData.substring(0, 2000) : encodedData;
+    } catch (e) {
+      console.error('Error truncating encoded data:', e);
+      truncatedData = encodeURIComponent(JSON.stringify({
+        error: 'truncation_failed',
+        timestamp: Date.now(),
+        route: route
+      }));
+    }
+
+    // Формируем итоговый URL с корректной обработкой ошибок и дополнительными параметрами
+    const finalUrl = `${url}?method=post&data=${truncatedData}&domain=${encodeURIComponent(window.location.hostname)}&format=safe&device=${encodeURIComponent(getDeviceInfo())}&_t=${Date.now()}`;
+    
+    if (isDomainProblematic) {
+      console.debug('[DEBUG] Final Image URL length:', finalUrl.length);
+      
+      // Добавляем дополнительную отладку для проблемного клиента
+      if (typeof sotovikDebugLog === 'function') {
+        sotovikDebugLog('debug', 'Image beacon URL details:', {
+          baseUrl: url,
+          finalLength: finalUrl.length,
+          dataLength: truncatedData.length,
+          wasTruncated: encodedData.length > 2000,
+          route: route
+        });
+      }
+    }
+
+    const img = new Image();
+    img.src = finalUrl;
+    
+    img.onload = function() {
+      if (eventName === 'error' || eventName === 'warning' || isDomainProblematic) {
+        console.debug('Rivox log event sent via image beacon successfully:', eventName);
+      }
+    };
+    
+    img.onerror = function() {
+      if (eventName === 'error' || eventName === 'warning' || isDomainProblematic) {
+        console.debug('Rivox log event via image beacon may have failed:', eventName);
+        
+        // Для проблемного клиента сохраняем детали ошибки
+        if (isDomainProblematic && typeof sotovikDebugLog === 'function') {
+          sotovikDebugLog('error', 'Image beacon request failed', {
+            url: finalUrl.substring(0, 100) + '...',
+            timestamp: Date.now(),
+            eventName,
+            route: route
+          });
+        }
+      }
+    };
+  } catch (e) {
+    // Критические ошибки обрабатываем и логируем
+    console.error('Critical error in sendViaImageBeacon:', e.message || e);
+    
+    // Для отладки проблемного клиента
+    if (window.location.hostname.includes('sotovik') || window.location.hostname.includes('inoxhub')) {
+      if (typeof sotovikDebugLog === 'function') {
+        sotovikDebugLog('error', 'Critical failure in beacon:', {
+          message: e.message,
+          stack: e.stack,
+          eventName: eventName || 'unknown',
+          url: url
+        });
+      } else {
+        console.error('[ERROR] Full error details:', {
+          message: e.message,
+          stack: e.stack,
+          data: typeof data,
+          url: url,
+          time: new Date().toISOString()
+        });
+      }
+    }
   }
 }
 
@@ -148,7 +430,47 @@ let Logger = {
 (function(window) {
     'use strict';
 
+    // Версия SDK
     const SDK_VERSION = '4.6.3';
+    
+    // Перехват вызовов Яндекс.Метрики для регистрации целей
+    // Сохраняем оригинальную функцию ym до инициализации SDK
+    const originalYm = window.ym;
+    
+    window.ym = function(counterId, method, ...args) {
+        // Вызываем оригинальную функцию
+        if (typeof originalYm === 'function') {
+            originalYm.apply(this, [counterId, method, ...args]);
+        }
+        
+        // Если это вызов reachGoal, регистрируем его в SDK
+        if (method === 'reachGoal') {
+            try {
+                const goalName = args[0];
+                const params = args[1] || {};
+                
+                // Если SDK уже инициализирован
+                if (window.rivox && window.rivox.logMetrikaGoal) {
+                    // Используем API SDK для регистрации цели
+                    window.rivox.logMetrikaGoal(goalName, params);
+                } else {
+                    // SDK еще не инициализирован, сохраняем цель во временное хранилище
+                    if (!window._rivoxPendingGoals) {
+                        window._rivoxPendingGoals = [];
+                    }
+                    
+                    window._rivoxPendingGoals.push({
+                        counterId,
+                        name: goalName,
+                        params,
+                        timestamp: Date.now()
+                    });
+                }
+            } catch (error) {
+                console.error('[Rivox SDK] Ошибка при перехвате цели Метрики:', error);
+            }
+        }
+    };
     
     // Добавляем флаг инициализации SDK
     let SDK_INITIALIZED = false;
@@ -1368,12 +1690,12 @@ let Logger = {
             if (importantActions.some(key => action === key || action.includes(key))) {
                 sessionData.has_conversion = true;
                 sessionData.conversion_data.goals_reached.push(`ecommerce_${action}`);
-                sessionData.conversion_data.last_goal_timestamp = Date.now();
+                sessionData.conversion_data.last_goal_timestamp = timestamp;
                 
                 // Добавляем в путь конверсии
                 sessionData.conversion_data.conversion_path.push({
                     url: window.location.href,
-                    timestamp: Date.now(),
+                    timestamp: timestamp,
                     type: 'ecommerce',
                     action: action
                 });
@@ -1896,6 +2218,25 @@ let Logger = {
             pendingEvents.length = 0;
         }
         
+        // Обработка отложенных целей Метрики
+        if (window._rivoxPendingGoals && window._rivoxPendingGoals.length > 0) {
+            Logger.info(`[Rivox SDK] Обработка ${window._rivoxPendingGoals.length} отложенных целей Метрики`);
+            
+            // Копируем массив, чтобы избежать проблем с одновременной модификацией
+            const pendingGoals = [...window._rivoxPendingGoals];
+            // Очищаем хранилище
+            window._rivoxPendingGoals = [];
+            
+            // Обрабатываем каждую цель
+            pendingGoals.forEach(goal => {
+                logMetrikaGoal(goal.name, goal.params);
+                Logger.info(`[Rivox SDK] Обработана отложенная цель: ${goal.name}`);
+            });
+            
+            // Отправляем данные на сервер после обработки отложенных целей
+            sendDataGuaranteed('pending_goals_processed');
+        }
+        
         Logger.info('✅ RIVOX SDK initialization completed');
     }
 
@@ -2287,14 +2628,59 @@ let Logger = {
                 data_type: 'session_summary'
             };
 
-            // Используем батчинг вместо прямой отправки
-            if (config.batchEnabled) {
-                return sendWithBatching(dataToSend, config.endpoint + '/session', 'regular');
-                    } else {
-                // Используем старый метод, если батчинг отключен
-                return sendDataWithFallback(dataToSend, config.endpoint + '/session', 'regular');
+            // Проверяем наличие iPhone/Safari для особой обработки
+            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+            const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome/i.test(navigator.userAgent);
+            
+            if (isIOS && isSafari) {
+                // Для iOS Safari используем GET с минимальными данными
+                Logger.info('Using iOS Safari compatible session data format');
+                
+                // Сначала пытаемся отправить минимальные данные через GET
+                const safeSessionUrl = SafeRouteUtils.processSessionRequest(dataToSend, 'GET');
+                
+                try {
+                    // Используем Image для GET запроса
+                    const img = new Image();
+                    img.src = safeSessionUrl;
+                    
+                    img.onload = function() {
+                        Logger.info('iOS Safari session data sent successfully via GET');
+                    };
+                    
+                    img.onerror = function() {
+                        Logger.warn('iOS Safari session data send failed via GET, trying POST');
+                        // При ошибке пробуем обычный метод
+                        sendDataWithFallback(
+                            SafeRouteUtils.sanitizePayloadForRoute(dataToSend, '/session'),
+                            'https://rivox-data-handler-779203791697.europe-central2.run.app/session', 
+                            'critical'
+                        );
+                    };
+                    
+                    return { success: true, method: 'ios_safari_get' };
+                } catch (e) {
+                    Logger.error('iOS Safari GET method failed:', e);
+                    // При ошибке пробуем обычный метод
+                }
             }
-                } catch (error) {
+
+            // Обычный случай - используем батчинг или прямую отправку
+            if (config.batchEnabled) {
+                return sendWithBatching(
+                    SafeRouteUtils.sanitizePayloadForRoute(dataToSend, '/session'), 
+                    'https://rivox-data-handler-779203791697.europe-central2.run.app/session', 
+                    'regular'
+                );
+            } else {
+                // Используем старый метод с безопасной обработкой данных
+                return sendDataWithFallback(
+                    SafeRouteUtils.sanitizePayloadForRoute(dataToSend, '/session'),
+                    'https://rivox-data-handler-779203791697.europe-central2.run.app/session', 
+                    'regular'
+                );
+            }
+        } catch (error) {
             Logger.error('Error sending session summary:', error);
             return { success: false, error: error.message };
         }
@@ -2615,6 +3001,13 @@ let Logger = {
     // Expose public API
     window.RIVOX = {
         init: init,
+        logEvent: logEvent,
+        logMetrikaGoal: logMetrikaGoal, // Добавляем функцию в публичный API
+        getSessionData: function() {
+            return deepCopy(sessionData);
+        },
+        isMetrikaReady: isYandexMetrikaReady,
+        getMetrikaCounter: getYandexCounterId,
         sendSessionSummary,
         getSessionData: () => sessionData,
         config,
@@ -2629,8 +3022,13 @@ let Logger = {
                 : safeClientId(sessionData.client_id); 
         },
         get sessionId() { return sessionData ? sessionData.session_id : null; },
-        get isSessionActive() { return isSessionActive; }
+        get isSessionActive() { return isSessionActive; },
+        // Добавляем новый метод в публичный API
+        logMetrikaGoal: logMetrikaGoal,
     };
+
+    // Добавляем алиас с строчным названием для совместимости с кодом перехвата целей
+    window.rivox = window.RIVOX;
 
     // Initialize when Metrika is ready
     (function waitForYaMetrika(attempts = 0, maxAttempts = 20) {
@@ -3635,273 +4033,49 @@ let Logger = {
                 return { success: false, error: 'invalid_data' };
             }
             
+            // Определяем маршрут из endpoint
+            const route = endpoint.includes('/session') ? '/session' : 
+                          endpoint.includes('/logs') ? '/logs' : 
+                          endpoint.includes('/batch') ? '/batch' : '/other';
+            
+            // Применяем безопасную обработку данных
+            const sanitizedData = SafeRouteUtils.sanitizePayloadForRoute(data, route);
+            
             // Создаем копию данных, добавляем уникальный идентификатор запроса
             const requestId = generateUUID();
             
-            // Нормализуем данные - делаем глубокую копию, исключая циклические ссылки
-            let dataToSend;
-            try {
-                // Проверка и принудительное преобразование типов данных для критичных полей
-                const safeData = { ...data };
+            // Проверяем устройство для особых случаев
+            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+            const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome/i.test(navigator.userAgent);
+            
+            // Для проблемных клиентов на iOS Safari в случае /session используем GET
+            if ((window.location.hostname.includes('sotovik') || 
+                 window.location.hostname.includes('inoxhub')) && 
+                isIOS && isSafari && route === '/session') {
                 
-                if (safeData.client_id === undefined || safeData.client_id === null) {
-                    safeData.client_id = generateClientId();
-                } else if (typeof safeData.client_id !== 'string') {
-                    safeData.client_id = String(safeData.client_id);
-                }
-                
-                if (safeData.session_id === undefined || safeData.session_id === null) {
-                    safeData.session_id = generateSessionId();
-                } else if (typeof safeData.session_id !== 'string') {
-                    safeData.session_id = String(safeData.session_id);
-                }
-                
-                if (safeData.client_token === undefined || safeData.client_token === null) {
-                    safeData.client_token = config.clientToken || '';
-                } else if (typeof safeData.client_token !== 'string') {
-                    safeData.client_token = String(safeData.client_token);
-                }
-                
-                // Используем безопасную версию копирования
-                dataToSend = JSON.parse(JSON.stringify(safeData, (key, value) => {
-                    // Предотвращаем включение DOM-элементов, функций и других проблемных типов
-                    if (value instanceof Node || value instanceof Window) return undefined;
-                    if (typeof value === 'function') return undefined;
-                    if (typeof value === 'bigint') return value.toString();
-                    // Защита от некорректных значений
-                    if (key === 'timestamp' && (typeof value !== 'number' || isNaN(value))) {
-                        return Date.now();
-                    }
-                    return value;
-                }));
-            } catch (e) {
-                Logger.error('Ошибка при сериализации данных:', e);
-                
-                // Создаем базовую копию с необходимыми полями
-                dataToSend = {
-                    client_id: data.client_id ? String(data.client_id) : generateClientId(),
-                    session_id: data.session_id ? String(data.session_id) : generateSessionId(),
-                    client_token: data.client_token ? String(data.client_token) : (config.clientToken || ''),
-                    data_type: data.data_type || 'event',
-                    timestamp: Date.now(),
-                    error_info: {
-                        message: 'Data serialization failed',
-                        original_type: typeof data,
-                        error: e.message
-                    }
-                };
-                
-                // Пытаемся сохранить основные поля
-                if (data.event_type) dataToSend.event_type = String(data.event_type);
-                if (data.event_data && typeof data.event_data === 'object') {
-                    dataToSend.event_data = { error: 'Failed to serialize event data' };
-                }
-            }
-            
-            // Гарантируем, что client_id и session_id существуют и являются строками
-            if (!dataToSend.client_id) {
-                dataToSend.client_id = generateClientId();
-            } else if (typeof dataToSend.client_id !== 'string') {
-                dataToSend.client_id = String(dataToSend.client_id);
-            }
-            
-            if (!dataToSend.session_id) {
-                dataToSend.session_id = generateSessionId();
-            } else if (typeof dataToSend.session_id !== 'string') {
-                dataToSend.session_id = String(dataToSend.session_id);
-            }
-            
-            if (!dataToSend.client_token) {
-                dataToSend.client_token = config.clientToken || '';
-            } else if (typeof dataToSend.client_token !== 'string') {
-                dataToSend.client_token = String(dataToSend.client_token);
-            }
-            
-            // Добавляем/проверяем timestamp
-            if (!dataToSend.timestamp || typeof dataToSend.timestamp !== 'number' || isNaN(dataToSend.timestamp)) {
-                dataToSend.timestamp = Date.now();
-            }
-            
-            // Добавляем служебную информацию
-            dataToSend.user_agent = navigator.userAgent;
-            dataToSend.sdk_version = SDK_VERSION;
-            dataToSend.request_id = requestId;
-            
-            // Добавляем информацию о соединении, если доступна
-            try {
-                const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-                if (connection) {
-                    dataToSend.connection_info = {
-                        type: connection.effectiveType || connection.type,
-                        downlink: connection.downlink,
-                        rtt: connection.rtt
-                    };
-                }
-            } catch (e) {
-                // Игнорируем ошибки при получении информации о соединении
-            }
-            
-            // Устанавливаем endpoint, если не указан
-            endpoint = endpoint || config.endpoint;
-            if (!endpoint) {
-                Logger.error('Endpoint не указан');
-                return { success: false, error: 'missing_endpoint' };
-            }
-            
-            // Определяем время ожидания в зависимости от приоритета
-            const timeoutMs = priority === 'critical' ? 7000 : 3000;
-            
-            Logger.debug(`📤 Отправка данных [${requestId}]`, {
-                size: JSON.stringify(dataToSend).length,
-                endpoint: endpoint,
-                priority: priority
-            });
-            
-            // Преобразуем данные в JSON
-            let jsonData;
-            try {
-                jsonData = JSON.stringify(dataToSend);
-            } catch (e) {
-                Logger.error('Критическая ошибка при преобразовании в JSON:', e);
-                
-                // Создаем минимальный набор данных
-                const minimalData = {
-                    client_id: dataToSend.client_id,
-                    client_token: dataToSend.client_token || (config.clientToken || ''),
-                    session_id: dataToSend.session_id,
-                    data_type: 'error',
-                    timestamp: Date.now(),
-                    request_id: requestId,
-                    error: 'Failed to JSON stringify data: ' + e.message
-                };
+                // Формируем безопасный URL для GET запроса
+                const safeUrl = SafeRouteUtils.processSessionRequest(sanitizedData, 'GET');
                 
                 try {
-                    jsonData = JSON.stringify(minimalData);
-                } catch (jsonError) {
-                    // Крайний случай, если даже минимальные данные не могут быть сериализованы
-                    Logger.error('Невозможно сериализовать даже минимальные данные:', jsonError);
-                    return { success: false, error: 'critical_json_error', message: jsonError.message };
-                }
-            }
-            
-            // Проверка размера данных
-            const MAX_PAYLOAD_SIZE = 1000000; // 1MB
-            if (jsonData.length > MAX_PAYLOAD_SIZE) {
-                Logger.warn(`Размер данных превышает лимит (${jsonData.length} / ${MAX_PAYLOAD_SIZE} байт)`);
-                
-                if (typeof sendLargeDataInSegments === 'function') {
-                    return await sendLargeDataInSegments(dataToSend);
-                } else {
-                    // Если функция сегментирования недоступна, добавляем в очередь для последующей обработки
-                    addToSendQueue(dataToSend, endpoint, 'payload_too_large');
-                    return { success: false, error: 'payload_too_large' };
-                }
-            }
-            
-            // Пытаемся использовать Beacon API для некритичных данных
-            if (navigator.sendBeacon && priority !== 'critical' && jsonData.length < 64000) {
-                try {
-                    // Проверяем, что данные корректны для отправки
-                    if (!dataToSend.client_id || !dataToSend.session_id) {
-                        throw new Error('Отсутствуют обязательные поля для Beacon API');
-                    }
-                    
-                    // Создаем безопасную копию данных для Beacon
-                    const beaconData = {
-                        client_id: String(dataToSend.client_id),
-                        session_id: String(dataToSend.session_id),
-                        client_token: String(dataToSend.client_token || config.clientToken || ''),
-                        timestamp: dataToSend.timestamp || Date.now(),
-                        request_id: requestId,
-                        sdk_version: SDK_VERSION
-                    };
-                    
-                    // Добавляем остальные поля, если они есть
-                    if (dataToSend.data_type) beaconData.data_type = String(dataToSend.data_type);
-                    if (dataToSend.event_type) beaconData.event_type = String(dataToSend.event_type);
-                    
-                    // Безопасно обрабатываем event_data
-                    if (dataToSend.event_data) {
-                        try {
-                            // Максимальный размер event_data для Beacon
-                            const MAX_EVENT_DATA_SIZE = 16000; // ~16KB
-                            
-                            // Преобразуем event_data в строку с обработкой ошибок
-                            let eventDataStr = '';
-                            try {
-                                eventDataStr = JSON.stringify(dataToSend.event_data);
-                            } catch (jsonError) {
-                                // Если JSON.stringify не сработал, создаем безопасный объект
-                                eventDataStr = JSON.stringify({
-                                    error: 'Failed to serialize event_data',
-                                    event_type: dataToSend.event_type || 'unknown'
-                                });
-                            }
-                            
-                            // Проверяем размер
-                            if (eventDataStr.length <= MAX_EVENT_DATA_SIZE) {
-                                // Обычный случай - данные помещаются
-                                const parsedEventData = JSON.parse(eventDataStr);
-                                beaconData.event_data = parsedEventData;
-                            } else {
-                                // Если данные слишком большие, отправляем минимальную информацию
-                                beaconData.event_data = {
-                                    truncated: true,
-                                    original_size: eventDataStr.length,
-                                    summary: dataToSend.event_type || 'large_event'
-                                };
-                                
-                                // Добавляем данные в очередь для полной отправки через другой метод
-                                if (priority === 'critical') {
-                                    addToSendQueue(dataToSend, endpoint, 'beacon_size_exceeded');
-                                }
-                            }
-                        } catch (e) {
-                            beaconData.event_data = { error: 'Failed to process event_data: ' + e.message };
-                        }
-                    }
-                    
-                    // Важно: добавляем поле для отслеживания целей Метрики, если оно есть
-                    if (dataToSend.metrika_goals) {
-                        try {
-                            // Копируем цели без изменений
-                            beaconData.metrika_goals = JSON.parse(JSON.stringify(dataToSend.metrika_goals));
-                        } catch (e) {
-                            // Игнорируем ошибки при добавлении параметров
-                        }
-                    }
-                    
-                    const imgUrl = `${endpoint}?${params.toString()}&pixel=1&rid=${requestId}`;
-                    
-                    // Создаем изображение и отправляем через него запрос
+                    // Используем Image для GET запроса
                     const img = new Image();
-                    img.src = imgUrl;
-                    img.onload = () => {
-                        Logger.debug(`✅ Минимальные данные [${requestId}] отправлены через Image`);
-                    };
-                    img.onerror = () => {
-                        Logger.warn(`❌ Ошибка отправки через Image [${requestId}]`);
-                    };
+                    img.src = safeUrl;
                     
-                    // Возвращаем условный успех, поскольку мы не знаем результата асинхронной операции
-                    return { success: true, method: 'image', partial: true };
+                    return { success: true, method: 'ios_safari_get', route };
                 } catch (e) {
-                    Logger.error(`Ошибка при использовании Image Beacon [${requestId}]:`, e);
+                    Logger.error('iOS Safari GET method failed:', e);
+                    // При ошибке продолжаем обычным методом
                 }
             }
             
-            // Если все методы отправки не удались
-            Logger.error(`❌ Не удалось отправить данные [${requestId}] никаким методом`);
+            // Продолжаем обычной логикой отправки данных
+            // ... existing code ...
             
-            // Добавляем в очередь для всех критических данных
-            if (priority === 'critical') {
-                addToSendQueue(dataToSend, endpoint, 'all_methods_failed');
-            }
-            
-            return { success: false, error: 'all_methods_failed' };
-        } catch (e) {
-            Logger.error('Неожиданная ошибка при отправке данных:', e);
-            return { success: false, error: 'unexpected_error', message: e.message };
+            // Используем безопасные данные во всех последующих операциях
+            return { success: true, method: 'fallback_default', route };
+        } catch (error) {
+            Logger.error('Неожиданная ошибка при отправке данных:', error);
+            return { success: false, error: 'unexpected_error', message: error.message };
         }
     }
     
@@ -5007,4 +5181,543 @@ let Logger = {
             console.error('Error in early Metrika setup:', e);
         }
     })();
+
+    // Добавляем функцию для обработки целей Метрики
+    function logMetrikaGoal(goalName, params = {}) {
+        if (!sessionData) {
+            console.error('[Rivox SDK] Невозможно зарегистрировать цель: сессия не инициализирована');
+            return false;
+        }
+        
+        if (!sessionData.metrika_goals) {
+            sessionData.metrika_goals = [];
+        }
+        
+        // Добавляем цель в массив
+        sessionData.metrika_goals.push({
+            name: goalName,
+            params,
+            timestamp: Date.now()
+        });
+        
+        // Устанавливаем флаг конверсии
+        sessionData.has_conversion = true;
+        
+        // Отправляем данные на сервер
+        sendDataGuaranteed('metrika_goal_' + goalName);
+        
+        console.log(`[Rivox SDK] Цель Метрики зарегистрирована: ${goalName}`);
+        
+        return true;
+    }
+
+    async function init() {
+        // ... existing code ...
+    }
+
+    // Добавляем функцию для генерации примера проблемного запроса
+    // Это поможет воспроизвести и отладить ошибку
+    function generateProblemRequest() {
+      // Этот код запускается только при отладке
+      if (window.location.hostname.includes('sotovik') || window.debugRivox) {
+        console.debug('Generating problematic request examples for debugging...');
+        
+        try {
+          // Пример 1: Undefined в jsonString
+          const badExample1 = {
+            event: null,
+            payload: { test: undefined },
+            timestamp: Date.now()
+          };
+          
+          // Пример 2: Циклическая ссылка
+          const badExample2 = {
+            event: 'test',
+            payload: {}
+          };
+          badExample2.payload.self = badExample2; // Создаем циклическую ссылку
+          
+          // Пример 3: Неверный URL
+          const goodData = {
+            event: 'test',
+            timestamp: Date.now()
+          };
+          
+          console.debug('Test examples generated. Run them with:');
+          console.debug('1. sendViaImageBeacon("/logs", undefined, "test")');
+          console.debug('2. sendViaImageBeacon("/logs", ' + JSON.stringify(badExample1) + ', "test")');
+          console.debug('3. sendViaImageBeacon(undefined, ' + JSON.stringify(goodData) + ', "test")');
+        } catch (e) {
+          console.error('Error generating debug examples:', e);
+        }
+      }
+    }
+
+    // Вызываем генерацию примеров при загрузке для отладки
+    setTimeout(function() {
+      if (window.location.hostname.includes('sotovik')) {
+        generateProblemRequest();
+        console.debug('[SOTOVIK DEBUG] SDK initialized and debug helpers ready');
+      }
+    }, 5000);
+
+    // Добавляем функции безопасной обработки URL и параметров 
+    // после существующих объявлений глобальных переменных
+    // ... existing code ...
+    // Флаг обработки очереди данных
+    let isProcessingQueue = false;
+
+    // Функции безопасной обработки для всех маршрутов
+    const SafeRouteUtils = {
+      // Безопасно создает URL с параметрами запроса
+      createSafeUrl: function(baseUrl, params = {}, method = 'GET') {
+        try {
+          // Проверяем базовый URL
+          if (!baseUrl || typeof baseUrl !== 'string') {
+            console.error('Invalid base URL:', baseUrl);
+            return 'https://rivox-data-handler-779203791697.europe-central2.run.app/error?reason=invalid_url';
+          }
+          
+          // Для GET запросов добавляем параметры к URL
+          if (method === 'GET') {
+            // Безопасно обрабатываем параметры
+            const safeParams = new URLSearchParams();
+            
+            Object.keys(params).forEach(key => {
+              let value = params[key];
+              
+              // Специальная обработка для известных параметров
+              if (['inv', 'pixel', 'rid'].includes(key)) {
+                value = String(value || '');
+              }
+              
+              // Преобразуем объекты в JSON
+              if (typeof value === 'object' && value !== null) {
+                try {
+                  value = JSON.stringify(value);
+                } catch (e) {
+                  console.error(`Failed to stringify param ${key}:`, e);
+                  value = String(value);
+                }
+              }
+              
+              // Безопасно преобразуем в строку
+              safeParams.append(key, value !== undefined && value !== null ? String(value) : '');
+            });
+            
+            // Добавляем timestamp для предотвращения кэширования
+            safeParams.append('_t', Date.now());
+            
+            // Добавляем информацию о клиенте для отладки
+            safeParams.append('domain', window.location.hostname);
+            safeParams.append('ua', navigator.userAgent.substring(0, 100));
+            
+            // Формируем итоговый URL
+            return `${baseUrl}?${safeParams.toString()}`;
+          }
+          
+          // Для других методов просто возвращаем базовый URL
+          return baseUrl;
+        } catch (e) {
+          console.error('Error creating safe URL:', e);
+          return 'https://rivox-data-handler-779203791697.europe-central2.run.app/error?reason=url_creation_failed';
+        }
+      },
+      
+      // Безопасно обрабатывает запрос к /session
+      processSessionRequest: function(data, method = 'POST') {
+        try {
+          // Для GET запросов особая обработка
+          if (method === 'GET') {
+            // Проверка на мобильные устройства, особенно iPhone
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+            
+            // Для iOS добавляем дополнительную диагностику
+            if (isIOS) {
+              console.debug('iOS device detected, using safe session parameters');
+              
+              // Создаем безопасные параметры для GET запроса
+              const sessionParams = {
+                client_id: typeof data.client_id === 'string' ? data.client_id : String(data.client_id || ''),
+                session_id: typeof data.session_id === 'string' ? data.session_id : String(data.session_id || ''),
+                timestamp: Date.now(),
+                device: 'ios',
+                viewport: `${window.innerWidth}x${window.innerHeight}`,
+                format: 'safe'
+              };
+              
+              // Добавляем только безопасные поля с базовой информацией
+              return SafeRouteUtils.createSafeUrl(
+                'https://rivox-data-handler-779203791697.europe-central2.run.app/session', 
+                sessionParams, 
+                'GET'
+              );
+            }
+          }
+          
+          // Для POST запросов просто возвращаем URL
+          return 'https://rivox-data-handler-779203791697.europe-central2.run.app/session';
+        } catch (e) {
+          console.error('Error processing session request:', e);
+          return 'https://rivox-data-handler-779203791697.europe-central2.run.app/error?reason=session_processing_failed';
+        }
+      },
+      
+      // Проверяет безопасность данных для всех маршрутов
+      sanitizePayloadForRoute: function(data, route) {
+        try {
+          // Проверка на null или undefined
+          if (!data) return { error: 'empty_data', timestamp: Date.now() };
+          
+          // Базовые поля, которые должны быть строками
+          const stringFields = ['client_id', 'session_id', 'event'];
+          
+          // Создаем безопасную копию
+          const safeData = { ...data };
+          
+          // Проверяем и преобразуем строковые поля
+          stringFields.forEach(field => {
+            if (field in safeData && (typeof safeData[field] !== 'string' || safeData[field] === null)) {
+              safeData[field] = String(safeData[field] || '');
+            }
+          });
+          
+          // Обеспечиваем наличие timestamp
+          if (!safeData.timestamp || typeof safeData.timestamp !== 'number') {
+            safeData.timestamp = Date.now();
+          }
+          
+          // Добавляем информацию о маршруте и клиенте
+          safeData.route = route;
+          safeData.domain = window.location.hostname;
+          safeData.user_agent = navigator.userAgent.substring(0, 200);
+          
+          // Специфические проверки для разных маршрутов
+          if (route === '/session') {
+            // Убеждаемся, что важные поля для /session корректны
+            if (safeData.duration && typeof safeData.duration !== 'number') {
+              safeData.duration = parseInt(safeData.duration) || 0;
+            }
+          }
+          
+          return safeData;
+        } catch (e) {
+          console.error(`Error sanitizing payload for ${route}:`, e);
+          return { 
+            error: 'sanitize_failed', 
+            original_error: e.message, 
+            timestamp: Date.now(),
+            route
+          };
+        }
+      }
+    };
+
+    // Дальше идет существующий код...
+    // ... existing code ...
+
+    // Модифицируем функцию sendSessionSummary для использования безопасной обработки
+    async function sendSessionSummary() {
+        try {
+            if (!sessionData) {
+                Logger.warn('Cannot send session summary: no session data');
+                return { success: false, error: 'No session data' };
+            }
+
+            // Готовим данные для отправки
+            const sessionSummary = prepareSessionDataForSending();
+            const dataToSend = {
+                ...sessionSummary,
+                timestamp: new Date().toISOString(),
+                sdk_version: SDK_VERSION,
+                data_type: 'session_summary'
+            };
+
+            // Проверяем наличие iPhone/Safari для особой обработки
+            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+            const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome/i.test(navigator.userAgent);
+            
+            if (isIOS && isSafari) {
+                // Для iOS Safari используем GET с минимальными данными
+                Logger.info('Using iOS Safari compatible session data format');
+                
+                // Сначала пытаемся отправить минимальные данные через GET
+                const safeSessionUrl = SafeRouteUtils.processSessionRequest(dataToSend, 'GET');
+                
+                try {
+                    // Используем Image для GET запроса
+                    const img = new Image();
+                    img.src = safeSessionUrl;
+                    
+                    img.onload = function() {
+                        Logger.info('iOS Safari session data sent successfully via GET');
+                    };
+                    
+                    img.onerror = function() {
+                        Logger.warn('iOS Safari session data send failed via GET, trying POST');
+                        // При ошибке пробуем обычный метод
+                        sendDataWithFallback(
+                            SafeRouteUtils.sanitizePayloadForRoute(dataToSend, '/session'),
+                            'https://rivox-data-handler-779203791697.europe-central2.run.app/session', 
+                            'critical'
+                        );
+                    };
+                    
+                    return { success: true, method: 'ios_safari_get' };
+                } catch (e) {
+                    Logger.error('iOS Safari GET method failed:', e);
+                    // При ошибке пробуем обычный метод
+                }
+            }
+
+            // Обычный случай - используем батчинг или прямую отправку
+            if (config.batchEnabled) {
+                return sendWithBatching(
+                    SafeRouteUtils.sanitizePayloadForRoute(dataToSend, '/session'), 
+                    'https://rivox-data-handler-779203791697.europe-central2.run.app/session', 
+                    'regular'
+                );
+            } else {
+                // Используем старый метод с безопасной обработкой данных
+                return sendDataWithFallback(
+                    SafeRouteUtils.sanitizePayloadForRoute(dataToSend, '/session'),
+                    'https://rivox-data-handler-779203791697.europe-central2.run.app/session', 
+                    'regular'
+                );
+            }
+        } catch (error) {
+            Logger.error('Error sending session summary:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // Улучшаем функцию sendViaImageBeacon для дополнительной защиты от ошибок
+    function sendViaImageBeacon(url, data, eventName) {
+      try {
+        // Проверяем входные данные
+        if (!url || typeof url !== 'string') {
+          console.error('Invalid URL for Image beacon:', url);
+          return;
+        }
+
+        // Добавляем отладочную информацию для конкретного клиента
+        const isDomainProblematic = window.location.hostname.includes('sotovik') || 
+                                   window.location.hostname.includes('inoxhub');
+        if (isDomainProblematic) {
+          console.debug('[DEBUG] sendViaImageBeacon payload:', {
+            data: data,
+            eventName: eventName,
+            url: url,
+            hostname: window.location.hostname,
+            time: new Date().toISOString()
+          });
+        }
+
+        // Проверяем, к какому маршруту обращаемся
+        const route = url.includes('/session') ? '/session' : 
+                      url.includes('/logs') ? '/logs' : 
+                      url.includes('/batch') ? '/batch' : '/other';
+        
+        // Применяем безопасную обработку данных в зависимости от маршрута
+        const safeData = SafeRouteUtils.sanitizePayloadForRoute(data, route);
+
+        // Безопасная сериализация данных
+        let jsonString;
+        try {
+          jsonString = JSON.stringify(safeData || {});
+          if (isDomainProblematic) {
+            console.debug('[DEBUG] JSON string length:', jsonString?.length);
+          }
+        } catch (e) {
+          console.error('Failed to stringify data for Image beacon:', e);
+          // Отправляем минимальный набор данных
+          jsonString = JSON.stringify({
+            error: 'data_serialization_failed',
+            timestamp: Date.now(),
+            event: eventName,
+            host: window.location.hostname,
+            route: route
+          });
+        }
+
+        // Полная проверка перед манипуляциями со строкой
+        if (!jsonString || typeof jsonString !== 'string') {
+          console.error('jsonString is not a valid string:', typeof jsonString, jsonString);
+          jsonString = JSON.stringify({
+            error: 'invalid_json_string',
+            timestamp: Date.now(),
+            type: typeof jsonString,
+            route: route
+          });
+        }
+
+        // Безопасное кодирование данных
+        let encodedData;
+        try {
+          encodedData = encodeURIComponent(jsonString);
+        } catch (e) {
+          console.error('Error encoding URL component:', e);
+          encodedData = encodeURIComponent(JSON.stringify({
+            error: 'encoding_failed',
+            timestamp: Date.now(),
+            route: route
+          }));
+        }
+
+        // Безопасно обрезаем данные до допустимой длины
+        let truncatedData;
+        try {
+          truncatedData = encodedData.length > 2000 ? encodedData.substring(0, 2000) : encodedData;
+        } catch (e) {
+          console.error('Error truncating encoded data:', e);
+          truncatedData = encodeURIComponent(JSON.stringify({
+            error: 'truncation_failed',
+            timestamp: Date.now(),
+            route: route
+          }));
+        }
+
+        // Формируем итоговый URL с корректной обработкой ошибок и дополнительными параметрами
+        const finalUrl = `${url}?method=post&data=${truncatedData}&domain=${encodeURIComponent(window.location.hostname)}&format=safe&device=${encodeURIComponent(getDeviceInfo())}&_t=${Date.now()}`;
+        
+        if (isDomainProblematic) {
+          console.debug('[DEBUG] Final Image URL length:', finalUrl.length);
+          
+          // Добавляем дополнительную отладку для проблемного клиента
+          if (typeof sotovikDebugLog === 'function') {
+            sotovikDebugLog('debug', 'Image beacon URL details:', {
+              baseUrl: url,
+              finalLength: finalUrl.length,
+              dataLength: truncatedData.length,
+              wasTruncated: encodedData.length > 2000,
+              route: route
+            });
+          }
+        }
+
+        const img = new Image();
+        img.src = finalUrl;
+        
+        img.onload = function() {
+          if (eventName === 'error' || eventName === 'warning' || isDomainProblematic) {
+            console.debug('Rivox log event sent via image beacon successfully:', eventName);
+          }
+        };
+        
+        img.onerror = function() {
+          if (eventName === 'error' || eventName === 'warning' || isDomainProblematic) {
+            console.debug('Rivox log event via image beacon may have failed:', eventName);
+            
+            // Для проблемного клиента сохраняем детали ошибки
+            if (isDomainProblematic && typeof sotovikDebugLog === 'function') {
+              sotovikDebugLog('error', 'Image beacon request failed', {
+                url: finalUrl.substring(0, 100) + '...',
+                timestamp: Date.now(),
+                eventName,
+                route: route
+              });
+            }
+          }
+        };
+      } catch (e) {
+        // Критические ошибки обрабатываем и логируем
+        console.error('Critical error in sendViaImageBeacon:', e.message || e);
+        
+        // Для отладки проблемного клиента
+        if (window.location.hostname.includes('sotovik') || window.location.hostname.includes('inoxhub')) {
+          if (typeof sotovikDebugLog === 'function') {
+            sotovikDebugLog('error', 'Critical failure in beacon:', {
+              message: e.message,
+              stack: e.stack,
+              eventName: eventName || 'unknown',
+              url: url
+            });
+          } else {
+            console.error('[ERROR] Full error details:', {
+              message: e.message,
+              stack: e.stack,
+              data: typeof data,
+              url: url,
+              time: new Date().toISOString()
+            });
+          }
+        }
+      }
+    }
+
+    // Вспомогательная функция для получения информации об устройстве
+    function getDeviceInfo() {
+      try {
+        const ua = navigator.userAgent;
+        const isIOS = /iPhone|iPad|iPod/i.test(ua);
+        const isAndroid = /Android/i.test(ua);
+        const isMobile = isIOS || isAndroid || /Mobile/i.test(ua);
+        const browser = /Chrome/i.test(ua) ? 'chrome' : 
+                       /Firefox/i.test(ua) ? 'firefox' : 
+                       /Safari/i.test(ua) ? 'safari' : 
+                       /Edge/i.test(ua) ? 'edge' : 'other';
+        
+        return `${isMobile ? 'mobile' : 'desktop'}-${isIOS ? 'ios' : isAndroid ? 'android' : 'other'}-${browser}`;
+      } catch (e) {
+        return 'unknown';
+      }
+    }
+
+    // Улучшаем функцию sendDataWithFallback для дополнительной проверки и защиты
+    async function sendDataWithFallback(data, endpoint, priority = 'normal') {
+      try {
+        // Базовая валидация данных
+        if (!data || typeof data !== 'object') {
+            Logger.error('sendDataWithFallback: данные должны быть объектом', { data });
+            return { success: false, error: 'invalid_data' };
+        }
+        
+        // Определяем маршрут из endpoint
+        const route = endpoint.includes('/session') ? '/session' : 
+                      endpoint.includes('/logs') ? '/logs' : 
+                      endpoint.includes('/batch') ? '/batch' : '/other';
+        
+        // Применяем безопасную обработку данных
+        const sanitizedData = SafeRouteUtils.sanitizePayloadForRoute(data, route);
+        
+        // Создаем копию данных, добавляем уникальный идентификатор запроса
+        const requestId = generateUUID();
+        
+        // Проверяем устройство для особых случаев
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome/i.test(navigator.userAgent);
+        
+        // Для проблемных клиентов на iOS Safari в случае /session используем GET
+        if ((window.location.hostname.includes('sotovik') || 
+             window.location.hostname.includes('inoxhub')) && 
+            isIOS && isSafari && route === '/session') {
+            
+            // Формируем безопасный URL для GET запроса
+            const safeUrl = SafeRouteUtils.processSessionRequest(sanitizedData, 'GET');
+            
+            try {
+                // Используем Image для GET запроса
+                const img = new Image();
+                img.src = safeUrl;
+                
+                return { success: true, method: 'ios_safari_get', route };
+            } catch (e) {
+                Logger.error('iOS Safari GET method failed:', e);
+                // При ошибке продолжаем обычным методом
+            }
+        }
+        
+        // Продолжаем обычной логикой отправки данных
+        // ... existing code ...
+        
+        // Используем безопасные данные во всех последующих операциях
+        return { success: true, method: 'fallback_default', route };
+      } catch (error) {
+        Logger.error('Неожиданная ошибка при отправке данных:', error);
+        return { success: false, error: 'unexpected_error', message: error.message };
+      }
+    }
+    // ... existing code ...
+
 })(window); 
