@@ -5,6 +5,12 @@
 // RIVOX SDK v4.6.3
 // Enhanced version with ML data collection capabilities
 
+// Add debug helper function
+function dbg(...a){ 
+  if (window.RIVOX_DEBUG || localStorage.RIVOX_DEBUG==='1')
+    console.debug(...a); 
+}
+
 // Глобальная переменная для предотвращения рекурсивных вызовов логирования
 let isLogging = false;
 // Глобальная переменная для хранения очереди данных для повторной отправки
@@ -227,8 +233,7 @@ function sendViaImageBeacon(url, data, eventName) {
     }
 
     // Добавляем отладочную информацию для конкретного клиента
-    const isDomainProblematic = window.location.hostname.includes('sotovik') || 
-                               window.location.hostname.includes('inoxhub');
+    const isDomainProblematic = window.location.hostname.includes('sotovik');
     if (isDomainProblematic) {
       console.debug('[DEBUG] sendViaImageBeacon payload:', {
         data: data,
@@ -350,7 +355,7 @@ function sendViaImageBeacon(url, data, eventName) {
     console.error('Critical error in sendViaImageBeacon:', e.message || e);
     
     // Для отладки проблемного клиента
-    if (window.location.hostname.includes('sotovik') || window.location.hostname.includes('inoxhub')) {
+    if (window.location.hostname.includes('sotovik')) {
       if (typeof sotovikDebugLog === 'function') {
         sotovikDebugLog('error', 'Critical failure in beacon:', {
           message: e.message,
@@ -476,6 +481,11 @@ let Logger = {
     let SDK_INITIALIZED = false;
     // Добавляем массив для хранения отложенных событий
     const pendingEvents = [];
+    
+    // Создаем глобальный массив для хранения отложенных целей Метрики YM
+    if (!window._rivoxPendingYmGoals) {
+        window._rivoxPendingYmGoals = [];
+    }
     
     // Добавляем переменные для контроля отправки данных
     let lastSendTime = 0;
@@ -2171,6 +2181,14 @@ let Logger = {
         // Убедимся, что client_id всегда строка
         if (sessionData.client_id) {
             sessionData.client_id = safeClientId(sessionData.client_id);
+        }
+        
+        // Flush pending YM goals after session initialization
+        if (window._rivoxPendingYmGoals?.length) {
+            dbg('[Rivox SDK] flushing %d queued goals', window._rivoxPendingYmGoals.length);
+            window._rivoxPendingYmGoals.forEach(g =>
+                logMetrikaGoal(g.goalName, g.params));
+            window._rivoxPendingYmGoals = [];
         }
         
         setupEventListeners();
@@ -4066,7 +4084,7 @@ let Logger = {
                     body: JSON.stringify(data),
                     keepalive: true
                 });
-                
+            
                 // Если получили ошибку 500 или 503, сохраняем для повторной попытки
                 if (response.status === 500 || response.status === 503) {
                     Logger.warn(`⚠️ Получена ошибка ${response.status} от сервера. Сохраняем запрос для повторной попытки.`);
@@ -4096,7 +4114,7 @@ let Logger = {
                 }
             } catch (fetchError) {
                 Logger.error('Ошибка при отправке данных через fetch:', fetchError);
-                
+            
                 // Сохраняем запрос для повторной попытки в случае сетевой ошибки
                 if (fetchError instanceof TypeError || 
                     (fetchError.message && fetchError.message.includes('network'))) {
@@ -4121,7 +4139,7 @@ let Logger = {
     
     // Функция добавления запроса в очередь повторных попыток
     function addToRetryQueue(data, endpoint, priority, errorCode) {
-        try {
+                try {
             // Получаем текущую очередь из localStorage
             let retryQueue = [];
             const retryData = localStorage.getItem('rivox_retry');
@@ -4159,9 +4177,9 @@ let Logger = {
             Logger.info(`📦 Запрос добавлен в очередь повторных попыток (всего: ${retryQueue.length})`);
         } catch (e) {
             Logger.error('Ошибка при добавлении запроса в очередь повторных попыток:', e);
-        }
-    }
-    
+                }
+            }
+            
     // Функция обработки очереди повторных попыток
     function processRetryQueue() {
         try {
@@ -5376,8 +5394,13 @@ let Logger = {
     // Добавляем функцию для обработки целей Метрики
     function logMetrikaGoal(goalName, params = {}) {
         if (!sessionData) {
-            console.error('[Rivox SDK] Невозможно зарегистрировать цель: сессия не инициализирована');
-            return false;
+            // Queue the goal if session is not initialized
+            if (!window._rivoxPendingYmGoals) {
+                window._rivoxPendingYmGoals = [];
+            }
+            window._rivoxPendingYmGoals.push({ goalName, params });
+            dbg('[Rivox SDK] goal queued (no session yet):', goalName);
+            return true;
         }
         
         if (!sessionData.metrika_goals) {
@@ -5693,8 +5716,7 @@ let Logger = {
         }
 
         // Добавляем отладочную информацию для конкретного клиента
-        const isDomainProblematic = window.location.hostname.includes('sotovik') || 
-                                   window.location.hostname.includes('inoxhub');
+        const isDomainProblematic = window.location.hostname.includes('sotovik');
         if (isDomainProblematic) {
           console.debug('[DEBUG] sendViaImageBeacon payload:', {
             data: data,
@@ -5816,7 +5838,7 @@ let Logger = {
         console.error('Critical error in sendViaImageBeacon:', e.message || e);
         
         // Для отладки проблемного клиента
-        if (window.location.hostname.includes('sotovik') || window.location.hostname.includes('inoxhub')) {
+        if (window.location.hostname.includes('sotovik')) {
           if (typeof sotovikDebugLog === 'function') {
             sotovikDebugLog('error', 'Critical failure in beacon:', {
               message: e.message,
@@ -5880,8 +5902,7 @@ let Logger = {
         const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome/i.test(navigator.userAgent);
         
         // Для проблемных клиентов на iOS Safari в случае /session используем GET
-        if ((window.location.hostname.includes('sotovik') || 
-             window.location.hostname.includes('inoxhub')) && 
+        if (window.location.hostname.includes('sotovik') && 
             isIOS && isSafari && route === '/session') {
             
             // Формируем безопасный URL для GET запроса
