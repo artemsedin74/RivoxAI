@@ -49,8 +49,8 @@ let Logger = {
     setLevel: () => {},
     debug: () => {},
     info: () => {},
-    warn: console.warn,
-    error: console.error
+    warn: () => {},
+    error: () => {}
 };
 
 (function(window) {
@@ -61,7 +61,7 @@ let Logger = {
     // Configuration
     const config = {
         endpoint: 'https://rivox-data-handler-779203791697.europe-central2.run.app',
-        debug: true,
+        debug: false, // Set debug to false for production
         sessionTimeout: 30 * 60 * 1000, // 30 минут
         scrollChunkSize: 50, // уменьшаем с 100 до 50 пикселей
         minInteractionGap: 500,
@@ -85,7 +85,7 @@ let Logger = {
         deduplicationWindow: 60000 // 1 минута
     };
 
-    // Re-define the global Logger with full functionality inside the IIFE
+    // Re-define the global Logger with minimal functionality inside the IIFE
     Logger = {
         LEVELS: {
             DEBUG: 0,
@@ -93,35 +93,25 @@ let Logger = {
             WARN: 2,
             ERROR: 3
         },
-        level: 1, // Default to INFO level
+        level: 3, // Default to ERROR level for production
         
         setLevel: function(level) {
             this.level = level;
         },
         
-        debug: function(msg, data) {
-            if (this.level <= this.LEVELS.DEBUG && config.debug) {
-                console.log(`rivox.js [DEBUG]: ${msg}`, data || '');
+        debug: function() {},
+        
+        info: function(msg) {
+            // Only log SDK initialization and Metrika goal capture
+            if (msg === '✅ RIVOX SDK initialization completed' || 
+                msg.includes('🎯 Metrika reachGoal intercepted')) {
+                console.log(`rivox.js ℹ️: ${msg}`);
             }
         },
         
-        info: function(msg, data) {
-            if (this.level <= this.LEVELS.INFO && config.debug) { 
-                console.log(`rivox.js ℹ️: ${msg}`, data || '');
-            }
-        },
+        warn: function() {},
         
-        warn: function(msg, data) {
-            if (this.level <= this.LEVELS.WARN) {
-                console.warn(`rivox.js ⚠️: ${msg}`, data || '');
-            }
-        },
-        
-        error: function(msg, error) {
-            if (this.level <= this.LEVELS.ERROR) {
-                console.error(`rivox.js ❌: ${msg}`, error || '');
-            }
-        }
+        error: function() {}
     };
 
     // Session data
@@ -298,10 +288,7 @@ let Logger = {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-
-            Logger.info('✅ Queued data sent successfully');
         } catch (error) {
-            Logger.error('Failed to send queued data:', error);
             // Return failed items to queue
             queuedData = [...dataToSend, ...queuedData];
         }
@@ -429,11 +416,8 @@ let Logger = {
     async function init() {
         const currentDomain = window.location.hostname;
         if (!isAllowedDomain(currentDomain)) {
-            Logger.error(`Domain ${currentDomain} is not allowed. SDK initialization aborted.`);
             return; // Прерываем инициализацию для неразрешенных доменов
         }
-        
-        Logger.info('RIVOX SDK initializing...');
         
         // Load configuration
         const userConfig = loadConfig();
@@ -446,19 +430,12 @@ let Logger = {
 
         // Get client ID
         const clientId = await generateClientId();
-        if (!clientId) {
-            Logger.warn('Proceeding with initialization despite missing client ID');
-        } else {
-            Logger.info('RIVOX SDK initialized with client ID:', clientId);
-        }
 
         // Initialize or restore session data
         const savedSession = loadSessionFromStorage();
         if (savedSession) {
-            Logger.info('Restoring previous session');
             sessionData = savedSession;
         } else {
-            Logger.info('Creating new session');
             sessionData = createSessionData(clientId);
         }
         
@@ -491,7 +468,6 @@ let Logger = {
         // Start trackers with configured delay
         setTimeout(() => {
             if (typeof RIVOX.start === 'function') {
-                Logger.info("🟢 RIVOX tracking start");
                 RIVOX.start();
             }
         }, userConfig.initDelay);
@@ -503,7 +479,6 @@ let Logger = {
         setInterval(() => {
             const inactiveTime = Date.now() - lastActivityTime;
             if (inactiveTime > config.sessionTimeout) {
-                Logger.info("⏹️ Session timeout due to inactivity");
                 isSessionActive = false;
                 sendDataGuaranteed('session_timeout');
             }
@@ -515,8 +490,6 @@ let Logger = {
 
     // Enhanced event listeners setup
     function setupEventListeners() {
-        Logger.info('Setting up event listeners...');
-        
         // Scroll tracking with heatmap
         let lastScrollY = window.scrollY;
         let scrollTimeout;
@@ -533,12 +506,6 @@ let Logger = {
                 );
                 const viewportHeight = window.innerHeight;
                 const scrollPercent = (currentScrollY / (documentHeight - viewportHeight)) * 100;
-                
-                Logger.debug('Scroll event:', {
-                    position: currentScrollY,
-                    delta: scrollDelta,
-                    percent: scrollPercent.toFixed(2) + '%'
-                });
                 
                 // Ensure arrays exist
                 if (!sessionData.scroll_chunks) {
@@ -583,12 +550,10 @@ let Logger = {
                 const maxScrollPercent = Math.max(
                     ...sessionData.user_behavior.scroll_depth_percentages.map(d => d.depth)
                 );
-                Logger.debug('Max scroll depth:', maxScrollPercent.toFixed(2) + '%');
             }, 1000);
 
             // Check if we should send data
             if (shouldSendData()) {
-                Logger.info('Sending data after accumulating events');
                 sendSessionSummary();
             }
         }, 100));
@@ -597,38 +562,28 @@ let Logger = {
         let hoverStartTime;
         let hoveredElement;
 
-            document.addEventListener('mouseover', throttle((e) => {
+        document.addEventListener('mouseover', throttle((e) => {
             updateActivity();
-                const target = e.target;
-                if (isImportantElement(target)) {
+            const target = e.target;
+            if (isImportantElement(target)) {
                 hoverStartTime = Date.now();
                 hoveredElement = target;
-                
-                Logger.debug('Hover event started:', {
-                    element: getElementPath(target)
-                });
             }
 
             // Check if we should send data
             if (shouldSendData()) {
-                Logger.info('Sending data after accumulating events');
                 sendSessionSummary();
             }
-            }, 100));
+        }, 100));
 
-            document.addEventListener('mouseout', throttle((e) => {
+        document.addEventListener('mouseout', throttle((e) => {
             updateActivity();
-                const target = e.target;
+            const target = e.target;
             if (isImportantElement(target) && hoverStartTime && target === hoveredElement) {
                 const hoverDuration = Date.now() - hoverStartTime;
                 
-                Logger.debug('Hover event completed:', {
-                    element: getElementPath(target),
-                    duration: hoverDuration + 'ms'
-                });
-                
                 sessionData.hover_events.push({
-                        timestamp: Date.now(),
+                    timestamp: Date.now(),
                     element: getElementPath(target),
                     duration: hoverDuration,
                     start_time: hoverStartTime
@@ -640,7 +595,7 @@ let Logger = {
         }, 100));
 
         // Click tracking
-            document.addEventListener('click', (e) => {
+        document.addEventListener('click', (e) => {
             updateActivity();
             
             // Найдем ближайший важный элемент
@@ -665,7 +620,7 @@ let Logger = {
             const scrollY = window.pageYOffset || document.documentElement.scrollTop;
 
             const clickData = {
-                        timestamp: Date.now(),
+                timestamp: Date.now(),
                 element: getElementPath(clickTarget),
                 element_text: (clickTarget.textContent || clickTarget.value || '').trim(),
                 position: {
@@ -684,8 +639,6 @@ let Logger = {
                 },
                 is_cta: isCTAElement(clickTarget)
             };
-
-            Logger.debug('🖱️ Click event captured:', clickData);
             
             sessionData.cta_clicks.push(clickData);
             sessionData.user_behavior.total_interactions++;
@@ -703,7 +656,7 @@ let Logger = {
             ];
             if (lastClick) {
                 sessionData.user_behavior.time_between_clicks.push({
-                        timestamp: Date.now(),
+                    timestamp: Date.now(),
                     delta: Date.now() - lastClick.timestamp
                 });
             } else {
@@ -715,8 +668,7 @@ let Logger = {
 
             // Проверяем условия отправки вместо немедленной отправки
             if (shouldSendData()) {
-                Logger.info('Accumulated enough events, sending data');
-                sendDataGuaranteed('events_threshold').catch(Logger.error);
+                sendDataGuaranteed('events_threshold').catch(() => {});
             }
         });
 
@@ -783,12 +735,9 @@ let Logger = {
             
             // Проверяем условия отправки данных
             if (shouldSendData()) {
-                Logger.info('Sending data after form submission');
                 sendSessionSummary();
             }
         });
-
-        Logger.info('Event listeners setup complete');
     }
 
     // Send data using JSONP
@@ -814,7 +763,6 @@ let Logger = {
                 
                 // Setup callback
                 window[callbackName] = function(response) {
-                    Logger.debug('JSONP response received:', response);
                     document.body.removeChild(script);
                     delete window[callbackName];
                     resolve(response);
@@ -838,45 +786,22 @@ let Logger = {
                 
                 // Append script to document
                 document.body.appendChild(script);
-                Logger.debug('📡 JSONP request sent to:', script.src);
-                
             } catch (error) {
-                Logger.error('❌ Error in sendDataJSONP:', error);
                 reject(error);
             }
         });
     }
 
-    // Modify sendSessionSummary to add logging
+    // Modify sendSessionSummary to remove logging
     async function sendSessionSummary() {
         if (!sessionData || !isSessionActive) {
-            Logger.warn('No session data to send or session not active');
             return;
         }
-
-        Logger.info('Preparing to send session data...');
         
         // Update final duration before sending
         const now = Date.now();
         sessionData.duration = now - sessionData.start_time;
         sessionData.end_time = new Date(now).toISOString();
-        
-        // Добавляем подробное логирование данных сессии
-        Logger.info('Current session data:', {
-            client_id: sessionData.client_id,
-            session_id: sessionData.session_id,
-            goals_count: sessionData.metrika_goals?.length || 0,
-            goals: sessionData.metrika_goals || [],
-            conversion_data: sessionData.conversion_data || {},
-            duration: sessionData.duration
-        });
-
-        // Проверяем и логируем состояние целей
-        if (sessionData.metrika_goals && sessionData.metrika_goals.length > 0) {
-            Logger.info('Goals found in session data:', sessionData.metrika_goals);
-        } else {
-            Logger.warn('No goals found in session data');
-        }
 
         // Update ML features before sending
         updateMLFeatures();
@@ -927,13 +852,6 @@ let Logger = {
             ml_features: sessionData.ml_features
         };
 
-        // Проверяем и логируем данные перед отправкой
-        Logger.info('Data to be sent:', {
-            goals_count: summary.metrika_goals.length,
-            goals: summary.metrika_goals,
-            conversion_data: summary.conversion_data
-        });
-
         let retryCount = 0;
         const maxRetries = 3;
         const retryDelay = 1000; // 1 second
@@ -942,10 +860,9 @@ let Logger = {
             try {
                 // Try direct POST first
                 try {
-                    Logger.info(`Attempting POST request (attempt ${retryCount + 1}/${maxRetries})...`);
                     const response = await fetch(config.endpoint, {
-                method: 'POST',
-                headers: {
+                        method: 'POST',
+                        headers: {
                             'Content-Type': 'application/json',
                             'Origin': window.location.origin
                         },
@@ -957,25 +874,20 @@ let Logger = {
                     }
 
                     const result = await response.json();
-                    Logger.info('✅ POST request successful:', result);
                     return result;
                 } catch (error) {
-                    Logger.warn(`POST request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
-                    
                     // If we're out of retries, try beacon API as last resort
                     if (retryCount === maxRetries - 1 && navigator.sendBeacon) {
                         try {
-                            Logger.info('Trying beacon API as last resort...');
                             const blob = new Blob([JSON.stringify(summary)], {
                                 type: 'application/json'
                             });
                             const success = navigator.sendBeacon(config.endpoint, blob);
                             if (success) {
-                                Logger.info('✅ Data sent via beacon API');
                                 return { success: true, method: 'beacon' };
                             }
                         } catch (beaconError) {
-                            Logger.error('Beacon API failed:', beaconError);
+                            // Silent fail
                         }
                     }
                     
@@ -984,7 +896,6 @@ let Logger = {
                     retryCount++;
                 }
             } catch (error) {
-                Logger.error(`Failed to send data (attempt ${retryCount + 1}/${maxRetries}):`, error);
                 if (retryCount === maxRetries - 1) {
                     throw error;
                 }
@@ -1380,15 +1291,6 @@ let Logger = {
     function shouldSendData() {
         if (!sessionData) return false;
         
-        // Логируем структуру данных
-        Logger.info('Session data structure:', {
-            metrika_goals_count: sessionData.metrika_goals?.length || 0,
-            form_interactions_count: sessionData.form_interactions?.length || 0,
-            scroll_chunks_count: sessionData.scroll_chunks?.length || 0,
-            cta_clicks_count: sessionData.cta_clicks?.length || 0,
-            page_history_count: sessionData.page_history?.length || 0
-        });
-        
         // 1. Всегда отправляем при конверсиях/важных событиях
         if (
             sessionData.metrika_goals.length > 0 || // Есть цели
@@ -1422,21 +1324,17 @@ let Logger = {
     // Yandex.Metrika goal tracking
     function setupMetrikaTracking(attempts = 0, maxAttempts = 5) {
         const counterId = getYandexCounterId();
-        Logger.info('Setting up Metrika tracking for counter:', counterId);
         
         if (!counterId) {
             if (attempts < maxAttempts) {
-                Logger.info(`Counter ID not found, retrying in 1s (attempt ${attempts + 1}/${maxAttempts})`);
                 setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
                 return;
             }
-            Logger.warn('Failed to find Yandex.Metrika counter ID after max attempts');
             return;
         }
 
         // Check if counter object exists
         if (!window[`yaCounter${counterId}`]) {
-            Logger.warn(`Counter object yaCounter${counterId} not found`);
             if (attempts < maxAttempts) {
                 setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
                 return;
@@ -1446,18 +1344,14 @@ let Logger = {
 
         // Store original reachGoal function
         const originalReachGoal = window[`yaCounter${counterId}`].reachGoal;
-        Logger.info('Original reachGoal function:', originalReachGoal);
         
         if (!originalReachGoal) {
-            Logger.warn('reachGoal function not found on counter object');
             if (attempts < maxAttempts) {
                 setTimeout(() => setupMetrikaTracking(attempts + 1, maxAttempts), 1000);
                 return;
             }
             return;
         }
-
-        Logger.info('Successfully found Metrika counter and reachGoal function');
 
         // Override reachGoal to capture goals
         window[`yaCounter${counterId}`].reachGoal = function(goalName, params) {
@@ -1474,13 +1368,6 @@ let Logger = {
                     params: params || {},
                     timestamp: Date.now()
                 };
-
-                // Log before adding to session data
-                Logger.info('Adding goal to session data:', goalData);
-                Logger.info('Current session data:', {
-                    metrika_goals: sessionData.metrika_goals,
-                    conversion_data: sessionData.conversion_data
-                });
 
                 // Ensure arrays exist
                 if (!sessionData.metrika_goals) {
@@ -1511,28 +1398,14 @@ let Logger = {
                     timestamp: Date.now()
                 });
 
-                // Log after adding to session data
-                Logger.info('Goal data added to session:', goalData);
-                Logger.info('Updated session data:', {
-                    metrika_goals: sessionData.metrika_goals,
-                    conversion_data: sessionData.conversion_data
-                });
-
                 // Send data after important goals
                 if (isImportantGoal(goalName)) {
-                    Logger.info(`Important goal reached (${goalName}), sending data...`);
-                    sendSessionSummary().catch(error => 
-                        Logger.error('Failed to send data after goal:', error)
-                    );
+                    sendSessionSummary().catch(() => {});
                 }
-            } else {
-                Logger.error('Session data or metrika_goals not initialized');
             }
 
             return result;
         };
-
-        Logger.info('✅ Metrika tracking setup completed');
     }
 
     // Important goals that should trigger immediate data send
