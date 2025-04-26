@@ -1,6 +1,6 @@
 /**
  * RIVOX SDK - Client-side tracking and analytics
- * Version: 4.6.6
+ * Version: 4.6.7
  */
 // RIVOX SDK v4.6.4
 // Enhanced version with ML data collection capabilities
@@ -615,14 +615,14 @@ let Logger = {
           target === hoveredElement
         ) {
           const hoverDuration = Date.now() - hoverStartTime;
-    
+
           sessionData.hover_events.push({
             timestamp: Date.now(),
             element: getElementPath(target),
             duration: hoverDuration,
             start_time: hoverStartTime,
           });
-    
+
           hoverStartTime = null;
           hoveredElement = null;
         }
@@ -1926,4 +1926,25 @@ let Logger = {
       sessionData.form_interactions.length > 0
     );
   }
+
+  // Start periodic session size check
+  setInterval(() => {
+    try {
+      if (!sessionData) return;
+
+      const sizeInBytes = new Blob([JSON.stringify(sessionData)]).size;
+      const maxBytes = 75000; /
+
+      if (sizeInBytes >= maxBytes) {
+        console.warn(
+          `[RIVOX SDK] Session data too large (${sizeInBytes} bytes), sending immediately`
+        );
+        sendSessionSummary().catch((error) => {
+          console.error(`[RIVOX SDK] Failed to send oversized session:`, error);
+        });
+      }
+    } catch (error) {
+      console.error(`[RIVOX SDK] Error checking session data size:`, error);
+    }
+  }, 5000);
 })(window);
