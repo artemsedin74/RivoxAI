@@ -1,6 +1,6 @@
 /**
  * RIVOX SDK - Client-side tracking and analytics
- * Version: 4.6.7
+ * Version: 4.6.8
  */
 // RIVOX SDK v4.6.4
 // Enhanced version with ML data collection capabilities
@@ -1933,7 +1933,7 @@ let Logger = {
       if (!sessionData) return;
 
       const sizeInBytes = new Blob([JSON.stringify(sessionData)]).size;
-      const maxBytes = 75000;
+      const maxBytes = 50000;
 
       if (sizeInBytes >= maxBytes) {
         console.warn(
