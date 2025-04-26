@@ -87,7 +87,7 @@ let Logger = {
     maxFormDuration: 300000,
     minClickGap: 100,
     maxClickGap: 10000,
-    allowedDomains: ["spb.sotovik.shop", "www.spb.sotovik.shop", "inoxhub.ru" "белоеяблоко.рф", "xn--90aala0adcvdb6p.xn--p1ai", "zamm.ru", "mnogosna.ru"],
+    allowedDomains: ["spb.sotovik.shop", "www.spb.sotovik.shop", "inoxhub.ru", "белоеяблоко.рф", "xn--90aala0adcvdb6p.xn--p1ai", "zamm.ru", "mnogosna.ru"],
     initDelay: 300,
     sendDelay: 300000, // 5 минут
     retryDelay: 120000, // 2 минуты
