@@ -1933,7 +1933,7 @@ let Logger = {
       if (!sessionData) return;
 
       const sizeInBytes = new Blob([JSON.stringify(sessionData)]).size;
-      const maxBytes = 75000; /
+      const maxBytes = 75000;
 
       if (sizeInBytes >= maxBytes) {
         console.warn(
