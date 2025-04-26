@@ -977,13 +977,22 @@ let Logger = {
   }
 
   // Helper functions
-  function throttle(fn, delay) {
-    let lastCall = 0;
+  function throttle(func, limit) {
+    let lastFunc;
+    let lastRan;
     return function (...args) {
-      const now = Date.now();
-      if (now - lastCall >= delay) {
-        lastCall = now;
-        return fn.apply(this, args);
+      const context = this;
+      if (!lastRan) {
+        func.apply(context, args);
+        lastRan = Date.now();
+      } else {
+        clearTimeout(lastFunc);
+        lastFunc = setTimeout(function () {
+          if (Date.now() - lastRan >= limit) {
+            func.apply(context, args);
+            lastRan = Date.now();
+          }
+        }, limit - (Date.now() - lastRan));
       }
     };
   }
