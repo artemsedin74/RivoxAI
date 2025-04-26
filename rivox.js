@@ -1,8 +1,8 @@
 /**
  * RIVOX SDK - Client-side tracking and analytics
- * Version: 4.6.3
+ * Version: 4.6.5 
  */
-// RIVOX SDK v4.6.3
+// RIVOX SDK v4.6.4
 // Enhanced version with ML data collection capabilities
 
 // Utility functions for Yandex.Metrika
