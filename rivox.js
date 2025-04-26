@@ -1,6 +1,6 @@
 /**
  * RIVOX SDK - Client-side tracking and analytics
- * Version: 4.6.5 
+ * Version: 4.6.6
  */
 // RIVOX SDK v4.6.4
 // Enhanced version with ML data collection capabilities
@@ -601,11 +601,6 @@ let Logger = {
           hoverStartTime = Date.now();
           hoveredElement = target;
         }
-
-        // Check if we should send data
-        if (shouldSendData()) {
-          sendSessionSummary();
-        }
       }, 100)
     );
 
@@ -620,14 +615,14 @@ let Logger = {
           target === hoveredElement
         ) {
           const hoverDuration = Date.now() - hoverStartTime;
-
+    
           sessionData.hover_events.push({
             timestamp: Date.now(),
             element: getElementPath(target),
             duration: hoverDuration,
             start_time: hoverStartTime,
           });
-
+    
           hoverStartTime = null;
           hoveredElement = null;
         }
