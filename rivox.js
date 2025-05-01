@@ -1,6 +1,6 @@
 /**
  * RIVOX SDK - Client-side tracking and analytics
- * Version: 4.6.8
+ * Version: 4.6.9
  */
 // RIVOX SDK v4.6.4
 // Enhanced version with ML data collection capabilities
@@ -516,7 +516,7 @@ let Logger = {
   // Enhanced event listeners setup
   function setupEventListeners() {
     // Scroll tracking with heatmap
-    let lastScrollY = window.scrollY;
+    let lastScrollY = 0;
 
     window.addEventListener(
       "scroll",
