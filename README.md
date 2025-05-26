@@ -1,19 +1,18 @@
-# Нужно сделать JSON конфиг для набора пользовательских действий для сайта.
+```ts
+Нужно сделать JSON конфиг для набора пользовательских действий для сайта.
 
 Конфиг это массив массивов так называемых conditions.
 Conditions это объект с такими типами:
 
-```ts
+
 {
   feature: TFeature,
   threshold: number,
   operator: ">" | "<" | ">=" | "<=" | "="
 }
-```
 
 А feature это ключи объекта
 
-```ts
 type TSessionFeatureProjection = export interface TSessionFeatureProjection {
   /**
    * @remarks
@@ -72,7 +71,6 @@ type TSessionFeatureProjection = export interface TSessionFeatureProjection {
   session_quality: number;
 }
 
-```
 
 Мне нужно чтобы ты или сгенерировал валидный конфиг на на основе следующий данных, или перечислил список ошибок. Валидный конфиг это тот, для которого для всех данных:
 
@@ -82,3 +80,4 @@ type TSessionFeatureProjection = export interface TSessionFeatureProjection {
 Отвечай лаконично или "Вот конфиг, ошибок нет" или "Вот список ошибок"
 
 Сами данные:
+```
