@@ -7,8 +7,8 @@ Conditions это объект с такими типами:
 
 {
   feature: TFeature,
-  threshold: number,
-  operator: ">" | "<" | ">=" | "<=" | "="
+  threshold: number | string,
+  operator: ">" | "<" | ">=" | "<=" | "=" | "==" | "==="
 }
 
 А feature это ключи объекта
@@ -36,6 +36,8 @@ type TSessionFeatureProjection = export interface TSessionFeatureProjection {
   cta_per_page: number;
   products_per_page: number;
   total_interactions: number;
+  cart_interactions: number;
+  page_views: number;
   product_view_rate: number;
   cart_conversion_rate: number;
   scroll_per_interaction: number;
@@ -69,6 +71,7 @@ type TSessionFeatureProjection = export interface TSessionFeatureProjection {
 
   activity_index: number;
   session_quality: number;
+  device_type: string;
 }
 
 
