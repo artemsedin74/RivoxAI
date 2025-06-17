@@ -34,16 +34,18 @@ type TSessionFeatureProjection = export interface TSessionFeatureProjection {
   engagement_speed: number;
   interactions_per_page: number;
   cta_per_page: number;
-  products_per_page: number;
+  hover_per_interaction: number;
+  hover_duration_avg: number;
   total_interactions: number;
   cart_interactions: number;
   page_views: number;
-  product_view_rate: number;
+  click_frequency_rate: number;
   cart_conversion_rate: number;
   scroll_per_interaction: number;
   scroll_efficiency: number;
   scroll_depth_max: number;
   scroll_speed: number;
+  device_type_encoded: number;
 
   /**
    * @remarks
