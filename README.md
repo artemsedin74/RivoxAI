@@ -40,6 +40,7 @@ type TSessionFeatureProjection = export interface TSessionFeatureProjection {
   cart_interactions: number;
   page_views: number;
   click_frequency_rate: number;
+  click_frequency: number;
   cart_conversion_rate: number;
   scroll_per_interaction: number;
   scroll_efficiency: number;
